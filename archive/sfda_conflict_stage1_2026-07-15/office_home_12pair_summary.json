@@ -1,0 +1,47 @@
+{
+  "num_tasks": 12,
+  "macro": {
+    "source_accuracy": {
+      "avg": 60.034,
+      "min": 40.7789,
+      "max": 77.9004
+    },
+    "clip_accuracy": {
+      "avg": 75.94965,
+      "min": 59.4273,
+      "max": 85.3569
+    },
+    "agreement_rate": {
+      "avg": 57.431324999999994,
+      "min": 36.1741,
+      "max": 76.0081
+    },
+    "conflict_rate": {
+      "avg": 42.568675,
+      "min": 23.9919,
+      "max": 63.8259
+    },
+    "useful_conflict_rate_among_all": {
+      "avg": 29.632608333333334,
+      "min": 18.7655,
+      "max": 36.9301
+    },
+    "useful_conflict_rate_among_conflicts": {
+      "avg": 72.13681666666666,
+      "min": 54.8995,
+      "max": 82.4005
+    }
+  },
+  "weighted": {
+    "total_samples": 46764,
+    "agreement_samples": 27117,
+    "conflict_samples": 19647,
+    "useful_conflict_samples": 13653,
+    "conflict_rate": 42.0130869899923,
+    "useful_conflict_rate_among_all": 29.1955350269438,
+    "useful_conflict_rate_among_conflicts": 69.49152542372882,
+    "conflict_source_correct_clip_wrong_rate_all": 6.774441878367974,
+    "conflict_source_wrong_clip_correct_rate_all": 22.421093148575828,
+    "conflict_both_wrong_rate_all": 12.817551963048498
+  }
+}

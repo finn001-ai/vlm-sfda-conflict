@@ -1,0 +1,492 @@
+==> Diagnostics S=0, T=1
+Wrote per-sample CSV: output/uda/office-home/AC/plmatch/diagnostics/AC_conflicts.csv
+Wrote summary JSON: output/uda/office-home/AC/plmatch/diagnostics/AC_conflicts_summary.json
+Wrote summary Markdown: output/uda/office-home/AC/plmatch/diagnostics/AC_conflicts_summary.md
+{
+  "dataset": "office-home",
+  "source_domain": "Art",
+  "target_domain": "Clipart",
+  "total_samples": 4365,
+  "source_accuracy": 44.8797,
+  "clip_accuracy": 59.4273,
+  "agreement_samples": 1807,
+  "agreement_rate": 41.3975,
+  "conflict_samples": 2558,
+  "conflict_rate": 58.6025,
+  "useful_conflict_samples": 1467,
+  "useful_conflict_rate_among_all": 33.6082,
+  "useful_conflict_rate_among_conflicts": 57.3495,
+  "cases": {
+    "agree_both_correct": {
+      "count": 1543,
+      "percent": 35.3494
+    },
+    "agree_both_wrong": {
+      "count": 264,
+      "percent": 6.0481
+    },
+    "conflict_both_wrong": {
+      "count": 1091,
+      "percent": 24.9943
+    },
+    "conflict_source_correct_clip_wrong": {
+      "count": 416,
+      "percent": 9.5304
+    },
+    "conflict_source_wrong_clip_correct": {
+      "count": 1051,
+      "percent": 24.0779
+    }
+  }
+}
+==> Diagnostics S=0, T=2
+Wrote per-sample CSV: output/uda/office-home/AP/plmatch/diagnostics/AP_conflicts.csv
+Wrote summary JSON: output/uda/office-home/AP/plmatch/diagnostics/AP_conflicts_summary.json
+Wrote summary Markdown: output/uda/office-home/AP/plmatch/diagnostics/AP_conflicts_summary.md
+{
+  "dataset": "office-home",
+  "source_domain": "Art",
+  "target_domain": "Product",
+  "total_samples": 4439,
+  "source_accuracy": 67.1773,
+  "clip_accuracy": 84.2307,
+  "agreement_samples": 2899,
+  "agreement_rate": 65.3075,
+  "conflict_samples": 1540,
+  "conflict_rate": 34.6925,
+  "useful_conflict_samples": 1219,
+  "useful_conflict_rate_among_all": 27.4611,
+  "useful_conflict_rate_among_conflicts": 79.1558,
+  "cases": {
+    "agree_both_correct": {
+      "count": 2751,
+      "percent": 61.9734
+    },
+    "agree_both_wrong": {
+      "count": 148,
+      "percent": 3.3341
+    },
+    "conflict_both_wrong": {
+      "count": 321,
+      "percent": 7.2314
+    },
+    "conflict_source_correct_clip_wrong": {
+      "count": 231,
+      "percent": 5.2039
+    },
+    "conflict_source_wrong_clip_correct": {
+      "count": 988,
+      "percent": 22.2573
+    }
+  }
+}
+==> Diagnostics S=0, T=3
+Wrote per-sample CSV: output/uda/office-home/AR/plmatch/diagnostics/AR_conflicts.csv
+Wrote summary JSON: output/uda/office-home/AR/plmatch/diagnostics/AR_conflicts_summary.json
+Wrote summary Markdown: output/uda/office-home/AR/plmatch/diagnostics/AR_conflicts_summary.md
+{
+  "dataset": "office-home",
+  "source_domain": "Art",
+  "target_domain": "RealWorld",
+  "total_samples": 4357,
+  "source_accuracy": 74.5697,
+  "clip_accuracy": 85.3569,
+  "agreement_samples": 3158,
+  "agreement_rate": 72.4811,
+  "conflict_samples": 1199,
+  "conflict_rate": 27.5189,
+  "useful_conflict_samples": 972,
+  "useful_conflict_rate_among_all": 22.3089,
+  "useful_conflict_rate_among_conflicts": 81.0676,
+  "cases": {
+    "agree_both_correct": {
+      "count": 2998,
+      "percent": 68.8088
+    },
+    "agree_both_wrong": {
+      "count": 160,
+      "percent": 3.6723
+    },
+    "conflict_both_wrong": {
+      "count": 227,
+      "percent": 5.21
+    },
+    "conflict_source_correct_clip_wrong": {
+      "count": 251,
+      "percent": 5.7608
+    },
+    "conflict_source_wrong_clip_correct": {
+      "count": 721,
+      "percent": 16.5481
+    }
+  }
+}
+==> Diagnostics S=1, T=0
+Wrote per-sample CSV: output/uda/office-home/CA/plmatch/diagnostics/CA_conflicts.csv
+Wrote summary JSON: output/uda/office-home/CA/plmatch/diagnostics/CA_conflicts_summary.json
+Wrote summary Markdown: output/uda/office-home/CA/plmatch/diagnostics/CA_conflicts_summary.md
+{
+  "dataset": "office-home",
+  "source_domain": "Clipart",
+  "target_domain": "Art",
+  "total_samples": 2427,
+  "source_accuracy": 53.7289,
+  "clip_accuracy": 74.7837,
+  "agreement_samples": 1210,
+  "agreement_rate": 49.8558,
+  "conflict_samples": 1217,
+  "conflict_rate": 50.1442,
+  "useful_conflict_samples": 871,
+  "useful_conflict_rate_among_all": 35.8879,
+  "useful_conflict_rate_among_conflicts": 71.5694,
+  "cases": {
+    "agree_both_correct": {
+      "count": 1124,
+      "percent": 46.3123
+    },
+    "agree_both_wrong": {
+      "count": 86,
+      "percent": 3.5435
+    },
+    "conflict_both_wrong": {
+      "count": 346,
+      "percent": 14.2563
+    },
+    "conflict_source_correct_clip_wrong": {
+      "count": 180,
+      "percent": 7.4166
+    },
+    "conflict_source_wrong_clip_correct": {
+      "count": 691,
+      "percent": 28.4714
+    }
+  }
+}
+==> Diagnostics S=1, T=2
+Wrote per-sample CSV: output/uda/office-home/CP/plmatch/diagnostics/CP_conflicts.csv
+Wrote summary JSON: output/uda/office-home/CP/plmatch/diagnostics/CP_conflicts_summary.json
+Wrote summary Markdown: output/uda/office-home/CP/plmatch/diagnostics/CP_conflicts_summary.md
+{
+  "dataset": "office-home",
+  "source_domain": "Clipart",
+  "target_domain": "Product",
+  "total_samples": 4439,
+  "source_accuracy": 61.7031,
+  "clip_accuracy": 84.2307,
+  "agreement_samples": 2677,
+  "agreement_rate": 60.3064,
+  "conflict_samples": 1762,
+  "conflict_rate": 39.6936,
+  "useful_conflict_samples": 1428,
+  "useful_conflict_rate_among_all": 32.1694,
+  "useful_conflict_rate_among_conflicts": 81.0443,
+  "cases": {
+    "agree_both_correct": {
+      "count": 2525,
+      "percent": 56.8822
+    },
+    "agree_both_wrong": {
+      "count": 152,
+      "percent": 3.4242
+    },
+    "conflict_both_wrong": {
+      "count": 334,
+      "percent": 7.5242
+    },
+    "conflict_source_correct_clip_wrong": {
+      "count": 214,
+      "percent": 4.8209
+    },
+    "conflict_source_wrong_clip_correct": {
+      "count": 1214,
+      "percent": 27.3485
+    }
+  }
+}
+==> Diagnostics S=1, T=3
+Wrote per-sample CSV: output/uda/office-home/CR/plmatch/diagnostics/CR_conflicts.csv
+Wrote summary JSON: output/uda/office-home/CR/plmatch/diagnostics/CR_conflicts_summary.json
+Wrote summary Markdown: output/uda/office-home/CR/plmatch/diagnostics/CR_conflicts_summary.md
+{
+  "dataset": "office-home",
+  "source_domain": "Clipart",
+  "target_domain": "RealWorld",
+  "total_samples": 4357,
+  "source_accuracy": 64.9989,
+  "clip_accuracy": 85.3569,
+  "agreement_samples": 2749,
+  "agreement_rate": 63.0939,
+  "conflict_samples": 1608,
+  "conflict_rate": 36.9061,
+  "useful_conflict_samples": 1325,
+  "useful_conflict_rate_among_all": 30.4108,
+  "useful_conflict_rate_among_conflicts": 82.4005,
+  "cases": {
+    "agree_both_correct": {
+      "count": 2613,
+      "percent": 59.9725
+    },
+    "agree_both_wrong": {
+      "count": 136,
+      "percent": 3.1214
+    },
+    "conflict_both_wrong": {
+      "count": 283,
+      "percent": 6.4953
+    },
+    "conflict_source_correct_clip_wrong": {
+      "count": 219,
+      "percent": 5.0264
+    },
+    "conflict_source_wrong_clip_correct": {
+      "count": 1106,
+      "percent": 25.3844
+    }
+  }
+}
+==> Diagnostics S=2, T=0
+Wrote per-sample CSV: output/uda/office-home/PA/plmatch/diagnostics/PA_conflicts.csv
+Wrote summary JSON: output/uda/office-home/PA/plmatch/diagnostics/PA_conflicts_summary.json
+Wrote summary Markdown: output/uda/office-home/PA/plmatch/diagnostics/PA_conflicts_summary.md
+{
+  "dataset": "office-home",
+  "source_domain": "Product",
+  "target_domain": "Art",
+  "total_samples": 2427,
+  "source_accuracy": 51.9159,
+  "clip_accuracy": 74.7837,
+  "agreement_samples": 1204,
+  "agreement_rate": 49.6086,
+  "conflict_samples": 1223,
+  "conflict_rate": 50.3914,
+  "useful_conflict_samples": 863,
+  "useful_conflict_rate_among_all": 35.5583,
+  "useful_conflict_rate_among_conflicts": 70.5642,
+  "cases": {
+    "agree_both_correct": {
+      "count": 1106,
+      "percent": 45.5707
+    },
+    "agree_both_wrong": {
+      "count": 98,
+      "percent": 4.0379
+    },
+    "conflict_both_wrong": {
+      "count": 360,
+      "percent": 14.8331
+    },
+    "conflict_source_correct_clip_wrong": {
+      "count": 154,
+      "percent": 6.3453
+    },
+    "conflict_source_wrong_clip_correct": {
+      "count": 709,
+      "percent": 29.213
+    }
+  }
+}
+==> Diagnostics S=2, T=1
+Wrote per-sample CSV: output/uda/office-home/PC/plmatch/diagnostics/PC_conflicts.csv
+Wrote summary JSON: output/uda/office-home/PC/plmatch/diagnostics/PC_conflicts_summary.json
+Wrote summary Markdown: output/uda/office-home/PC/plmatch/diagnostics/PC_conflicts_summary.md
+{
+  "dataset": "office-home",
+  "source_domain": "Product",
+  "target_domain": "Clipart",
+  "total_samples": 4365,
+  "source_accuracy": 40.7789,
+  "clip_accuracy": 59.4273,
+  "agreement_samples": 1579,
+  "agreement_rate": 36.1741,
+  "conflict_samples": 2786,
+  "conflict_rate": 63.8259,
+  "useful_conflict_samples": 1612,
+  "useful_conflict_rate_among_all": 36.9301,
+  "useful_conflict_rate_among_conflicts": 57.8607,
+  "cases": {
+    "agree_both_correct": {
+      "count": 1381,
+      "percent": 31.638
+    },
+    "agree_both_wrong": {
+      "count": 198,
+      "percent": 4.5361
+    },
+    "conflict_both_wrong": {
+      "count": 1174,
+      "percent": 26.8958
+    },
+    "conflict_source_correct_clip_wrong": {
+      "count": 399,
+      "percent": 9.1409
+    },
+    "conflict_source_wrong_clip_correct": {
+      "count": 1213,
+      "percent": 27.7892
+    }
+  }
+}
+==> Diagnostics S=2, T=3
+Wrote per-sample CSV: output/uda/office-home/PR/plmatch/diagnostics/PR_conflicts.csv
+Wrote summary JSON: output/uda/office-home/PR/plmatch/diagnostics/PR_conflicts_summary.json
+Wrote summary Markdown: output/uda/office-home/PR/plmatch/diagnostics/PR_conflicts_summary.md
+{
+  "dataset": "office-home",
+  "source_domain": "Product",
+  "target_domain": "RealWorld",
+  "total_samples": 4357,
+  "source_accuracy": 72.2975,
+  "clip_accuracy": 85.3569,
+  "agreement_samples": 3068,
+  "agreement_rate": 70.4154,
+  "conflict_samples": 1289,
+  "conflict_rate": 29.5846,
+  "useful_conflict_samples": 1053,
+  "useful_conflict_rate_among_all": 24.168,
+  "useful_conflict_rate_among_conflicts": 81.6912,
+  "cases": {
+    "agree_both_correct": {
+      "count": 2908,
+      "percent": 66.7432
+    },
+    "agree_both_wrong": {
+      "count": 160,
+      "percent": 3.6723
+    },
+    "conflict_both_wrong": {
+      "count": 236,
+      "percent": 5.4166
+    },
+    "conflict_source_correct_clip_wrong": {
+      "count": 242,
+      "percent": 5.5543
+    },
+    "conflict_source_wrong_clip_correct": {
+      "count": 811,
+      "percent": 18.6137
+    }
+  }
+}
+==> Diagnostics S=3, T=0
+Wrote per-sample CSV: output/uda/office-home/RA/plmatch/diagnostics/RA_conflicts.csv
+Wrote summary JSON: output/uda/office-home/RA/plmatch/diagnostics/RA_conflicts_summary.json
+Wrote summary Markdown: output/uda/office-home/RA/plmatch/diagnostics/RA_conflicts_summary.md
+{
+  "dataset": "office-home",
+  "source_domain": "RealWorld",
+  "target_domain": "Art",
+  "total_samples": 2427,
+  "source_accuracy": 64.5241,
+  "clip_accuracy": 74.7837,
+  "agreement_samples": 1466,
+  "agreement_rate": 60.4038,
+  "conflict_samples": 961,
+  "conflict_rate": 39.5962,
+  "useful_conflict_samples": 671,
+  "useful_conflict_rate_among_all": 27.6473,
+  "useful_conflict_rate_among_conflicts": 69.8231,
+  "cases": {
+    "agree_both_correct": {
+      "count": 1355,
+      "percent": 55.8302
+    },
+    "agree_both_wrong": {
+      "count": 111,
+      "percent": 4.5735
+    },
+    "conflict_both_wrong": {
+      "count": 290,
+      "percent": 11.9489
+    },
+    "conflict_source_correct_clip_wrong": {
+      "count": 211,
+      "percent": 8.6939
+    },
+    "conflict_source_wrong_clip_correct": {
+      "count": 460,
+      "percent": 18.9534
+    }
+  }
+}
+==> Diagnostics S=3, T=1
+Wrote per-sample CSV: output/uda/office-home/RC/plmatch/diagnostics/RC_conflicts.csv
+Wrote summary JSON: output/uda/office-home/RC/plmatch/diagnostics/RC_conflicts_summary.json
+Wrote summary Markdown: output/uda/office-home/RC/plmatch/diagnostics/RC_conflicts_summary.md
+{
+  "dataset": "office-home",
+  "source_domain": "RealWorld",
+  "target_domain": "Clipart",
+  "total_samples": 4365,
+  "source_accuracy": 45.9336,
+  "clip_accuracy": 59.4273,
+  "agreement_samples": 1926,
+  "agreement_rate": 44.1237,
+  "conflict_samples": 2439,
+  "conflict_rate": 55.8763,
+  "useful_conflict_samples": 1339,
+  "useful_conflict_rate_among_all": 30.6758,
+  "useful_conflict_rate_among_conflicts": 54.8995,
+  "cases": {
+    "agree_both_correct": {
+      "count": 1630,
+      "percent": 37.3425
+    },
+    "agree_both_wrong": {
+      "count": 296,
+      "percent": 6.7812
+    },
+    "conflict_both_wrong": {
+      "count": 1100,
+      "percent": 25.2005
+    },
+    "conflict_source_correct_clip_wrong": {
+      "count": 375,
+      "percent": 8.5911
+    },
+    "conflict_source_wrong_clip_correct": {
+      "count": 964,
+      "percent": 22.0848
+    }
+  }
+}
+==> Diagnostics S=3, T=2
+Wrote per-sample CSV: output/uda/office-home/RP/plmatch/diagnostics/RP_conflicts.csv
+Wrote summary JSON: output/uda/office-home/RP/plmatch/diagnostics/RP_conflicts_summary.json
+Wrote summary Markdown: output/uda/office-home/RP/plmatch/diagnostics/RP_conflicts_summary.md
+{
+  "dataset": "office-home",
+  "source_domain": "RealWorld",
+  "target_domain": "Product",
+  "total_samples": 4439,
+  "source_accuracy": 77.9004,
+  "clip_accuracy": 84.2307,
+  "agreement_samples": 3374,
+  "agreement_rate": 76.0081,
+  "conflict_samples": 1065,
+  "conflict_rate": 23.9919,
+  "useful_conflict_samples": 833,
+  "useful_conflict_rate_among_all": 18.7655,
+  "useful_conflict_rate_among_conflicts": 78.216,
+  "cases": {
+    "agree_both_correct": {
+      "count": 3182,
+      "percent": 71.6828
+    },
+    "agree_both_wrong": {
+      "count": 192,
+      "percent": 4.3253
+    },
+    "conflict_both_wrong": {
+      "count": 232,
+      "percent": 5.2264
+    },
+    "conflict_source_correct_clip_wrong": {
+      "count": 276,
+      "percent": 6.2176
+    },
+    "conflict_source_wrong_clip_correct": {
+      "count": 557,
+      "percent": 12.5479
+    }
+  }
+}
