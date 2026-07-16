@@ -37,3 +37,23 @@ inside the two-label candidate set `{source_pred, clip_pred}`.
 
 This suggests the next method should use conflict samples through candidate-set
 supervision instead of forcing source/CLIP hard pseudo-label selection.
+
+## Method Direction Update
+
+Candidate-set loss alone should be treated as an ablation, not the final
+innovation. The next method should be framed as:
+
+> Dynamic Conflict Candidate Learning: model source/VLM conflict samples as
+> dynamic partial-label samples that can be learned from, promoted to hard
+> pseudo-labels, or rejected over training.
+
+The intended lifecycle is:
+
+```text
+discover conflict
+-> learn with candidate set {source_pred, clip_pred}
+-> promote if one candidate becomes stable
+-> reject/delay if neither candidate receives model support
+```
+
+This keeps the contribution from collapsing into "DUET + one extra loss".

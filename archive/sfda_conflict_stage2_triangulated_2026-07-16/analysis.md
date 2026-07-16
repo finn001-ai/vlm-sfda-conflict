@@ -78,25 +78,159 @@ Updated framing:
 
 ## Next Implementation Step
 
-Implement the smallest training variant in DUET/PLMatch:
+Important update after method discussion:
+
+The next method should **not** be framed as simply:
+
+```text
+DUET + candidate-set loss
+```
+
+That would likely be too incremental. A static candidate-set loss is useful as
+an ablation, but it should not be the final claimed contribution.
+
+The stronger direction is:
+
+> Model conflict samples as dynamic partial-label samples with a lifecycle:
+> discover -> candidate learning -> promote / reject.
+
+Working name:
+
+```text
+DCCL: Dynamic Conflict Candidate Learning
+```
+
+or:
+
+```text
+Conflict Lifecycle Learning
+```
+
+The method should contain three conceptual parts:
+
+1. Conflict candidate construction
+
+   ```text
+   if source_pred != clip_pred:
+       C_i = {source_pred, clip_pred}
+   ```
+
+2. Candidate-set learning for ambiguous conflicts
+
+   ```text
+   L_candidate = -log(p(source_pred) + p(clip_pred))
+   ```
+
+   This is not the whole method. It is the training action used while a sample
+   is still ambiguous.
+
+3. Dynamic state transition
+
+   ```text
+   candidate_mass = p(source_pred) + p(clip_pred)
+   candidate_gap  = abs(p(source_pred) - p(clip_pred))
+
+   if candidate_mass is high and one candidate dominates for K cycles:
+       promote conflict sample to a hard pseudo-label
+
+   elif candidate_mass stays low:
+       reject or delay the sample
+
+   else:
+       keep candidate-set learning
+   ```
+
+This shifts the innovation from adding a loss to modeling the lifecycle of
+source/VLM conflicts during adaptation.
+
+## Revised Implementation Plan
+
+Implement training variants in this order:
+
+```text
+DUET baseline
+DUET + hard conflict selection
+DUET + naive candidate-set loss
+DUET + weighted candidate-set loss
+DUET + weighted candidate-set loss + reject
+DUET + dynamic candidate shrinking
+Full method
+```
+
+The first three variants are diagnostic/ablation baselines. The paper's main
+method should be the dynamic version, not the static loss-only version.
+
+## Method Framing
+
+Avoid this framing:
+
+> We add a candidate-set loss to DUET.
+
+Use this framing:
+
+> We reformulate source/VLM disagreement samples as dynamic partial-label target
+> samples. Instead of discarding them or forcing a hard pseudo-label, the method
+> first learns from the compact candidate set and later promotes or rejects the
+> sample according to model support.
+
+Possible contribution bullets:
+
+1. We reveal that source/VLM conflicts are frequent and informative in
+   VLM-guided SFDA.
+2. We show that simple hard selectors based on confidence, prototype
+   consistency, or neighborhood support are not reliable enough.
+3. We formulate conflict samples as dynamic partial-label samples and propose a
+   conflict lifecycle mechanism with candidate learning, promotion, and
+   rejection.
+
+## Concrete Next Coding Target
+
+Create a new method file rather than modifying DUET directly:
+
+```text
+src/methods/oh/dccl.py
+cfgs/office-home/dccl.yaml
+```
+
+Start with DCCL-lite:
 
 ```text
 agreement samples:
-    cross-entropy with agreed pseudo label
+    DUET hard pseudo-label training
 
 conflict samples:
-    candidate-set loss
-    L = -log(p(source_pred) + p(clip_pred))
+    candidate-set loss with low weight
+
+state tracking:
+    maintain candidate_mass and candidate_gap per sample per cycle
+
+promotion:
+    if same candidate dominates for K cycles, convert to hard pseudo-label
+
+rejection:
+    if candidate_mass is below tau_low, ignore or consistency-only
 ```
 
-Recommended first variants:
+Initial hyperparameters to try:
 
-| Variant | Description |
-|---|---|
-| DUET / PLMatch baseline | Existing method |
-| + candidate-set loss | Use all conflicts with candidate-set supervision |
-| + weighted candidate-set loss | Lower weight for conflict loss |
-| + candidate-set loss with confidence gap reject | Use candidate loss only for sufficiently confident conflicts |
+```text
+lambda_candidate = 0.05, 0.1
+tau_low = 0.4
+tau_high = 0.7
+gap_promote = 0.3
+K = 2 cycles
+```
+
+Run first on:
+
+```text
+A->C
+A->P
+A->R
+```
+
+Only expand to all 12 Office-Home tasks if at least two of these three improve
+over DUET.
 
 ## Important Caveat
 
@@ -104,3 +238,10 @@ Candidate-set recall equals useful-conflict rate in this binary-conflict
 setting because `source_pred != clip_pred`; if either source or CLIP is correct,
 the true label is in the candidate set. This should be stated carefully in the
 paper.
+
+Another caveat:
+
+If the final method only improves by adding static candidate-set loss, the
+novelty will likely be weak. The method needs dynamic promotion/rejection or a
+clear conflict lifecycle mechanism to be defensible as more than a DUET loss
+term.
