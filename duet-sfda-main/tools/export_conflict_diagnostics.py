@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -187,6 +188,10 @@ def main() -> None:
 
     rows: list[dict[str, Any]] = []
     image_records = test_loader.dataset.imgs
+    feature_batches = []
+    source_prob_batches = []
+    clip_prob_batches = []
+    index_batches = []
 
     with torch.no_grad():
         for inputs, labels, indices in test_loader:
@@ -194,7 +199,8 @@ def main() -> None:
             labels = labels.long()
             indices = indices.long()
 
-            source_logits = net_c(net_b(net_f(weak_x)))
+            source_features = net_b(net_f(weak_x))
+            source_logits = net_c(source_features)
             clip_logits, _ = clip_model(weak_x, text_inputs)
 
             source_probs = torch.softmax(source_logits, dim=1).cpu()
@@ -203,6 +209,10 @@ def main() -> None:
             clip_conf, clip_pred = clip_probs.max(dim=1)
             source_top2 = torch.topk(source_probs, k=min(2, source_probs.size(1)), dim=1).values
             clip_top2 = torch.topk(clip_probs, k=min(2, clip_probs.size(1)), dim=1).values
+            feature_batches.append(source_features.float().cpu().numpy())
+            source_prob_batches.append(source_probs.numpy())
+            clip_prob_batches.append(clip_probs.numpy())
+            index_batches.append(indices.cpu().numpy())
 
             for b in range(labels.size(0)):
                 idx = int(indices[b].item())
@@ -252,6 +262,7 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"{cfg.domain[cfg.SETTING.S][0].upper()}{cfg.domain[cfg.SETTING.T][0].upper()}_conflicts"
     csv_path = out_dir / f"{stem}.csv"
+    npz_path = out_dir / f"{stem}.npz"
     json_path = out_dir / f"{stem}_summary.json"
     md_path = out_dir / f"{stem}_summary.md"
 
@@ -261,10 +272,26 @@ def main() -> None:
         writer.writerows(rows)
 
     summary = _summarize(rows)
+    features = np.concatenate(feature_batches, axis=0)
+    source_probs_np = np.concatenate(source_prob_batches, axis=0)
+    clip_probs_np = np.concatenate(clip_prob_batches, axis=0)
+    indices_np = np.concatenate(index_batches, axis=0)
+    order = np.argsort(indices_np)
+    np.savez_compressed(
+        npz_path,
+        index=indices_np[order],
+        feature=features[order],
+        source_probs=source_probs_np[order],
+        clip_probs=clip_probs_np[order],
+        label=np.array([row["label"] for row in rows], dtype=np.int64),
+        source_pred=np.array([row["source_pred"] for row in rows], dtype=np.int64),
+        clip_pred=np.array([row["clip_pred"] for row in rows], dtype=np.int64),
+    )
     json_path.write_text(json.dumps(summary, indent=2))
     _write_summary_md(summary, md_path)
 
     print(f"Wrote per-sample CSV: {csv_path}")
+    print(f"Wrote feature/probability NPZ: {npz_path}")
     print(f"Wrote summary JSON: {json_path}")
     print(f"Wrote summary Markdown: {md_path}")
     print(json.dumps(summary, indent=2))
