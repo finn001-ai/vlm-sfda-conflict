@@ -18,6 +18,7 @@ import src.methods.oh.plue as PLUE
 import src.methods.oh.adacontrast as ADACONTRAST
 import src.methods.oh.source as SOURCE
 import src.methods.oh.plmatch as PLMATCH
+import src.methods.oh.dccl as DCCL
 import src.methods.oh.plum as PLUM
 
 from conf import cfg, load_cfg_from_args
@@ -106,6 +107,10 @@ if __name__ == "__main__":
     elif cfg.MODEL.METHOD == "plmatch":
         print("using plmatch method")
         acc = PLMATCH.train_target(cfg)
+
+    elif cfg.MODEL.METHOD == "dccl":
+        print("using dccl method")
+        acc = DCCL.train_target(cfg)
 
     elif cfg.MODEL.METHOD == "plum":
         print("using plum method")

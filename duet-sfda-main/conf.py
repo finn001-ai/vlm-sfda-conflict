@@ -268,6 +268,15 @@ _C.ACTIVE.BETA = 0.99
 _C.ACTIVE.CYCLE = 4
 _C.ACTIVE.CON_PAR = 0.2
 _C.ACTIVE.KL_PAR = 0.4
+# --------------------------------- DCCL options ----------------------------- #
+_C.DCCL = CfgNode()
+
+_C.DCCL.CAND_PAR = 0.05
+_C.DCCL.EPSILON = 1e-6
+_C.DCCL.TAU_LOW = 0.4
+_C.DCCL.TAU_HIGH = 0.7
+_C.DCCL.GAP_PROMOTE = 0.3
+_C.DCCL.PROMOTE_K = 2
 # --------------------------------- TSD options ----------------------------- #
 _C.TSD = CfgNode()
 
