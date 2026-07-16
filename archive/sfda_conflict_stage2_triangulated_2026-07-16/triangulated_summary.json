@@ -1,0 +1,23 @@
+{
+  "num_tasks": 12,
+  "macro": {
+    "conflict_rate": 42.568675,
+    "useful_conflict_rate": 72.13681666666666,
+    "candidate_set_recall": 72.13681666666666,
+    "always_source_acc": 16.807233333333333,
+    "always_clip_acc": 55.329591666666666,
+    "higher_conf_acc": 54.03492500000001,
+    "prototype_only_acc": 42.998349999999995,
+    "neighborhood_only_acc": 41.194516666666665,
+    "triangulated_acc": 50.46040833333333,
+    "triangulated_minus_clip": -4.869183333333333,
+    "triangulated_reject_acc": 50.46040833333333,
+    "triangulated_reject_coverage": 100.0
+  },
+  "beats_always_clip": {
+    "higher_conf": 4,
+    "prototype_only": 0,
+    "neighborhood_only": 0,
+    "triangulated": 2
+  }
+}
