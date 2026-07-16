@@ -201,6 +201,8 @@ def main() -> None:
             clip_probs = torch.softmax(clip_logits, dim=1).cpu()
             source_conf, source_pred = source_probs.max(dim=1)
             clip_conf, clip_pred = clip_probs.max(dim=1)
+            source_top2 = torch.topk(source_probs, k=min(2, source_probs.size(1)), dim=1).values
+            clip_top2 = torch.topk(clip_probs, k=min(2, clip_probs.size(1)), dim=1).values
 
             for b in range(labels.size(0)):
                 idx = int(indices[b].item())
@@ -221,9 +223,21 @@ def main() -> None:
                         "source_pred": sp,
                         "source_pred_name": class_names[sp] if sp < len(class_names) else str(sp),
                         "source_conf": round(float(source_conf[b].item()), 6),
+                        "source_second_conf": round(float(source_top2[b, 1].item()), 6)
+                        if source_top2.size(1) > 1
+                        else 0.0,
+                        "source_margin": round(float((source_top2[b, 0] - source_top2[b, 1]).item()), 6)
+                        if source_top2.size(1) > 1
+                        else round(float(source_top2[b, 0].item()), 6),
                         "clip_pred": cp,
                         "clip_pred_name": class_names[cp] if cp < len(class_names) else str(cp),
                         "clip_conf": round(float(clip_conf[b].item()), 6),
+                        "clip_second_conf": round(float(clip_top2[b, 1].item()), 6)
+                        if clip_top2.size(1) > 1
+                        else 0.0,
+                        "clip_margin": round(float((clip_top2[b, 0] - clip_top2[b, 1]).item()), 6)
+                        if clip_top2.size(1) > 1
+                        else round(float(clip_top2[b, 0].item()), 6),
                         "agree": agree,
                         "source_correct": source_ok,
                         "clip_correct": clip_ok,
