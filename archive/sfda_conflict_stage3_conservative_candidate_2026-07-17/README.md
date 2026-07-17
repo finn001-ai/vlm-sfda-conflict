@@ -61,6 +61,8 @@ Added candidate reliability controls:
 |---|---|
 | `DCCL.CAND_TAU` | Only apply candidate loss when model probability mass on `{source_pred, clip_pred}` is at least this threshold. |
 | `DCCL.CAND_WEIGHT` | Candidate loss weighting mode: `none`, `mass`, or `ramp`. |
+| `DCCL.KL_MODE` | Controls how conflict samples participate in the main CLIP KL teacher. |
+| `DCCL.KL_CANDIDATE` | Builds a conflict candidate teacher with `confidence` or `balanced` candidate weights. |
 
 Added run scripts:
 
@@ -69,7 +71,34 @@ duet-sfda-main/tools/run_office_home_plmatch_all.sh
 duet-sfda-main/tools/run_office_home_dccl_conservative_smoke.sh
 duet-sfda-main/tools/run_office_home_dccl_ac_sweep.sh
 duet-sfda-main/tools/run_office_home_dccl_conservative_all.sh
+duet-sfda-main/tools/run_office_home_dccl_scheme_trial_ac.sh
 ```
+
+## 2026-07-17 Mid-run Correction
+
+The A->C parameter sweep was stopped because it was becoming hyperparameter
+tuning instead of method search.
+
+Partial A->C results:
+
+| Scheme | A->C |
+|---|---:|
+| PLMatch same environment | 72.03 |
+| DCCL candidate loss, `CAND_PAR=0.005` | 71.87 |
+| DCCL candidate loss, `CAND_PAR=0.01` | 71.98 |
+| DCCL candidate loss, `CAND_PAR=0.02` | 71.71 |
+| DCCL candidate gate, `CAND_TAU=0.3` | 72.03 |
+
+Conclusion: adding or lightly gating candidate loss is not enough.
+
+The next fast trials change the supervision mechanism:
+
+| Trial | Meaning |
+|---|---|
+| `conflict_kl_off` | Remove CLIP KL supervision on conflict samples. |
+| `conflict_candidate_kl` | Replace conflict CLIP KL with a `{source_pred, clip_pred}` candidate teacher. |
+| `candidate_kl_plus_loss` | Candidate teacher plus low-weight candidate-set loss. |
+| `candidate_kl_balanced` | Candidate teacher with balanced source/CLIP weights. |
 
 Updated:
 

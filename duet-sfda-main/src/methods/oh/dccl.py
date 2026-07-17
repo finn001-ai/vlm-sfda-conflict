@@ -402,6 +402,37 @@ def get_candidate_weight(cfg, candidate_mass):
     raise ValueError(f"Unknown DCCL.CAND_WEIGHT: {cfg.DCCL.CAND_WEIGHT}")
 
 
+def build_conflict_kl_target(cfg, clip_soft, source_label, clip_label, model_soft):
+    if cfg.DCCL.KL_MODE == "clip":
+        return clip_soft, torch.ones(source_label.size(0), dtype=torch.float)
+
+    conflict_mask = source_label != clip_label
+    if cfg.DCCL.KL_MODE == "non_conflict":
+        return clip_soft, (~conflict_mask).float()
+
+    if cfg.DCCL.KL_MODE != "candidate":
+        raise ValueError(f"Unknown DCCL.KL_MODE: {cfg.DCCL.KL_MODE}")
+
+    sample_idx = torch.arange(source_label.size(0))
+    candidate_target = torch.zeros_like(clip_soft)
+    if cfg.DCCL.KL_CANDIDATE == "balanced":
+        source_weight = torch.full_like(model_soft[sample_idx, source_label], 0.5)
+        clip_weight = torch.full_like(source_weight, 0.5)
+    elif cfg.DCCL.KL_CANDIDATE == "confidence":
+        source_weight = model_soft[sample_idx, source_label]
+        clip_weight = clip_soft[sample_idx, clip_label]
+        norm = (source_weight + clip_weight).clamp_min(cfg.DCCL.EPSILON)
+        source_weight = source_weight / norm
+        clip_weight = clip_weight / norm
+    else:
+        raise ValueError(f"Unknown DCCL.KL_CANDIDATE: {cfg.DCCL.KL_CANDIDATE}")
+
+    candidate_target[sample_idx, source_label] = source_weight
+    candidate_target[sample_idx, clip_label] += clip_weight
+    kl_target = torch.where(conflict_mask.unsqueeze(1), candidate_target, clip_soft)
+    return kl_target, torch.ones(source_label.size(0), dtype=torch.float)
+
+
 def train_target(cfg):
     clip_model, preprocess, _ = clip.load(cfg.ACTIVE.ARCH)
     clip_model.float()
@@ -490,6 +521,7 @@ def train_target(cfg):
         sample_idx = torch.arange(source_label.size(0))
         candidate_mass = model_soft[sample_idx, source_label] + model_soft[sample_idx, clip_label]
         candidate_weight = get_candidate_weight(cfg, candidate_mass)
+        kl_target, kl_weight = build_conflict_kl_target(cfg, clip_soft, source_label, clip_label, model_soft)
 
         promoted_mask = conflict_state["promoted_label"] >= 0
         hard_label = mem_label.clone()
@@ -511,6 +543,8 @@ def train_target(cfg):
         )
 
         clip_soft = clip_soft.cuda()
+        kl_target = kl_target.cuda()
+        kl_weight = kl_weight.cuda()
         mem_label = hard_label.cuda()
         source_label = source_label.cuda()
         clip_label = clip_label.cuda()
@@ -578,11 +612,14 @@ def train_target(cfg):
                 candidate_loss = (candidate_losses * weights).sum() / weights.sum()
                 classifier_loss += candidate_loss * cfg.DCCL.CAND_PAR
             # pseudo_output = weak_preds[filtered_idx]
-            clip_soft_batch = clip_soft[tar_idx]
+            kl_target_batch = kl_target[tar_idx]
+            kl_weight_batch = kl_weight[tar_idx]
             # mixed_soft_batch = confi_dis[tar_idx].cuda()
             # mi_loss = F.kl_div(weak_preds.log(), mixed_soft_batch, reduction="batchmean")
-            mi_loss = F.kl_div(weak_preds.log(), clip_soft_batch, reduction="batchmean")
-            classifier_loss += mi_loss * cfg.ACTIVE.KL_PAR
+            per_sample_kl = F.kl_div(weak_preds.log(), kl_target_batch, reduction="none").sum(dim=1)
+            if kl_weight_batch.sum() > 0:
+                mi_loss = (per_sample_kl * kl_weight_batch).sum() / kl_weight_batch.sum()
+                classifier_loss += mi_loss * cfg.ACTIVE.KL_PAR
 
             optimizer.zero_grad()
             classifier_loss.backward()
