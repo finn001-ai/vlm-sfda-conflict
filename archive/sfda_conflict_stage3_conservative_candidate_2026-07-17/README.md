@@ -211,6 +211,19 @@ It still does not reach the DUET paper number of 73.6 on A->C, so the next
 decision should be based on multi-task behavior. Run `clip_prior` first on
 A->P and A->R, then expand to all 12 tasks if the Art-source average improves.
 
+Art-source `clip_prior` results:
+
+| Task | PLMatch same env | DUET paper | `clip_prior` |
+|---|---:|---:|---:|
+| A->C | 72.03 | 73.6 | 72.78 |
+| A->P | 90.52 | 90.4 | 90.88 |
+| A->R | 90.82 | 91.0 | 91.00 |
+| Avg | 84.46 | 85.00 | 84.89 |
+
+This improves all three same-environment PLMatch tasks, but is still slightly
+below the DUET paper Art-source average because A->C remains under 73.6. The
+next step is to run the remaining nine Office-Home tasks.
+
 Updated:
 
 ```text
