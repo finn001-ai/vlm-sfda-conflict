@@ -337,6 +337,39 @@ P->A, P->C, P->R, R->A, R->C, and R->P. The purpose is to identify whether the
 weak tasks need no calibration, source-prior calibration, mixed calibration, or
 a target-conditioned rule. This is a diagnostic matrix, not the final method.
 
+Weak-source calibration probe results:
+
+| Task | none | source_prior | clip_prior | both_prior | mix_prior | Best |
+|---|---:|---:|---:|---:|---:|---|
+| P->A | 82.16 | 82.49 | 82.20 | 82.08 | 82.24 | source_prior |
+| P->C | 71.04 | 71.32 | 72.19 | 72.78 | 71.89 | both_prior |
+| P->R | 90.87 | 90.87 | 90.93 | 90.89 | 90.82 | clip_prior |
+| R->A | 82.41 | 82.41 | 82.49 | 82.53 | 82.45 | both_prior |
+| R->C | 71.98 | 72.33 | 72.88 | 72.97 | 72.78 | both_prior |
+| R->P | 90.43 | 90.58 | 90.79 | 90.97 | 90.47 | both_prior |
+
+Main conclusions:
+
+```text
+1. The failed auto_agree selector is not selecting the mode that later gives
+   the best accuracy.
+2. both_prior is the most consistent weak-source mode: it is best on four of
+   six weak tasks and materially improves the difficult target-Clipart tasks.
+3. The next unified-method candidate should be dual prior calibration
+   (both_prior), not task-wise oracle mode selection.
+```
+
+Next implemented run:
+
+```text
+duet-sfda-main/tools/run_office_home_dccl_both_prior_all.sh
+```
+
+This tests `both_prior` as a single fixed method on all 12 Office-Home tasks.
+If it beats fixed `clip_prior` average and approaches the DUET paper average,
+it becomes the next main method candidate. If it still falls short, use its
+failure pattern to design a source/target-conditioned calibration rule.
+
 ## Next Cloud Order
 
 First confirm baseline on the missing Art-source tasks:
