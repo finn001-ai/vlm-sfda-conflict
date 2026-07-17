@@ -9,12 +9,47 @@ DCCL: Dynamic Conflict Candidate Learning
 It is intentionally conservative: it copies the DUET/PLMatch training path and
 adds conflict candidate learning plus simple promotion/rejection states.
 
+## 2026-07-17 Update
+
+Early cloud results show that aggressive promotion is not reliable:
+
+| Task | DCCL default | Conservative DCCL |
+|---|---:|---:|
+| A->C | 71.34 | 71.87 |
+| A->P | 90.61 | 90.67 |
+| A->R | 90.36 | 90.87 |
+
+Default DCCL uses:
+
+```text
+CAND_PAR=0.05
+PROMOTE_K=2
+```
+
+Conservative DCCL uses:
+
+```text
+CAND_PAR=0.01
+PROMOTE_K=999
+```
+
+The current recommended path is therefore:
+
+```text
+conservative candidate-set learning first,
+promotion only as an ablation or future module.
+```
+
 ## Files Added
 
 ```text
 duet-sfda-main/src/methods/oh/dccl.py
 duet-sfda-main/cfgs/office-home/dccl.yaml
 duet-sfda-main/tools/run_office_home_dccl_smoke.sh
+duet-sfda-main/tools/run_office_home_dccl_conservative_smoke.sh
+duet-sfda-main/tools/run_office_home_dccl_ac_sweep.sh
+duet-sfda-main/tools/run_office_home_dccl_conservative_all.sh
+duet-sfda-main/tools/run_office_home_plmatch_all.sh
 ```
 
 The method is registered in:
@@ -32,10 +67,10 @@ git pull
 cd duet-sfda-main
 ```
 
-Run the three-task smoke test:
+Run the conservative three-task smoke test:
 
 ```bash
-bash tools/run_office_home_dccl_smoke.sh
+bash tools/run_office_home_dccl_conservative_smoke.sh
 ```
 
 This runs:
@@ -52,7 +87,9 @@ Art -> RealWorld
 python image_target_of_oh_vs.py \
   --cfg cfgs/office-home/dccl.yaml \
   CKPT_DIR . SETTING.OUTPUT_SRC source \
-  SETTING.S 0 SETTING.T 1
+  SETTING.S 0 SETTING.T 1 \
+  DCCL.CAND_PAR 0.01 \
+  DCCL.PROMOTE_K 999
 ```
 
 Change `SETTING.T` to:
@@ -101,6 +138,32 @@ TAU_LOW = 0.4
 TAU_HIGH = 0.7
 GAP_PROMOTE = 0.3
 PROMOTE_K = 2
+```
+
+Additional candidate controls:
+
+```text
+CAND_TAU
+only apply candidate loss if p(source_pred) + p(clip_pred) >= CAND_TAU
+
+CAND_WEIGHT
+none: all selected candidates have equal weight
+mass: weight by p(source_pred) + p(clip_pred)
+ramp: linearly ramp weight above CAND_TAU
+```
+
+## A->C Sweep Before Full Runs
+
+```bash
+bash tools/run_office_home_dccl_ac_sweep.sh
+python tools/extract_final_accuracy.py --glob 'output/uda/office-home/*/*/*.txt' \
+  > output/uda/office-home/stage3_accuracy.csv
+```
+
+Then choose the best A->C setting and run all 12 tasks:
+
+```bash
+bash tools/run_office_home_dccl_conservative_all.sh CAND_PAR CAND_TAU CAND_WEIGHT TAU_LOW
 ```
 
 ## First Decision Rule

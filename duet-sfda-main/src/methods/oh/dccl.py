@@ -391,6 +391,17 @@ def update_conflict_state(cfg, state, source_label, clip_label, model_soft):
     )
 
 
+def get_candidate_weight(cfg, candidate_mass):
+    if cfg.DCCL.CAND_WEIGHT == "none":
+        return torch.ones_like(candidate_mass)
+    if cfg.DCCL.CAND_WEIGHT == "mass":
+        return candidate_mass
+    if cfg.DCCL.CAND_WEIGHT == "ramp":
+        denom = max(float(1.0 - cfg.DCCL.CAND_TAU), float(cfg.DCCL.EPSILON))
+        return ((candidate_mass - cfg.DCCL.CAND_TAU) / denom).clamp(0.0, 1.0)
+    raise ValueError(f"Unknown DCCL.CAND_WEIGHT: {cfg.DCCL.CAND_WEIGHT}")
+
+
 def train_target(cfg):
     clip_model, preprocess, _ = clip.load(cfg.ACTIVE.ARCH)
     clip_model.float()
@@ -476,17 +487,34 @@ def train_target(cfg):
         if conflict_state is None:
             conflict_state = init_conflict_state(source_label.size(0))
         update_conflict_state(cfg, conflict_state, source_label, clip_label, model_soft)
+        sample_idx = torch.arange(source_label.size(0))
+        candidate_mass = model_soft[sample_idx, source_label] + model_soft[sample_idx, clip_label]
+        candidate_weight = get_candidate_weight(cfg, candidate_mass)
 
         promoted_mask = conflict_state["promoted_label"] >= 0
         hard_label = mem_label.clone()
         hard_label[promoted_mask] = conflict_state["promoted_label"][promoted_mask]
         hard_mask = label_mask | promoted_mask
-        candidate_mask = (source_label != clip_label) & (~promoted_mask) & (~conflict_state["rejected"])
+        candidate_mask = (
+            (source_label != clip_label)
+            & (~promoted_mask)
+            & (~conflict_state["rejected"])
+            & (candidate_mass >= cfg.DCCL.CAND_TAU)
+        )
+        logging.info(
+            "DCCL candidate gate: tau={:.3f}; weight={}; selected={}/{}".format(
+                float(cfg.DCCL.CAND_TAU),
+                cfg.DCCL.CAND_WEIGHT,
+                int(candidate_mask.sum().item()),
+                int((source_label != clip_label).sum().item()),
+            )
+        )
 
         clip_soft = clip_soft.cuda()
         mem_label = hard_label.cuda()
         source_label = source_label.cuda()
         clip_label = clip_label.cuda()
+        candidate_weight = candidate_weight.cuda()
         prev_label_mask = label_mask
 
         # clip_optimizer = train_clip_lr(cfg, clip_model, confi_imag, confi_dis, text_inputs, clip_optimizer, curr_cycle)
@@ -545,7 +573,9 @@ def train_target(cfg):
                     weak_preds[candidate_positions, source_candidates]
                     + weak_preds[candidate_positions, clip_candidates]
                 ).clamp_min(cfg.DCCL.EPSILON)
-                candidate_loss = -torch.log(candidate_prob).mean()
+                candidate_losses = -torch.log(candidate_prob)
+                weights = candidate_weight[candidate_indices].clamp_min(cfg.DCCL.EPSILON)
+                candidate_loss = (candidate_losses * weights).sum() / weights.sum()
                 classifier_loss += candidate_loss * cfg.DCCL.CAND_PAR
             # pseudo_output = weak_preds[filtered_idx]
             clip_soft_batch = clip_soft[tar_idx]
