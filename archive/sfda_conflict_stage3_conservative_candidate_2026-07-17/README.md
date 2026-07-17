@@ -277,6 +277,26 @@ agreement confidence, then selects one calibration mode before pseudo-label
 generation. The intended test is whether it keeps the A-source gains from
 `clip_prior` while avoiding P/R-source degradation.
 
+Art-source `auto_agree` results:
+
+| Task | PLMatch same env | fixed `clip_prior` | `auto_agree` |
+|---|---:|---:|---:|
+| A->C | 72.03 | 72.78 | 72.46 |
+| A->P | 90.52 | 90.88 | 90.74 |
+| A->R | 90.82 | 91.00 | 90.91 |
+| Avg | 84.46 | 84.89 | 84.70 |
+
+Interpretation:
+
+```text
+auto_agree preserves the positive direction on Art-source tasks, but it is
+weaker than always using clip_prior. The selector may be too conservative or
+may switch away from clip_prior in later cycles.
+```
+
+Before changing the selector, inspect the selected calibration mode per cycle
+and run the weak-source tasks where fixed clip_prior degraded.
+
 Updated:
 
 ```text
