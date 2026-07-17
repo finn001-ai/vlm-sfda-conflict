@@ -610,6 +610,10 @@ def train_target(cfg):
                 == target_label[accd_resolved_mask]
             )
             eligible_correct = evidence["graph_label"][eligible] == target_label[eligible]
+            eligible_clip_correct = clip_label[eligible] == target_label[eligible]
+            resolved_to_source = eligible & (evidence["graph_label"] == source_label)
+            resolved_to_clip = eligible & (evidence["graph_label"] == clip_label)
+            eligible_net_gain = int(eligible_correct.sum().item() - eligible_clip_correct.sum().item())
             logging.info(
                 "ACCD cycle: anchors={}; conflicts={}; cross_space={}; eligible={}; "
                 "outside_candidate={}; newly_resolved={}; resolved_total={}".format(
@@ -623,8 +627,13 @@ def train_target(cfg):
                 )
             )
             logging.info(
-                "ACCD oracle diagnostics only: eligible_accuracy={:.2f}%; resolved_accuracy={:.2f}%".format(
+                "ACCD oracle diagnostics only: eligible_accuracy={:.2f}%; clip_accuracy={:.2f}%; "
+                "net_gain={}; to_source={}; to_clip={}; resolved_accuracy={:.2f}%".format(
                     float(eligible_correct.float().mean().item() * 100.0) if eligible.any() else 0.0,
+                    float(eligible_clip_correct.float().mean().item() * 100.0) if eligible.any() else 0.0,
+                    eligible_net_gain,
+                    int(resolved_to_source.sum().item()),
+                    int(resolved_to_clip.sum().item()),
                     float(resolved_correct.float().mean().item() * 100.0) if accd_resolved_mask.any() else 0.0,
                 )
             )

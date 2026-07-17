@@ -1,0 +1,71 @@
+{
+  "config": {
+    "glob": "output/uda/office-home/*/plmatch/diagnostics/*C_conflicts.npz",
+    "out": "output/uda/office-home/accd_diffusion_probe.json",
+    "graph_k": 15,
+    "temperature": 0.07,
+    "alpha": 0.9,
+    "steps": 20,
+    "anchor_ratio": 0.5,
+    "anchor_min_per_class": 5,
+    "candidate_mass": 0.6,
+    "candidate_margin": 0.1,
+    "calib_power": 0.5
+  },
+  "tasks": [
+    {
+      "task": "AC",
+      "samples": 4365,
+      "anchors": 956,
+      "anchor_accuracy": 93.8285,
+      "conflicts": 2507,
+      "conflict_rate": 57.4341,
+      "candidate_recall_on_conflicts": 59.5533,
+      "eligible": 399,
+      "eligible_conflict_coverage": 15.9154,
+      "eligible_accuracy": 72.1805,
+      "eligible_clip_accuracy": 61.6541,
+      "eligible_source_accuracy": 26.3158,
+      "net_correct_gain_over_clip": 42,
+      "outside_candidate": 1804,
+      "outside_candidate_precision": 51.3304,
+      "pass_training_gate": true
+    },
+    {
+      "task": "PC",
+      "samples": 4365,
+      "anchors": 855,
+      "anchor_accuracy": 92.7485,
+      "conflicts": 2714,
+      "conflict_rate": 62.1764,
+      "candidate_recall_on_conflicts": 60.4643,
+      "eligible": 426,
+      "eligible_conflict_coverage": 15.6964,
+      "eligible_accuracy": 74.4131,
+      "eligible_clip_accuracy": 66.9014,
+      "eligible_source_accuracy": 20.1878,
+      "net_correct_gain_over_clip": 32,
+      "outside_candidate": 2011,
+      "outside_candidate_precision": 48.4336,
+      "pass_training_gate": true
+    },
+    {
+      "task": "RC",
+      "samples": 4365,
+      "anchors": 1009,
+      "anchor_accuracy": 93.2607,
+      "conflicts": 2389,
+      "conflict_rate": 54.7308,
+      "candidate_recall_on_conflicts": 58.3508,
+      "eligible": 420,
+      "eligible_conflict_coverage": 17.5806,
+      "eligible_accuracy": 68.8095,
+      "eligible_clip_accuracy": 60.4762,
+      "eligible_source_accuracy": 24.7619,
+      "net_correct_gain_over_clip": 35,
+      "outside_candidate": 1642,
+      "outside_candidate_precision": 53.3496,
+      "pass_training_gate": true
+    }
+  ]
+}

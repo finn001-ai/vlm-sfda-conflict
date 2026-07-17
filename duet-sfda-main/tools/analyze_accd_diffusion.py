@@ -98,6 +98,10 @@ def analyze(path: Path, args: argparse.Namespace) -> dict[str, int | float | str
     graph_correct = graph_label == labels
     clip_correct = clip_label == labels
     source_correct = source_label == labels
+    resolved_to_source = eligible & (graph_label == source_label)
+    resolved_to_clip = eligible & (graph_label == clip_label)
+    clip_to_graph_corrections = eligible & (~clip_correct) & graph_correct
+    clip_to_graph_degradations = eligible & clip_correct & (~graph_correct)
     net_gain = int(graph_correct[eligible].sum() - clip_correct[eligible].sum())
     outside_true = ~candidate_contains_truth[outside]
     eligible_accuracy = pct(graph_correct[eligible].sum(), int(eligible.sum()))
@@ -118,7 +122,12 @@ def analyze(path: Path, args: argparse.Namespace) -> dict[str, int | float | str
         "eligible_accuracy": eligible_accuracy,
         "eligible_clip_accuracy": eligible_clip_accuracy,
         "eligible_source_accuracy": pct(source_correct[eligible].sum(), eligible_count),
+        "resolved_to_source": int(resolved_to_source.sum()),
+        "resolved_to_clip": int(resolved_to_clip.sum()),
+        "clip_to_graph_corrections": int(clip_to_graph_corrections.sum()),
+        "clip_to_graph_degradations": int(clip_to_graph_degradations.sum()),
         "net_correct_gain_over_clip": net_gain,
+        "projected_full_accuracy_gain": round(100.0 * net_gain / labels.numel(), 4),
         "outside_candidate": int(outside.sum()),
         "outside_candidate_precision": pct(outside_true.sum(), int(outside.sum())),
         "pass_training_gate": bool(

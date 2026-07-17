@@ -154,6 +154,32 @@ Do not expand to all 12 tasks unless at least two of these three improve over
 `both_prior`, and at least one approaches or exceeds the corresponding DUET
 paper result.
 
+## Diffusion Probe Results
+
+The first fixed-configuration probe passed on all three target-Clipart tasks:
+
+| Task | Conflict rate | Candidate recall | Eligible coverage | ACCD eligible acc. | CLIP eligible acc. | Net corrections | Projected full gain |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| A->C | 57.43 | 59.55 | 15.92 | 72.18 | 61.65 | +42 | +0.96 |
+| P->C | 62.18 | 60.46 | 15.70 | 74.41 | 66.90 | +32 | +0.73 |
+| R->C | 54.73 | 58.35 | 17.58 | 68.81 | 60.48 | +35 | +0.80 |
+
+Interpretation:
+
+1. The candidate-set assumption is weaker after `both_prior` calibration than
+   the original raw diagnostic suggested: only about 58%-60% of conflicts have
+   the true label in `{source_pred, clip_pred}`.
+2. ACCD selects a conservative 16%-18% subset and improves over CLIP on that
+   same subset by 7.5-10.5 percentage points on every task.
+3. The projected net correction is comparable to the current 0.82-1.03 point
+   gap to the DUET paper values, so adaptation training is justified.
+4. `outside_candidate_precision` is only 48.43%-53.35%. Low candidate mass is
+   not accurate enough to reject samples and must remain diagnostic-only.
+
+The raw result is stored as `accd_diffusion_probe.json`. The next experiment is
+the fixed ACCD training run on A->C, P->C, and R->C. No graph-parameter sweep is
+approved before observing these three final accuracies.
+
 ## Risks And Falsification
 
 - Agreement anchors can still contain wrong labels. ACCD reduces this through
