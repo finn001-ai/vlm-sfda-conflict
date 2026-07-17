@@ -1,0 +1,21 @@
+accd,AC,4/4,276/276,73.31,both_prior,graph_k=15,anchor_ratio=0.5,candidate_mass=0.6,candidate_margin=0.1,stable_cycles=2
+accd,PC,4/4,276/276,72.74,both_prior,graph_k=15,anchor_ratio=0.5,candidate_mass=0.6,candidate_margin=0.1,stable_cycles=2
+accd,RC,4/4,276/276,73.20,both_prior,graph_k=15,anchor_ratio=0.5,candidate_mass=0.6,candidate_margin=0.1,stable_cycles=2
+
+AC cycles:
+cycle1 anchors=967 conflicts=2482 eligible=405 resolved=0 eligible_acc=73.58 clip_acc=65.68 net_gain=32
+cycle2 anchors=1527 conflicts=1342 eligible=298 resolved=45 eligible_acc=59.06 clip_acc=43.96 net_gain=45 resolved_acc=71.11
+cycle3 anchors=1764 conflicts=876 eligible=236 resolved=97 eligible_acc=55.51 clip_acc=28.39 net_gain=64 resolved_acc=61.86
+cycle4 anchors=1879 conflicts=642 eligible=192 resolved=142 eligible_acc=54.69 clip_acc=28.65 net_gain=50 resolved_acc=61.27
+
+PC cycles:
+cycle1 anchors=869 conflicts=2681 eligible=415 resolved=0 eligible_acc=75.66 clip_acc=66.02 net_gain=40
+cycle2 anchors=1522 conflicts=1348 eligible=303 resolved=46 eligible_acc=55.78 clip_acc=45.54 net_gain=31 resolved_acc=60.87
+cycle3 anchors=1756 conflicts=889 eligible=240 resolved=100 eligible_acc=54.58 clip_acc=29.58 net_gain=60 resolved_acc=60.00
+cycle4 anchors=1875 conflicts=647 eligible=192 resolved=149 eligible_acc=48.96 clip_acc=29.69 net_gain=37 resolved_acc=58.39
+
+RC cycles:
+cycle1 anchors=1000 conflicts=2400 eligible=409 resolved=0 eligible_acc=65.53 clip_acc=58.44 net_gain=29
+cycle2 anchors=1548 conflicts=1301 eligible=302 resolved=59 eligible_acc=64.57 clip_acc=47.35 net_gain=52 resolved_acc=71.19
+cycle3 anchors=1770 conflicts=851 eligible=230 resolved=115 eligible_acc=60.00 clip_acc=26.96 net_gain=76 resolved_acc=66.96
+cycle4 anchors=1886 conflicts=623 eligible=184 resolved=158 eligible_acc=58.15 clip_acc=28.80 net_gain=54 resolved_acc=64.56

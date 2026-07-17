@@ -139,25 +139,36 @@ def dual_space_diffusion(
     steps: int,
     chunk_size: int = 512,
     device: torch.device | None = None,
+    anchor_mask: torch.Tensor | None = None,
+    anchor_label: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Return task, CLIP, and product-of-experts posteriors plus anchor mask."""
     source_prob = source_prob.float().cpu()
     clip_prob = clip_prob.float().cpu()
     source_label = source_label.long().cpu()
     clip_label = clip_label.long().cpu()
-    anchors, _ = select_class_balanced_anchors(
-        source_prob,
-        clip_prob,
-        source_label,
-        clip_label,
-        ratio=anchor_ratio,
-        min_per_class=anchor_min_per_class,
-    )
+    if anchor_mask is None:
+        anchors, _ = select_class_balanced_anchors(
+            source_prob,
+            clip_prob,
+            source_label,
+            clip_label,
+            ratio=anchor_ratio,
+            min_per_class=anchor_min_per_class,
+        )
+        seed_label = source_label
+    else:
+        anchors = anchor_mask.bool().cpu()
+        if anchor_label is None:
+            raise ValueError("anchor_label is required with a fixed anchor_mask")
+        seed_label = anchor_label.long().cpu()
+        if anchors.numel() != source_label.numel() or seed_label.numel() != source_label.numel():
+            raise ValueError("fixed anchors must match the number of target samples")
     if not anchors.any():
         raise RuntimeError("ACCD found no source/CLIP agreement anchors")
 
     seed = torch.zeros_like(source_prob)
-    seed[anchors, source_label[anchors]] = 1.0
+    seed[anchors, seed_label[anchors]] = 1.0
     task_posterior = propagate_anchor_labels(
         task_features,
         seed,
@@ -229,3 +240,48 @@ def conflict_diffusion_evidence(
         "candidate_margin": candidate_margin,
         "cross_space_agreement": cross_space_agreement,
     }
+
+
+@torch.no_grad()
+def update_temporal_resolution(
+    pending_label: torch.Tensor,
+    pending_count: torch.Tensor,
+    resolved_label: torch.Tensor,
+    eligible: torch.Tensor,
+    proposed_label: torch.Tensor,
+    stable_cycles: int,
+    memory: str,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Update persistent or reversible conflict labels from temporal evidence."""
+    if memory not in {"persistent", "reversible"}:
+        raise ValueError(f"Unknown temporal resolution memory: {memory}")
+    if stable_cycles <= 0:
+        raise ValueError("stable_cycles must be positive")
+
+    previous_resolved = resolved_label.clone()
+    already_resolved = previous_resolved >= 0
+    trackable = eligible & (~already_resolved) if memory == "persistent" else eligible
+    same_label = pending_label == proposed_label
+    pending_count = torch.where(
+        trackable & same_label,
+        pending_count + 1,
+        torch.where(trackable, torch.ones_like(pending_count), torch.zeros_like(pending_count)),
+    )
+    pending_label = torch.where(
+        trackable,
+        proposed_label,
+        torch.full_like(pending_label, -1),
+    )
+    stable = trackable & (pending_count >= stable_cycles)
+
+    if memory == "persistent":
+        resolved_label = torch.where(stable, proposed_label, previous_resolved)
+    else:
+        resolved_label = torch.where(stable, proposed_label, torch.full_like(previous_resolved, -1))
+
+    resolved_mask = resolved_label >= 0
+    newly_resolved = resolved_mask & (
+        (previous_resolved < 0) | (previous_resolved != resolved_label)
+    )
+    demoted = (previous_resolved >= 0) & (~resolved_mask)
+    return pending_label, pending_count, resolved_label, newly_resolved, resolved_mask, demoted

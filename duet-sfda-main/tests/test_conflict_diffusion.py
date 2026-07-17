@@ -6,6 +6,7 @@ from src.utils.conflict_diffusion import (
     conflict_diffusion_evidence,
     dual_space_diffusion,
     select_class_balanced_anchors,
+    update_temporal_resolution,
 )
 
 
@@ -67,6 +68,70 @@ class ConflictDiffusionTest(unittest.TestCase):
         self.assertEqual(int(evidence["graph_label"][1]), 0)
         self.assertTrue(evidence["eligible"][3])
         self.assertEqual(int(evidence["graph_label"][3]), 1)
+
+    def test_fixed_anchor_labels_override_current_predictions(self):
+        features = torch.tensor(
+            [[1.0, 0.0], [0.95, 0.05], [0.0, 1.0], [0.05, 0.95]]
+        )
+        source_prob = torch.tensor(
+            [[0.05, 0.95], [0.55, 0.45], [0.95, 0.05], [0.45, 0.55]]
+        )
+        clip_prob = source_prob.clone()
+        current_label = source_prob.argmax(dim=1)
+        fixed_mask = torch.tensor([True, False, True, False])
+        fixed_label = torch.tensor([0, -1, 1, -1])
+
+        _, _, fused, anchors = dual_space_diffusion(
+            features,
+            features,
+            source_prob,
+            clip_prob,
+            current_label,
+            current_label,
+            anchor_ratio=1.0,
+            anchor_min_per_class=1,
+            k=2,
+            temperature=0.1,
+            alpha=0.8,
+            steps=10,
+            device=torch.device("cpu"),
+            anchor_mask=fixed_mask,
+            anchor_label=fixed_label,
+        )
+
+        self.assertTrue(torch.equal(anchors, fixed_mask))
+        self.assertEqual(int(fused[1].argmax()), 0)
+        self.assertEqual(int(fused[3].argmax()), 1)
+
+    def test_reversible_resolution_demotes_stale_label(self):
+        pending_label = torch.full((2,), -1, dtype=torch.long)
+        pending_count = torch.zeros(2, dtype=torch.long)
+        resolved_label = torch.full((2,), -1, dtype=torch.long)
+        eligible = torch.tensor([True, False])
+        proposed = torch.tensor([1, 0])
+
+        state = update_temporal_resolution(
+            pending_label,
+            pending_count,
+            resolved_label,
+            eligible,
+            proposed,
+            stable_cycles=2,
+            memory="reversible",
+        )
+        state = update_temporal_resolution(
+            state[0], state[1], state[2], eligible, proposed,
+            stable_cycles=2, memory="reversible",
+        )
+        self.assertEqual(state[4].tolist(), [True, False])
+
+        no_support = torch.tensor([False, False])
+        state = update_temporal_resolution(
+            state[0], state[1], state[2], no_support, proposed,
+            stable_cycles=2, memory="reversible",
+        )
+        self.assertEqual(state[4].tolist(), [False, False])
+        self.assertEqual(state[5].tolist(), [True, False])
 
 
 if __name__ == "__main__":

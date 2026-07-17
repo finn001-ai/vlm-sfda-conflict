@@ -26,6 +26,7 @@ from src.utils import loss, prompt_tuning, IID_losses
 from src.utils.conflict_diffusion import (
     conflict_diffusion_evidence,
     dual_space_diffusion,
+    update_temporal_resolution,
 )
 # from src.utils import loss, active_prompt, IID_losses
 # from proposed_method import *
@@ -353,6 +354,7 @@ def init_conflict_state(num_samples):
         "accd_pending_label": torch.full((num_samples,), -1, dtype=torch.long),
         "accd_pending_count": torch.zeros(num_samples, dtype=torch.long),
         "accd_resolved_label": torch.full((num_samples,), -1, dtype=torch.long),
+        "accd_anchor_label": torch.full((num_samples,), -1, dtype=torch.long),
     }
 
 
@@ -442,32 +444,24 @@ def build_conflict_kl_target(cfg, clip_soft, source_label, clip_label, model_sof
 
 def update_accd_state(cfg, state, evidence, curr_cycle):
     """Promote only graph-supported conflict labels stable across cycles."""
-    already_resolved = state["accd_resolved_label"] >= 0
-    eligible = evidence["eligible"] & (~already_resolved) & (curr_cycle >= cfg.ACCD.START_CYCLE)
-    proposed = evidence["graph_label"]
-    same_label = state["accd_pending_label"] == proposed
-
-    state["accd_pending_count"] = torch.where(
-        eligible & same_label,
-        state["accd_pending_count"] + 1,
-        torch.where(
-            eligible,
-            torch.ones_like(state["accd_pending_count"]),
-            torch.zeros_like(state["accd_pending_count"]),
-        ),
-    )
-    state["accd_pending_label"] = torch.where(
-        eligible,
-        proposed,
-        torch.full_like(state["accd_pending_label"], -1),
-    )
-    newly_resolved = eligible & (state["accd_pending_count"] >= cfg.ACCD.STABLE_CYCLES)
-    state["accd_resolved_label"] = torch.where(
-        newly_resolved,
-        proposed,
+    eligible = evidence["eligible"] & (curr_cycle >= cfg.ACCD.START_CYCLE)
+    (
+        state["accd_pending_label"],
+        state["accd_pending_count"],
         state["accd_resolved_label"],
+        newly_resolved,
+        resolved_mask,
+        demoted,
+    ) = update_temporal_resolution(
+        state["accd_pending_label"],
+        state["accd_pending_count"],
+        state["accd_resolved_label"],
+        eligible,
+        evidence["graph_label"],
+        cfg.ACCD.STABLE_CYCLES,
+        cfg.ACCD.RESOLUTION_MEMORY,
     )
-    return newly_resolved
+    return newly_resolved, resolved_mask, demoted
 
 
 def train_target(cfg):
@@ -576,6 +570,19 @@ def train_target(cfg):
 
         accd_resolved_mask = torch.zeros_like(label_mask)
         if cfg.ACCD.ENABLED:
+            if cfg.ACCD.ANCHOR_MEMORY == "dynamic":
+                fixed_anchor_mask = None
+                fixed_anchor_label = None
+            elif cfg.ACCD.ANCHOR_MEMORY == "frozen_initial":
+                fixed_anchor_mask = conflict_state["accd_anchor_label"] >= 0
+                if fixed_anchor_mask.any():
+                    fixed_anchor_label = conflict_state["accd_anchor_label"]
+                else:
+                    fixed_anchor_mask = None
+                    fixed_anchor_label = None
+            else:
+                raise ValueError(f"Unknown ACCD.ANCHOR_MEMORY: {cfg.ACCD.ANCHOR_MEMORY}")
+
             task_graph, clip_graph, graph_posterior, anchor_mask = dual_space_diffusion(
                 task_features,
                 clip_features,
@@ -590,7 +597,11 @@ def train_target(cfg):
                 alpha=cfg.ACCD.ALPHA,
                 steps=cfg.ACCD.STEPS,
                 chunk_size=cfg.ACCD.CHUNK_SIZE,
+                anchor_mask=fixed_anchor_mask,
+                anchor_label=fixed_anchor_label,
             )
+            if cfg.ACCD.ANCHOR_MEMORY == "frozen_initial" and fixed_anchor_mask is None:
+                conflict_state["accd_anchor_label"][anchor_mask] = source_label[anchor_mask]
             evidence = conflict_diffusion_evidence(
                 task_graph,
                 clip_graph,
@@ -600,8 +611,9 @@ def train_target(cfg):
                 candidate_mass_threshold=cfg.ACCD.CANDIDATE_MASS,
                 candidate_margin_threshold=cfg.ACCD.CANDIDATE_MARGIN,
             )
-            newly_resolved = update_accd_state(cfg, conflict_state, evidence, curr_cycle)
-            accd_resolved_mask = conflict_state["accd_resolved_label"] >= 0
+            newly_resolved, accd_resolved_mask, demoted = update_accd_state(
+                cfg, conflict_state, evidence, curr_cycle
+            )
             kl_target[accd_resolved_mask] = graph_posterior[accd_resolved_mask]
 
             eligible = evidence["eligible"]
@@ -616,14 +628,18 @@ def train_target(cfg):
             eligible_net_gain = int(eligible_correct.sum().item() - eligible_clip_correct.sum().item())
             logging.info(
                 "ACCD cycle: anchors={}; conflicts={}; cross_space={}; eligible={}; "
-                "outside_candidate={}; newly_resolved={}; resolved_total={}".format(
+                "outside_candidate={}; newly_resolved={}; demoted={}; resolved_active={}; "
+                "anchor_memory={}; resolution_memory={}".format(
                     int(anchor_mask.sum().item()),
                     int(evidence["conflict"].sum().item()),
                     int((evidence["conflict"] & evidence["cross_space_agreement"]).sum().item()),
                     int(eligible.sum().item()),
                     int(evidence["outside_candidate"].sum().item()),
                     int(newly_resolved.sum().item()),
+                    int(demoted.sum().item()),
                     int(accd_resolved_mask.sum().item()),
+                    cfg.ACCD.ANCHOR_MEMORY,
+                    cfg.ACCD.RESOLUTION_MEMORY,
                 )
             )
             logging.info(

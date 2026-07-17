@@ -300,10 +300,12 @@ _C.ACCD.STEPS = 20
 _C.ACCD.CHUNK_SIZE = 512
 _C.ACCD.ANCHOR_RATIO = 0.5
 _C.ACCD.ANCHOR_MIN_PER_CLASS = 5
+_C.ACCD.ANCHOR_MEMORY = "dynamic"
 _C.ACCD.CANDIDATE_MASS = 0.6
 _C.ACCD.CANDIDATE_MARGIN = 0.1
 _C.ACCD.START_CYCLE = 0
 _C.ACCD.STABLE_CYCLES = 2
+_C.ACCD.RESOLUTION_MEMORY = "persistent"
 # --------------------------------- TSD options ----------------------------- #
 _C.TSD = CfgNode()
 
