@@ -64,6 +64,8 @@ Added candidate reliability controls:
 | `DCCL.CAND_WEIGHT` | Candidate loss weighting mode: `none`, `mass`, or `ramp`. |
 | `DCCL.KL_MODE` | Controls how conflict samples participate in the main CLIP KL teacher. |
 | `DCCL.KL_CANDIDATE` | Builds a conflict candidate teacher with `confidence` or `balanced` candidate weights. |
+| `DCCL.CALIB_MODE` | Applies class-wise source/CLIP/mixed prior calibration before pseudo-label generation. |
+| `DCCL.CALIB_POWER` | Strength of prior calibration. |
 | `DCCL.PL_EXPAND` | Expands hard pseudo-label training beyond source/CLIP agreement. |
 | `DCCL.PL_TOPK_PER_CLASS` | Minimum class-balanced top-k pseudo-labels per predicted class. |
 | `DCCL.PL_MIN_CONF` | Confidence floor for class-balanced pseudo-label expansion. |
@@ -78,6 +80,7 @@ duet-sfda-main/tools/run_office_home_dccl_conservative_all.sh
 duet-sfda-main/tools/run_office_home_dccl_scheme_trial_ac.sh
 duet-sfda-main/tools/run_office_home_dccl_curriculum_ac.sh
 duet-sfda-main/tools/run_office_home_dccl_balanced_pl_ac.sh
+duet-sfda-main/tools/run_office_home_dccl_calibration_ac.sh
 ```
 
 ## 2026-07-17 Mid-run Correction
@@ -177,6 +180,15 @@ target samples, then reweight source/CLIP logits before pseudo-label generation.
 
 This changes the actual pseudo-label distribution before both hard-label
 selection and KL supervision, rather than adding losses after labels are chosen.
+
+Implemented fast version:
+
+```text
+source_prior: calibrate source probability distribution by target class prior
+clip_prior: calibrate CLIP probability distribution by target class prior
+both_prior: calibrate both source and CLIP before agreement/fusion
+mix_prior: calibrate only the fused source/CLIP distribution
+```
 
 Updated:
 

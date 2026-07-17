@@ -720,6 +720,44 @@ def expand_pseudo_label_mask(cfg, label_mask, all_mix_output, all_mix_output_pre
     return expanded_mask
 
 
+def prior_calibrate(prob, power, eps):
+    prior = prob.mean(dim=0).clamp_min(eps)
+    calibrated = prob / prior.pow(power)
+    return calibrated / calibrated.sum(dim=1, keepdim=True).clamp_min(eps)
+
+
+def apply_classwise_calibration(cfg, source_prob, clip_prob):
+    mode = cfg.DCCL.CALIB_MODE
+    if mode == "none":
+        mix_prob = (source_prob + clip_prob) / 2
+        return source_prob, clip_prob, mix_prob
+
+    source_cal = source_prob
+    clip_cal = clip_prob
+    if mode in {"source_prior", "both_prior"}:
+        source_cal = prior_calibrate(source_cal, cfg.DCCL.CALIB_POWER, cfg.DCCL.EPSILON)
+    if mode in {"clip_prior", "both_prior"}:
+        clip_cal = prior_calibrate(clip_cal, cfg.DCCL.CALIB_POWER, cfg.DCCL.EPSILON)
+
+    mix_prob = (source_cal + clip_cal) / 2
+    if mode == "mix_prior":
+        mix_prob = prior_calibrate(mix_prob, cfg.DCCL.CALIB_POWER, cfg.DCCL.EPSILON)
+    elif mode not in {"source_prior", "clip_prior", "both_prior"}:
+        raise ValueError(f"Unknown DCCL.CALIB_MODE: {mode}")
+
+    logging.info(
+        "DCCL classwise calibration: mode={}; power={:.3f}; source_prior_range=({:.4f},{:.4f}); clip_prior_range=({:.4f},{:.4f})".format(
+            mode,
+            float(cfg.DCCL.CALIB_POWER),
+            float(source_prob.mean(dim=0).min().item()),
+            float(source_prob.mean(dim=0).max().item()),
+            float(clip_prob.mean(dim=0).min().item()),
+            float(clip_prob.mean(dim=0).max().item()),
+        )
+    )
+    return source_cal, clip_cal, mix_prob
+
+
 def obtain_label(cfg, loader, netF, netB, netC, text_inputs, text_features, clip_model, prev_label_mask, curr_cycle):
     # class_logit_bias = get_class_bias(netF, netB, netC)
     start_test = True
@@ -754,12 +792,12 @@ def obtain_label(cfg, loader, netF, netB, netC, text_inputs, text_features, clip
 
     all_output = nn.Softmax(dim=1)(all_output)
     clip_all_output = nn.Softmax(dim=1)(all_clip_score).cpu()
+    all_output, clip_all_output, all_mix_output = apply_classwise_calibration(cfg, all_output, clip_all_output)
 
     # Compute predictions for all_output and clip_all_output
     _, all_output_pred = torch.max(all_output, dim=1)
     _, clip_all_output_pred = torch.max(clip_all_output, dim=1)
 
-    all_mix_output = (all_output + clip_all_output) / 2
     _, all_mix_output_pred = torch.max(all_mix_output, dim=1)
 
     # Find indices where predictions match
