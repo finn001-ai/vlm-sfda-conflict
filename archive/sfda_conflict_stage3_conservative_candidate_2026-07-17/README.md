@@ -64,6 +64,9 @@ Added candidate reliability controls:
 | `DCCL.CAND_WEIGHT` | Candidate loss weighting mode: `none`, `mass`, or `ramp`. |
 | `DCCL.KL_MODE` | Controls how conflict samples participate in the main CLIP KL teacher. |
 | `DCCL.KL_CANDIDATE` | Builds a conflict candidate teacher with `confidence` or `balanced` candidate weights. |
+| `DCCL.PL_EXPAND` | Expands hard pseudo-label training beyond source/CLIP agreement. |
+| `DCCL.PL_TOPK_PER_CLASS` | Minimum class-balanced top-k pseudo-labels per predicted class. |
+| `DCCL.PL_MIN_CONF` | Confidence floor for class-balanced pseudo-label expansion. |
 
 Added run scripts:
 
@@ -74,6 +77,7 @@ duet-sfda-main/tools/run_office_home_dccl_ac_sweep.sh
 duet-sfda-main/tools/run_office_home_dccl_conservative_all.sh
 duet-sfda-main/tools/run_office_home_dccl_scheme_trial_ac.sh
 duet-sfda-main/tools/run_office_home_dccl_curriculum_ac.sh
+duet-sfda-main/tools/run_office_home_dccl_balanced_pl_ac.sh
 ```
 
 ## 2026-07-17 Mid-run Correction
@@ -111,6 +115,17 @@ Observed mechanism result:
 Conclusion: CLIP KL on conflict samples is still necessary. The next scheme is
 therefore not to remove CLIP supervision, but to delay conflict-candidate
 learning until the target representation has stabilized.
+
+Late curriculum did not improve A->C:
+
+| Trial | A->C |
+|---|---:|
+| `CAND_START_CYCLE=2, CAND_PAR=0.01` | 72.00 |
+| `CAND_START_CYCLE=1, CAND_PAR=0.01` | 71.71 |
+
+The next larger scheme is class-balanced pseudo-label expansion. This changes
+the hard pseudo-label admission rule itself instead of adding a loss to samples
+that remain outside the main pseudo-label set.
 
 Updated:
 

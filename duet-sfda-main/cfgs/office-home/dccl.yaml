@@ -40,6 +40,9 @@ DCCL:
   CAND_WEIGHT: none
   KL_MODE: clip
   KL_CANDIDATE: confidence
+  PL_EXPAND: none
+  PL_TOPK_PER_CLASS: 0
+  PL_MIN_CONF: 0.0
   EPSILON: 1e-6
   TAU_LOW: 0.4
   TAU_HIGH: 0.7

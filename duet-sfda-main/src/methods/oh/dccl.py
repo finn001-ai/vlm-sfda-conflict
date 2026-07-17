@@ -512,6 +512,7 @@ def train_target(cfg):
         netB.eval()
         # netC.eval()
         mem_label, label_mask, confi_imag, confi_dis, clip_soft, source_label, clip_label, model_soft = obtain_label(
+            cfg,
             dset_loaders['test_aug'], netF, netB, netC, text_inputs, text_features, clip_model, prev_label_mask,
             curr_cycle,
         )
@@ -682,7 +683,44 @@ def cal_cosine(weak_feas, strong_feas):
     return mean_cos
 
 
-def obtain_label(loader, netF, netB, netC, text_inputs, text_features, clip_model, prev_label_mask, curr_cycle):
+def expand_pseudo_label_mask(cfg, label_mask, all_mix_output, all_mix_output_pred):
+    if cfg.DCCL.PL_EXPAND == "none":
+        return label_mask
+    if cfg.DCCL.PL_EXPAND != "balanced_topk":
+        raise ValueError(f"Unknown DCCL.PL_EXPAND: {cfg.DCCL.PL_EXPAND}")
+    if cfg.DCCL.PL_TOPK_PER_CLASS <= 0:
+        return label_mask
+
+    expanded_mask = label_mask.clone()
+    mix_conf, _ = torch.max(all_mix_output, dim=1)
+    num_classes = all_mix_output.size(1)
+    for class_idx in range(num_classes):
+        class_mask = all_mix_output_pred == class_idx
+        class_candidates = torch.nonzero(class_mask & (mix_conf >= cfg.DCCL.PL_MIN_CONF), as_tuple=False).squeeze(1)
+        if class_candidates.numel() == 0:
+            continue
+        current_count = int((expanded_mask & class_mask).sum().item())
+        need = int(cfg.DCCL.PL_TOPK_PER_CLASS) - current_count
+        if need <= 0:
+            continue
+        topk = min(need, class_candidates.numel())
+        class_conf = mix_conf[class_candidates]
+        selected = class_candidates[torch.topk(class_conf, k=topk).indices]
+        expanded_mask[selected] = True
+
+    logging.info(
+        "DCCL pseudo-label expansion: mode={}; topk_per_class={}; min_conf={:.3f}; selected={}->{}".format(
+            cfg.DCCL.PL_EXPAND,
+            int(cfg.DCCL.PL_TOPK_PER_CLASS),
+            float(cfg.DCCL.PL_MIN_CONF),
+            int(label_mask.sum().item()),
+            int(expanded_mask.sum().item()),
+        )
+    )
+    return expanded_mask
+
+
+def obtain_label(cfg, loader, netF, netB, netC, text_inputs, text_features, clip_model, prev_label_mask, curr_cycle):
     # class_logit_bias = get_class_bias(netF, netB, netC)
     start_test = True
     with torch.no_grad():
@@ -721,6 +759,9 @@ def obtain_label(loader, netF, netB, netC, text_inputs, text_features, clip_mode
     _, all_output_pred = torch.max(all_output, dim=1)
     _, clip_all_output_pred = torch.max(clip_all_output, dim=1)
 
+    all_mix_output = (all_output + clip_all_output) / 2
+    _, all_mix_output_pred = torch.max(all_mix_output, dim=1)
+
     # Find indices where predictions match
     matching_indices = all_output_pred == clip_all_output_pred
 
@@ -729,6 +770,7 @@ def obtain_label(loader, netF, netB, netC, text_inputs, text_features, clip_mode
         label_mask = prev_label_mask | (~prev_label_mask & matching_indices)
     else:
         label_mask = matching_indices
+    label_mask = expand_pseudo_label_mask(cfg, label_mask, all_mix_output, all_mix_output_pred)
 
     # Filter predictions and labels based on the updated label mask
     valid_preds = all_output_pred[label_mask]
@@ -747,11 +789,6 @@ def obtain_label(loader, netF, netB, netC, text_inputs, text_features, clip_mode
         len(valid_preds), len(all_output_pred), pseudo_label_accuracy * 100
     )
     logging.info(log_str)
-    # Combine outputs for confidence distribution and other uses
-
-    all_mix_output = (all_output + clip_all_output) / 2
-
-    _, all_mix_output_pred = torch.max(all_mix_output, dim=1)
     valid_mixed = all_mix_output_pred[label_mask]
     mixed_output_accuracy = torch.sum(valid_mixed == valid_labels).item() / float(len(valid_preds))
     log_str_valid = "Mixed output with valid mask: {:.2f}%".format(mixed_output_accuracy * 100)
