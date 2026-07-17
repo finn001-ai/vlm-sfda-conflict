@@ -726,8 +726,7 @@ def prior_calibrate(prob, power, eps):
     return calibrated / calibrated.sum(dim=1, keepdim=True).clamp_min(eps)
 
 
-def apply_classwise_calibration(cfg, source_prob, clip_prob):
-    mode = cfg.DCCL.CALIB_MODE
+def apply_classwise_calibration_mode(cfg, source_prob, clip_prob, mode):
     if mode == "none":
         mix_prob = (source_prob + clip_prob) / 2
         return source_prob, clip_prob, mix_prob
@@ -745,9 +744,54 @@ def apply_classwise_calibration(cfg, source_prob, clip_prob):
     elif mode not in {"source_prior", "clip_prior", "both_prior"}:
         raise ValueError(f"Unknown DCCL.CALIB_MODE: {mode}")
 
+    return source_cal, clip_cal, mix_prob
+
+
+def score_calibration_candidate(cfg, source_prob, clip_prob, mix_prob):
+    _, source_pred = torch.max(source_prob, dim=1)
+    _, clip_pred = torch.max(clip_prob, dim=1)
+    agreement = source_pred == clip_pred
+    coverage = agreement.float().mean()
+    mix_conf, _ = torch.max(mix_prob, dim=1)
+    if agreement.any():
+        agreement_conf = mix_conf[agreement].mean()
+    else:
+        agreement_conf = torch.tensor(0.0)
+    score = coverage + float(cfg.DCCL.CALIB_AUTO_LAMBDA) * agreement_conf
+    return float(score.item()), float(coverage.item()), float(agreement_conf.item())
+
+
+def apply_classwise_calibration(cfg, source_prob, clip_prob):
+    mode = cfg.DCCL.CALIB_MODE
+    selected_mode = mode
+    if mode == "auto_agree":
+        candidate_modes = ["none", "source_prior", "clip_prior", "both_prior", "mix_prior"]
+        scored = []
+        for candidate_mode in candidate_modes:
+            candidate_source, candidate_clip, candidate_mix = apply_classwise_calibration_mode(
+                cfg, source_prob, clip_prob, candidate_mode
+            )
+            score, coverage, agreement_conf = score_calibration_candidate(
+                cfg, candidate_source, candidate_clip, candidate_mix
+            )
+            scored.append((score, coverage, agreement_conf, candidate_mode))
+        scored.sort(reverse=True)
+        selected_mode = scored[0][3]
+        logging.info(
+            "DCCL auto calibration scores: {}".format(
+                "; ".join(
+                    "{} score={:.4f} cov={:.4f} conf={:.4f}".format(name, score, coverage, conf)
+                    for score, coverage, conf, name in scored
+                )
+            )
+        )
+
+    source_cal, clip_cal, mix_prob = apply_classwise_calibration_mode(cfg, source_prob, clip_prob, selected_mode)
+
     logging.info(
-        "DCCL classwise calibration: mode={}; power={:.3f}; source_prior_range=({:.4f},{:.4f}); clip_prior_range=({:.4f},{:.4f})".format(
+        "DCCL classwise calibration: requested_mode={}; selected_mode={}; power={:.3f}; source_prior_range=({:.4f},{:.4f}); clip_prior_range=({:.4f},{:.4f})".format(
             mode,
+            selected_mode,
             float(cfg.DCCL.CALIB_POWER),
             float(source_prob.mean(dim=0).min().item()),
             float(source_prob.mean(dim=0).max().item()),

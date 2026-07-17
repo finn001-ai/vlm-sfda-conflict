@@ -265,6 +265,18 @@ Use clip_prior where CLIP class prior is the likely bottleneck, but avoid or
 change calibration on sources where it suppresses useful source structure.
 ```
 
+Next implemented trial:
+
+```text
+auto_agree calibration selector
+```
+
+For each cycle, it evaluates `none`, `source_prior`, `clip_prior`,
+`both_prior`, and `mix_prior` using only unsupervised agreement coverage and
+agreement confidence, then selects one calibration mode before pseudo-label
+generation. The intended test is whether it keeps the A-source gains from
+`clip_prior` while avoiding P/R-source degradation.
+
 Updated:
 
 ```text
