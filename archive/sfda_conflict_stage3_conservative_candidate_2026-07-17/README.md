@@ -305,6 +305,38 @@ duet-sfda-main/tools/extract_final_accuracy.py
 
 The extractor now reports DCCL hyperparameters together with final accuracy.
 
+Weak-source `auto_agree` results:
+
+| Task | DUET paper | fixed `clip_prior` | `auto_agree` | Delta vs fixed |
+|---|---:|---:|---:|---:|
+| P->A | 82.7 | 82.20 | 82.24 | +0.04 |
+| P->C | 73.7 | 72.44 | 71.41 | -1.03 |
+| P->R | 91.2 | 90.80 | 90.82 | +0.02 |
+| R->A | 83.6 | 82.53 | 82.41 | -0.12 |
+| R->C | 74.0 | 72.69 | 72.39 | -0.30 |
+| R->P | 91.2 | 90.79 | 90.76 | -0.03 |
+
+Interpretation:
+
+```text
+auto_agree is not a usable selector in its current form. It does not recover
+the weak Product/RealWorld source tasks and it is especially wrong on P->C.
+This is useful evidence: agreement coverage/confidence is not sufficiently
+aligned with final adaptation accuracy, so the next step should be a task-level
+calibration probe instead of further tuning auto_agree.
+```
+
+Next implemented probe:
+
+```text
+duet-sfda-main/tools/run_office_home_dccl_calibration_weak_probe.sh
+```
+
+It runs `none`, `source_prior`, `clip_prior`, `both_prior`, and `mix_prior` on
+P->A, P->C, P->R, R->A, R->C, and R->P. The purpose is to identify whether the
+weak tasks need no calibration, source-prior calibration, mixed calibration, or
+a target-conditioned rule. This is a diagnostic matrix, not the final method.
+
 ## Next Cloud Order
 
 First confirm baseline on the missing Art-source tasks:
