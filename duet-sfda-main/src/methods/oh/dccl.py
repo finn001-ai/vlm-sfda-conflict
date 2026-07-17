@@ -532,9 +532,11 @@ def train_target(cfg):
             & (~promoted_mask)
             & (~conflict_state["rejected"])
             & (candidate_mass >= cfg.DCCL.CAND_TAU)
+            & (curr_cycle >= cfg.DCCL.CAND_START_CYCLE)
         )
         logging.info(
-            "DCCL candidate gate: tau={:.3f}; weight={}; selected={}/{}".format(
+            "DCCL candidate gate: start_cycle={}; tau={:.3f}; weight={}; selected={}/{}".format(
+                int(cfg.DCCL.CAND_START_CYCLE),
                 float(cfg.DCCL.CAND_TAU),
                 cfg.DCCL.CAND_WEIGHT,
                 int(candidate_mask.sum().item()),

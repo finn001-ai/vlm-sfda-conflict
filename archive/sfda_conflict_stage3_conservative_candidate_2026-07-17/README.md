@@ -59,6 +59,7 @@ Added candidate reliability controls:
 
 | Option | Meaning |
 |---|---|
+| `DCCL.CAND_START_CYCLE` | Starts conflict candidate learning only after a warm-up period. |
 | `DCCL.CAND_TAU` | Only apply candidate loss when model probability mass on `{source_pred, clip_pred}` is at least this threshold. |
 | `DCCL.CAND_WEIGHT` | Candidate loss weighting mode: `none`, `mass`, or `ramp`. |
 | `DCCL.KL_MODE` | Controls how conflict samples participate in the main CLIP KL teacher. |
@@ -72,6 +73,7 @@ duet-sfda-main/tools/run_office_home_dccl_conservative_smoke.sh
 duet-sfda-main/tools/run_office_home_dccl_ac_sweep.sh
 duet-sfda-main/tools/run_office_home_dccl_conservative_all.sh
 duet-sfda-main/tools/run_office_home_dccl_scheme_trial_ac.sh
+duet-sfda-main/tools/run_office_home_dccl_curriculum_ac.sh
 ```
 
 ## 2026-07-17 Mid-run Correction
@@ -99,6 +101,16 @@ The next fast trials change the supervision mechanism:
 | `conflict_candidate_kl` | Replace conflict CLIP KL with a `{source_pred, clip_pred}` candidate teacher. |
 | `candidate_kl_plus_loss` | Candidate teacher plus low-weight candidate-set loss. |
 | `candidate_kl_balanced` | Candidate teacher with balanced source/CLIP weights. |
+
+Observed mechanism result:
+
+| Trial | A->C |
+|---|---:|
+| `conflict_kl_off` | 67.31 |
+
+Conclusion: CLIP KL on conflict samples is still necessary. The next scheme is
+therefore not to remove CLIP supervision, but to delay conflict-candidate
+learning until the target representation has stabilized.
 
 Updated:
 
