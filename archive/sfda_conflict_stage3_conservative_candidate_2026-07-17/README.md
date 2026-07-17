@@ -190,6 +190,27 @@ both_prior: calibrate both source and CLIP before agreement/fusion
 mix_prior: calibrate only the fused source/CLIP distribution
 ```
 
+Calibration A->C results:
+
+| Trial | A->C |
+|---|---:|
+| PLMatch same environment | 72.03 |
+| `source_prior` | 72.10 |
+| `clip_prior` | 72.78 |
+| `both_prior` | 72.74 |
+| `mix_prior` | 72.28 |
+
+Interpretation:
+
+```text
+Class-wise calibration is the first tested mechanism that clearly improves
+A->C over the same-environment PLMatch baseline.
+```
+
+It still does not reach the DUET paper number of 73.6 on A->C, so the next
+decision should be based on multi-task behavior. Run `clip_prior` first on
+A->P and A->R, then expand to all 12 tasks if the Art-source average improves.
+
 Updated:
 
 ```text
