@@ -127,6 +127,57 @@ The next larger scheme is class-balanced pseudo-label expansion. This changes
 the hard pseudo-label admission rule itself instead of adding a loss to samples
 that remain outside the main pseudo-label set.
 
+## A->C Rapid Trial Summary
+
+Same-environment PLMatch baseline:
+
+| Method | A->C |
+|---|---:|
+| PLMatch | 72.03 |
+
+Tested DCCL/candidate variants:
+
+| Trial | A->C | Interpretation |
+|---|---:|---|
+| Candidate loss, `CAND_PAR=0.005` | 71.87 | No improvement. |
+| Candidate loss, `CAND_PAR=0.01` | 71.98 | No improvement. |
+| Candidate loss, `CAND_PAR=0.02` | 71.71 | Stronger candidate loss hurts. |
+| Candidate gate, `CAND_TAU=0.3` | 72.03 | Matches baseline only. |
+| Remove conflict KL | 67.31 | CLIP KL on conflicts is necessary. |
+| Replace conflict KL with candidate KL | incomplete, poor early curve | Too destructive to the main teacher. |
+| Late candidate, start cycle 2 | 72.00 | No improvement. |
+| Late candidate, start cycle 1 | 71.71 | Hurts. |
+| Balanced pseudo-label top30 | 71.71 | Expanding hard labels adds noise. |
+| Balanced pseudo-label top45 | 71.96 | Still below baseline. |
+| Balanced pseudo-label top45, min conf 0.2 | 71.71 | Still below baseline. |
+
+Current conclusion:
+
+```text
+The simple conflict-candidate family is not enough for A->C.
+The problem is not solved by:
+1. adding candidate loss,
+2. delaying candidate loss,
+3. removing conflict CLIP KL,
+4. replacing conflict CLIP KL,
+5. broadening hard pseudo-label coverage by class-balanced top-k.
+```
+
+This is a useful negative result. It means the next step should not be another
+small DCCL variant. The next method-level change should address teacher/source
+calibration or representation alignment more directly.
+
+Recommended next trial:
+
+```text
+Class-wise teacher calibration before fusion:
+estimate per-class reliability of source and CLIP on agreement/high-confidence
+target samples, then reweight source/CLIP logits before pseudo-label generation.
+```
+
+This changes the actual pseudo-label distribution before both hard-label
+selection and KL supervision, rather than adding losses after labels are chosen.
+
 Updated:
 
 ```text
