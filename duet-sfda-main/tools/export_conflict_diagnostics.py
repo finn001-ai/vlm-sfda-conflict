@@ -185,12 +185,17 @@ def main() -> None:
     clip_model.float()
     clip_model.eval()
     text_inputs = clip_pre_text(cfg).to(device)
+    with torch.no_grad():
+        clip_text_features = torch.nn.functional.normalize(
+            clip_model.encode_text(text_inputs), dim=1
+        )
 
     rows: list[dict[str, Any]] = []
     image_records = test_loader.dataset.imgs
     feature_batches = []
     source_prob_batches = []
     clip_prob_batches = []
+    clip_feature_batches = []
     index_batches = []
 
     with torch.no_grad():
@@ -201,7 +206,10 @@ def main() -> None:
 
             source_features = net_b(net_f(weak_x))
             source_logits = net_c(source_features)
-            clip_logits, _ = clip_model(weak_x, text_inputs)
+            clip_features = torch.nn.functional.normalize(
+                clip_model.encode_image(weak_x), dim=1
+            )
+            clip_logits = clip_model.logit_scale.exp() * clip_features @ clip_text_features.t()
 
             source_probs = torch.softmax(source_logits, dim=1).cpu()
             clip_probs = torch.softmax(clip_logits, dim=1).cpu()
@@ -212,6 +220,7 @@ def main() -> None:
             feature_batches.append(source_features.float().cpu().numpy())
             source_prob_batches.append(source_probs.numpy())
             clip_prob_batches.append(clip_probs.numpy())
+            clip_feature_batches.append(clip_features.float().cpu().numpy())
             index_batches.append(indices.cpu().numpy())
 
             for b in range(labels.size(0)):
@@ -275,12 +284,14 @@ def main() -> None:
     features = np.concatenate(feature_batches, axis=0)
     source_probs_np = np.concatenate(source_prob_batches, axis=0)
     clip_probs_np = np.concatenate(clip_prob_batches, axis=0)
+    clip_features_np = np.concatenate(clip_feature_batches, axis=0)
     indices_np = np.concatenate(index_batches, axis=0)
     order = np.argsort(indices_np)
     np.savez_compressed(
         npz_path,
         index=indices_np[order],
         feature=features[order],
+        clip_feature=clip_features_np[order],
         source_probs=source_probs_np[order],
         clip_probs=clip_probs_np[order],
         label=np.array([row["label"] for row in rows], dtype=np.int64),

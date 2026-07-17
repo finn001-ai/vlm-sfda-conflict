@@ -23,6 +23,10 @@ from sklearn.metrics import confusion_matrix
 from src.utils.utils import *
 from src.data.data_list import *
 from src.utils import loss, prompt_tuning, IID_losses
+from src.utils.conflict_diffusion import (
+    conflict_diffusion_evidence,
+    dual_space_diffusion,
+)
 # from src.utils import loss, active_prompt, IID_losses
 # from proposed_method import *
 from torch.nn.functional import normalize
@@ -346,6 +350,9 @@ def init_conflict_state(num_samples):
         "candidate_side": torch.full((num_samples,), -1, dtype=torch.long),
         "candidate_count": torch.zeros(num_samples, dtype=torch.long),
         "rejected": torch.zeros(num_samples, dtype=torch.bool),
+        "accd_pending_label": torch.full((num_samples,), -1, dtype=torch.long),
+        "accd_pending_count": torch.zeros(num_samples, dtype=torch.long),
+        "accd_resolved_label": torch.full((num_samples,), -1, dtype=torch.long),
     }
 
 
@@ -433,6 +440,36 @@ def build_conflict_kl_target(cfg, clip_soft, source_label, clip_label, model_sof
     return kl_target, torch.ones(source_label.size(0), dtype=torch.float)
 
 
+def update_accd_state(cfg, state, evidence, curr_cycle):
+    """Promote only graph-supported conflict labels stable across cycles."""
+    already_resolved = state["accd_resolved_label"] >= 0
+    eligible = evidence["eligible"] & (~already_resolved) & (curr_cycle >= cfg.ACCD.START_CYCLE)
+    proposed = evidence["graph_label"]
+    same_label = state["accd_pending_label"] == proposed
+
+    state["accd_pending_count"] = torch.where(
+        eligible & same_label,
+        state["accd_pending_count"] + 1,
+        torch.where(
+            eligible,
+            torch.ones_like(state["accd_pending_count"]),
+            torch.zeros_like(state["accd_pending_count"]),
+        ),
+    )
+    state["accd_pending_label"] = torch.where(
+        eligible,
+        proposed,
+        torch.full_like(state["accd_pending_label"], -1),
+    )
+    newly_resolved = eligible & (state["accd_pending_count"] >= cfg.ACCD.STABLE_CYCLES)
+    state["accd_resolved_label"] = torch.where(
+        newly_resolved,
+        proposed,
+        state["accd_resolved_label"],
+    )
+    return newly_resolved
+
+
 def train_target(cfg):
     clip_model, preprocess, _ = clip.load(cfg.ACTIVE.ARCH)
     clip_model.float()
@@ -511,26 +548,96 @@ def train_target(cfg):
         netF.eval()
         netB.eval()
         # netC.eval()
-        mem_label, label_mask, confi_imag, confi_dis, clip_soft, source_label, clip_label, model_soft = obtain_label(
+        (
+            mem_label,
+            label_mask,
+            confi_imag,
+            confi_dis,
+            clip_soft,
+            source_label,
+            clip_label,
+            model_soft,
+            task_features,
+            clip_features,
+            target_label,
+        ) = obtain_label(
             cfg,
             dset_loaders['test_aug'], netF, netB, netC, text_inputs, text_features, clip_model, prev_label_mask,
             curr_cycle,
         )
         if conflict_state is None:
             conflict_state = init_conflict_state(source_label.size(0))
-        update_conflict_state(cfg, conflict_state, source_label, clip_label, model_soft)
+        if not cfg.ACCD.ENABLED:
+            update_conflict_state(cfg, conflict_state, source_label, clip_label, model_soft)
         sample_idx = torch.arange(source_label.size(0))
         candidate_mass = model_soft[sample_idx, source_label] + model_soft[sample_idx, clip_label]
         candidate_weight = get_candidate_weight(cfg, candidate_mass)
         kl_target, kl_weight = build_conflict_kl_target(cfg, clip_soft, source_label, clip_label, model_soft)
 
+        accd_resolved_mask = torch.zeros_like(label_mask)
+        if cfg.ACCD.ENABLED:
+            task_graph, clip_graph, graph_posterior, anchor_mask = dual_space_diffusion(
+                task_features,
+                clip_features,
+                model_soft,
+                clip_soft,
+                source_label,
+                clip_label,
+                anchor_ratio=cfg.ACCD.ANCHOR_RATIO,
+                anchor_min_per_class=cfg.ACCD.ANCHOR_MIN_PER_CLASS,
+                k=cfg.ACCD.GRAPH_K,
+                temperature=cfg.ACCD.TEMPERATURE,
+                alpha=cfg.ACCD.ALPHA,
+                steps=cfg.ACCD.STEPS,
+                chunk_size=cfg.ACCD.CHUNK_SIZE,
+            )
+            evidence = conflict_diffusion_evidence(
+                task_graph,
+                clip_graph,
+                graph_posterior,
+                source_label,
+                clip_label,
+                candidate_mass_threshold=cfg.ACCD.CANDIDATE_MASS,
+                candidate_margin_threshold=cfg.ACCD.CANDIDATE_MARGIN,
+            )
+            newly_resolved = update_accd_state(cfg, conflict_state, evidence, curr_cycle)
+            accd_resolved_mask = conflict_state["accd_resolved_label"] >= 0
+            kl_target[accd_resolved_mask] = graph_posterior[accd_resolved_mask]
+
+            eligible = evidence["eligible"]
+            resolved_correct = (
+                conflict_state["accd_resolved_label"][accd_resolved_mask]
+                == target_label[accd_resolved_mask]
+            )
+            eligible_correct = evidence["graph_label"][eligible] == target_label[eligible]
+            logging.info(
+                "ACCD cycle: anchors={}; conflicts={}; cross_space={}; eligible={}; "
+                "outside_candidate={}; newly_resolved={}; resolved_total={}".format(
+                    int(anchor_mask.sum().item()),
+                    int(evidence["conflict"].sum().item()),
+                    int((evidence["conflict"] & evidence["cross_space_agreement"]).sum().item()),
+                    int(eligible.sum().item()),
+                    int(evidence["outside_candidate"].sum().item()),
+                    int(newly_resolved.sum().item()),
+                    int(accd_resolved_mask.sum().item()),
+                )
+            )
+            logging.info(
+                "ACCD oracle diagnostics only: eligible_accuracy={:.2f}%; resolved_accuracy={:.2f}%".format(
+                    float(eligible_correct.float().mean().item() * 100.0) if eligible.any() else 0.0,
+                    float(resolved_correct.float().mean().item() * 100.0) if accd_resolved_mask.any() else 0.0,
+                )
+            )
+
         promoted_mask = conflict_state["promoted_label"] >= 0
         hard_label = mem_label.clone()
         hard_label[promoted_mask] = conflict_state["promoted_label"][promoted_mask]
-        hard_mask = label_mask | promoted_mask
+        hard_label[accd_resolved_mask] = conflict_state["accd_resolved_label"][accd_resolved_mask]
+        hard_mask = label_mask | promoted_mask | accd_resolved_mask
         candidate_mask = (
             (source_label != clip_label)
             & (~promoted_mask)
+            & (~accd_resolved_mask)
             & (~conflict_state["rejected"])
             & (candidate_mass >= cfg.DCCL.CAND_TAU)
             & (curr_cycle >= cfg.DCCL.CAND_START_CYCLE)
@@ -806,6 +913,12 @@ def obtain_label(cfg, loader, netF, netB, netC, text_inputs, text_features, clip
     # class_logit_bias = get_class_bias(netF, netB, netC)
     start_test = True
     with torch.no_grad():
+        if text_features is None:
+            current_text_features = clip_model.encode_text(text_inputs)
+        else:
+            current_text_features = text_features
+        current_text_features = F.normalize(current_text_features, dim=1)
+        clip_logit_scale = clip_model.logit_scale.exp()
         iter_test = iter(loader)
         for _ in range(len(loader)):
             inputs_test, labels, _ = next(iter_test)
@@ -818,21 +931,23 @@ def obtain_label(cfg, loader, netF, netB, netC, text_inputs, text_features, clip
             weak_outputs = netC(weak_feas)
             # strong_outputs = netC(strong_feas)
 
-            if text_features is not None:
-                clip_score = clip_text(clip_model, text_features, weak_x)
-            else:
-                clip_score, _ = clip_model(weak_x, text_inputs)
+            clip_image_features = F.normalize(clip_model.encode_image(weak_x), dim=1)
+            clip_score = clip_logit_scale * clip_image_features @ current_text_features.t()
 
             clip_score = clip_score.cpu()
             if start_test:
                 all_output = weak_outputs.float().cpu()
                 all_clip_score = clip_score.float().cpu()
+                all_task_features = weak_feas.float().cpu()
+                all_clip_features = clip_image_features.float().cpu()
                 all_label = labels.float()
                 start_test = False
             else:
                 all_output = torch.cat((all_output, weak_outputs.float().cpu()), 0)
                 all_label = torch.cat((all_label, labels.float()), 0)
                 all_clip_score = torch.cat((all_clip_score, clip_score.float()), 0)
+                all_task_features = torch.cat((all_task_features, weak_feas.float().cpu()), 0)
+                all_clip_features = torch.cat((all_clip_features, clip_image_features.float().cpu()), 0)
 
     all_output = nn.Softmax(dim=1)(all_output)
     clip_all_output = nn.Softmax(dim=1)(all_clip_score).cpu()
@@ -889,7 +1004,19 @@ def obtain_label(cfg, loader, netF, netB, netC, text_inputs, text_features, clip
     confi_imag = loader.dataset.imgs
     confi_dis = all_mix_output.detach()
 
-    return all_mix_output_pred, label_mask, confi_imag, confi_dis, clip_all_output, all_output_pred, clip_all_output_pred, all_output
+    return (
+        all_mix_output_pred,
+        label_mask,
+        confi_imag,
+        confi_dis,
+        clip_all_output,
+        all_output_pred,
+        clip_all_output_pred,
+        all_output,
+        all_task_features,
+        all_clip_features,
+        all_label.long(),
+    )
 
 
 def clip_pre_text(cfg):

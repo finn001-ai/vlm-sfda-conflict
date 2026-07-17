@@ -370,6 +370,39 @@ If it beats fixed `clip_prior` average and approaches the DUET paper average,
 it becomes the next main method candidate. If it still falls short, use its
 failure pattern to design a source/target-conditioned calibration rule.
 
+Full Office-Home `both_prior` results:
+
+| Task | DUET paper | fixed `clip_prior` | `both_prior` | Delta vs DUET |
+|---|---:|---:|---:|---:|
+| A->C | 73.6 | 72.78 | 72.78 | -0.82 |
+| A->P | 90.4 | 90.88 | 90.81 | +0.41 |
+| A->R | 91.0 | 91.00 | 91.00 | 0.00 |
+| C->A | 83.6 | 83.27 | 83.23 | -0.37 |
+| C->P | 90.7 | 90.81 | 90.92 | +0.22 |
+| C->R | 90.9 | 90.57 | 90.64 | -0.26 |
+| P->A | 82.7 | 82.20 | 82.12 | -0.58 |
+| P->C | 73.7 | 72.44 | 72.81 | -0.89 |
+| P->R | 91.2 | 90.80 | 90.82 | -0.38 |
+| R->A | 83.6 | 82.53 | 82.57 | -1.03 |
+| R->C | 74.0 | 72.69 | 72.97 | -1.03 |
+| R->P | 91.2 | 90.79 | 90.97 | -0.23 |
+| Avg | 84.7 | 84.23 | 84.30 | -0.40 |
+
+Interpretation:
+
+```text
+both_prior is a useful component but not enough as the final method. It gives
+a small average gain over fixed clip_prior (+0.07) and helps target-Clipart
+for P->C/R->C, but the overall average remains below the DUET paper result.
+The next attempt should not be another global calibration mode; it should use
+conflict samples more directly.
+```
+
+The proposed `dual_conflict` KL branch was rejected before cloud training. It
+only changed the distillation target and did not introduce an independent way
+to decide which conflicts are useful. The replacement method is archived in
+`archive/sfda_conflict_stage4_accd_2026-07-18/README.md`.
+
 ## Next Cloud Order
 
 First confirm baseline on the missing Art-source tasks:

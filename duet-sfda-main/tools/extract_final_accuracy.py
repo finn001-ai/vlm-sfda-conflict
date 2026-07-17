@@ -38,8 +38,14 @@ def main() -> None:
         "pl_min_conf": re.compile(r"^\s*PL_MIN_CONF:\s*([^\s]+)", re.MULTILINE),
         "tau_low": re.compile(r"^\s*TAU_LOW:\s*([^\s]+)", re.MULTILINE),
         "promote_k": re.compile(r"^\s*PROMOTE_K:\s*([^\s]+)", re.MULTILINE),
+        "accd_enabled": re.compile(r"^\s*ENABLED:\s*([^\s]+)", re.MULTILINE),
+        "accd_graph_k": re.compile(r"^\s*GRAPH_K:\s*([^\s]+)", re.MULTILINE),
+        "accd_anchor_ratio": re.compile(r"^\s*ANCHOR_RATIO:\s*([^\s]+)", re.MULTILINE),
+        "accd_candidate_mass": re.compile(r"^\s*CANDIDATE_MASS:\s*([^\s]+)", re.MULTILINE),
+        "accd_candidate_margin": re.compile(r"^\s*CANDIDATE_MARGIN:\s*([^\s]+)", re.MULTILINE),
+        "accd_stable_cycles": re.compile(r"^\s*STABLE_CYCLES:\s*([^\s]+)", re.MULTILINE),
     }
-    print("method,task,cycle,iter,accuracy,cand_par,cand_start_cycle,cand_tau,cand_weight,kl_mode,kl_candidate,calib_mode,calib_power,calib_auto_lambda,pl_expand,pl_topk_per_class,pl_min_conf,tau_low,promote_k,log")
+    print("method,task,cycle,iter,accuracy,cand_par,cand_start_cycle,cand_tau,cand_weight,kl_mode,kl_candidate,calib_mode,calib_power,calib_auto_lambda,pl_expand,pl_topk_per_class,pl_min_conf,tau_low,promote_k,accd_enabled,accd_graph_k,accd_anchor_ratio,accd_candidate_mass,accd_candidate_margin,accd_stable_cycles,log")
     for path in paths:
         text = path.read_text(errors="ignore")
         matches = pattern.findall(text)
@@ -59,7 +65,10 @@ def main() -> None:
             f"{cfg_values['kl_mode']},{cfg_values['kl_candidate']},"
             f"{cfg_values['calib_mode']},{cfg_values['calib_power']},{cfg_values['calib_auto_lambda']},"
             f"{cfg_values['pl_expand']},{cfg_values['pl_topk_per_class']},{cfg_values['pl_min_conf']},"
-            f"{cfg_values['tau_low']},{cfg_values['promote_k']},{path}"
+            f"{cfg_values['tau_low']},{cfg_values['promote_k']},"
+            f"{cfg_values['accd_enabled']},{cfg_values['accd_graph_k']},{cfg_values['accd_anchor_ratio']},"
+            f"{cfg_values['accd_candidate_mass']},{cfg_values['accd_candidate_margin']},"
+            f"{cfg_values['accd_stable_cycles']},{path}"
         )
 
 

@@ -288,6 +288,22 @@ _C.DCCL.TAU_LOW = 0.4
 _C.DCCL.TAU_HIGH = 0.7
 _C.DCCL.GAP_PROMOTE = 0.3
 _C.DCCL.PROMOTE_K = 2
+
+# ------------------------------- ACCD options ----------------------------- #
+_C.ACCD = CfgNode()
+
+_C.ACCD.ENABLED = False
+_C.ACCD.GRAPH_K = 15
+_C.ACCD.TEMPERATURE = 0.07
+_C.ACCD.ALPHA = 0.9
+_C.ACCD.STEPS = 20
+_C.ACCD.CHUNK_SIZE = 512
+_C.ACCD.ANCHOR_RATIO = 0.5
+_C.ACCD.ANCHOR_MIN_PER_CLASS = 5
+_C.ACCD.CANDIDATE_MASS = 0.6
+_C.ACCD.CANDIDATE_MARGIN = 0.1
+_C.ACCD.START_CYCLE = 0
+_C.ACCD.STABLE_CYCLES = 2
 # --------------------------------- TSD options ----------------------------- #
 _C.TSD = CfgNode()
 
