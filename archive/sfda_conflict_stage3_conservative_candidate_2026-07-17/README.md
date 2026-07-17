@@ -224,6 +224,47 @@ This improves all three same-environment PLMatch tasks, but is still slightly
 below the DUET paper Art-source average because A->C remains under 73.6. The
 next step is to run the remaining nine Office-Home tasks.
 
+Full Office-Home `clip_prior` results:
+
+| Task | DUET paper | `clip_prior` | Delta |
+|---|---:|---:|---:|
+| A->C | 73.6 | 72.78 | -0.82 |
+| A->P | 90.4 | 90.88 | +0.48 |
+| A->R | 91.0 | 91.00 | +0.00 |
+| C->A | 83.6 | 83.27 | -0.33 |
+| C->P | 90.7 | 90.81 | +0.11 |
+| C->R | 90.9 | 90.57 | -0.33 |
+| P->A | 82.7 | 82.20 | -0.50 |
+| P->C | 73.7 | 72.44 | -1.26 |
+| P->R | 91.2 | 90.80 | -0.40 |
+| R->A | 83.6 | 82.53 | -1.07 |
+| R->C | 74.0 | 72.69 | -1.31 |
+| R->P | 91.2 | 90.79 | -0.41 |
+| Avg | 84.72 | 84.23 | -0.49 |
+
+Conclusion:
+
+```text
+clip_prior is a real mechanism-level improvement over same-environment PLMatch
+on A-source tasks, but it is not enough as a universal 12-task method.
+```
+
+The negative pattern is target/source dependent:
+
+```text
+Art source improves.
+Product/RealWorld -> Clipart remain weak.
+RealWorld source is weak under clip_prior.
+```
+
+Next recommended direction:
+
+```text
+Source/target-conditioned calibration instead of one global calibration mode.
+Use clip_prior where CLIP class prior is the likely bottleneck, but avoid or
+change calibration on sources where it suppresses useful source structure.
+```
+
 Updated:
 
 ```text
