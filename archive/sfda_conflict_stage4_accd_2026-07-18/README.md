@@ -231,6 +231,40 @@ bash tools/run_office_home_accd_v2_ac.sh
 This is a mechanism comparison, not parameter tuning. Expand v2 only if it
 exceeds ACCD v1 (`73.31`), with `73.60` as the DUET target.
 
+## ACCD v2 Result
+
+Two A->C runs produced:
+
+| Run | A->C | Delta vs v1 | Delta vs DUET |
+|---|---:|---:|---:|
+| v2 run 1 | 73.10 | -0.21 | -0.50 |
+| v2 run 2 | 73.17 | -0.14 | -0.43 |
+
+The implementation behaved as designed: anchors stayed fixed at 966 and
+unsupported labels were demoted. However, the result is consistently below v1.
+The combined v2 experiment changed two state mechanisms, so it cannot identify
+whether frozen anchors or reversible labels caused the regression.
+
+Cycle-level evidence suggests testing frozen anchors separately. Compared with
+v1, frozen anchors improved eligible conflict accuracy in the middle cycles,
+whereas reversible memory reduced the number of active labels and did not
+increase their final accuracy. The next controlled ablation is therefore:
+
+```text
+anchor memory: frozen_initial
+resolution memory: persistent
+all numeric parameters: unchanged
+```
+
+Run only A->C:
+
+```bash
+bash tools/run_office_home_accd_frozen_persistent_ac.sh
+```
+
+This branch is accepted only if it exceeds v1 (`73.31`). Otherwise dynamic
+anchors are retained and further anchor-memory variants are stopped.
+
 ## Risks And Falsification
 
 - Agreement anchors can still contain wrong labels. ACCD reduces this through

@@ -113,7 +113,7 @@ if __name__ == "__main__":
         print("using dccl method")
         acc = DCCL.train_target(cfg)
 
-    elif cfg.MODEL.METHOD in {"accd", "accd_v2"}:
+    elif cfg.MODEL.METHOD in {"accd", "accd_v2", "accd_fp"}:
         print("using ACCD method")
         acc = ACCD.train_target(cfg)
 
