@@ -5,7 +5,6 @@ Corresponding paper: http://proceedings.mlr.press/v119/liang20a/liang20a.pdf
 
 import os
 import os.path as osp
-import copy
 import numpy as np
 import torch
 import torch.nn as nn
@@ -277,6 +276,16 @@ def apply_target_head_logits(cfg, features, source_logits, target_head, curr_cyc
     target_logits = target_head(features)
     mix = float(cfg.DCCL.TARGET_HEAD_MIX)
     return (1.0 - mix) * source_logits + mix * target_logits
+
+
+def build_target_classifier_head(cfg, source_head):
+    target_head = network.feat_classifier(
+        type=source_head.type,
+        class_num=cfg.class_num,
+        bottleneck_dim=cfg.bottleneck,
+    ).cuda()
+    target_head.load_state_dict(source_head.state_dict())
+    return target_head
 
 
 @torch.no_grad()
@@ -708,7 +717,7 @@ def train_target(cfg):
     if cfg.DCCL.TARGET_HEAD_ADAPT:
         if cfg.DCCL.TARGET_HEAD_LR_MULT <= 0:
             raise ValueError("DCCL.TARGET_HEAD_LR_MULT must be positive")
-        target_head = copy.deepcopy(netC).cuda()
+        target_head = build_target_classifier_head(cfg, netC)
         target_head.train()
         for k, v in target_head.named_parameters():
             v.requires_grad = True
