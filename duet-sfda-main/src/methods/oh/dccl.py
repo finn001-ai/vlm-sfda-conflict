@@ -25,6 +25,7 @@ from src.utils.utils import *
 from src.data.data_list import *
 from src.utils import loss, prompt_tuning, IID_losses
 from src.utils.conflict_diffusion import (
+    adaptive_graph_teacher_fusion,
     conflict_diffusion_evidence,
     dual_space_diffusion,
     topology_prior_calibrate,
@@ -477,6 +478,7 @@ def save_temporal_diagnostics(
     source_label,
     clip_label,
     model_soft,
+    teacher_soft,
     target_label,
 ):
     if not cfg.DCCL.TEMPORAL_DIAG:
@@ -495,9 +497,51 @@ def save_temporal_diagnostics(
         clip_label=clip_label.cpu().numpy().astype(np.int64),
         task_prob=model_soft.cpu().numpy().astype(np.float32),
         clip_prob=clip_soft.cpu().numpy().astype(np.float32),
+        teacher_label=teacher_soft.argmax(dim=1).cpu().numpy().astype(np.int64),
+        teacher_prob=teacher_soft.cpu().numpy().astype(np.float32),
         target_label=target_label.cpu().numpy().astype(np.int64),
     )
     logging.info("DCCL temporal diagnostics wrote: {}".format(out_path))
+
+
+def build_graph_fused_teacher(cfg, task_features, clip_features, model_soft, clip_soft, source_label, clip_label):
+    if not cfg.DCCL.GRAPH_TEACHER_FUSION:
+        teacher_soft = (model_soft + clip_soft) / 2
+        return teacher_soft, None, None, None
+
+    _, _, graph_post, anchors = dual_space_diffusion(
+        task_features,
+        clip_features,
+        model_soft,
+        clip_soft,
+        source_label,
+        clip_label,
+        anchor_ratio=cfg.DCCL.GTF_ANCHOR_RATIO,
+        anchor_min_per_class=cfg.DCCL.GTF_ANCHOR_MIN_PER_CLASS,
+        k=cfg.DCCL.GTF_GRAPH_K,
+        temperature=cfg.DCCL.GTF_TEMPERATURE,
+        alpha=cfg.DCCL.GTF_ALPHA,
+        steps=cfg.DCCL.GTF_STEPS,
+        chunk_size=cfg.DCCL.GTF_CHUNK_SIZE,
+    )
+    base_teacher = (model_soft + clip_soft) / 2
+    teacher_soft, graph_weight = adaptive_graph_teacher_fusion(
+        base_teacher,
+        graph_post,
+        strength=cfg.DCCL.GTF_STRENGTH,
+        eps=cfg.DCCL.EPSILON,
+    )
+    logging.info(
+        "DCCL graph-teacher fusion: anchors={}; strength={:.3f}; "
+        "mean_graph_weight={:.4f}; max_graph_weight={:.4f}; changed_top1={}".format(
+            int(anchors.sum().item()),
+            float(cfg.DCCL.GTF_STRENGTH),
+            float(graph_weight.mean().item()),
+            float(graph_weight.max().item()),
+            int((base_teacher.argmax(dim=1) != teacher_soft.argmax(dim=1)).sum().item()),
+        )
+    )
+    return teacher_soft, graph_post, graph_weight, anchors
 
 
 def train_target(cfg):
@@ -599,6 +643,17 @@ def train_target(cfg):
             conflict_state = init_conflict_state(source_label.size(0))
         if not cfg.ACCD.ENABLED:
             update_conflict_state(cfg, conflict_state, source_label, clip_label, model_soft)
+        teacher_soft, graph_teacher, graph_weight, graph_anchors = build_graph_fused_teacher(
+            cfg,
+            task_features,
+            clip_features,
+            model_soft,
+            clip_soft,
+            source_label,
+            clip_label,
+        )
+        if cfg.DCCL.GRAPH_TEACHER_FUSION:
+            confi_dis = teacher_soft.detach()
         save_temporal_diagnostics(
             cfg,
             curr_cycle,
@@ -608,12 +663,14 @@ def train_target(cfg):
             source_label,
             clip_label,
             model_soft,
+            teacher_soft,
             target_label,
         )
         sample_idx = torch.arange(source_label.size(0))
         candidate_mass = model_soft[sample_idx, source_label] + model_soft[sample_idx, clip_label]
         candidate_weight = get_candidate_weight(cfg, candidate_mass)
-        kl_target, kl_weight = build_conflict_kl_target(cfg, clip_soft, source_label, clip_label, model_soft)
+        kl_base_soft = teacher_soft if cfg.DCCL.GRAPH_TEACHER_FUSION else clip_soft
+        kl_target, kl_weight = build_conflict_kl_target(cfg, kl_base_soft, source_label, clip_label, model_soft)
 
         accd_resolved_mask = torch.zeros_like(label_mask)
         accd_hard_mask = torch.zeros_like(label_mask)

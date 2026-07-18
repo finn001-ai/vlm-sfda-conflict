@@ -55,6 +55,10 @@ def load_cycles(paths: list[Path]) -> list[dict[str, np.ndarray]]:
     return cycles
 
 
+def teacher_label(item: dict[str, np.ndarray]) -> np.ndarray:
+    return item["teacher_label"] if "teacher_label" in item else item["mix_label"]
+
+
 def analyze_task(task: str, paths: list[Path], min_coverage: float) -> dict[str, object]:
     cycles = load_cycles(paths)
     if len(cycles) < 2:
@@ -66,10 +70,12 @@ def analyze_task(task: str, paths: list[Path], min_coverage: float) -> dict[str,
     label = final["target_label"].astype(np.int64)
     initial_conflict = first["source_label"] != first["clip_label"]
     final_conflict = final["source_label"] != final["clip_label"]
-    stable_mix = prev["mix_label"] == final["mix_label"]
+    prev_teacher = teacher_label(prev)
+    final_teacher = teacher_label(final)
+    stable_mix = prev_teacher == final_teacher
     selected = initial_conflict & stable_mix
 
-    final_mix = final["mix_label"]
+    final_mix = final_teacher
     final_clip = final["clip_label"]
     final_source = final["source_label"]
     first_clip = first["clip_label"]
@@ -104,6 +110,7 @@ def analyze_task(task: str, paths: list[Path], min_coverage: float) -> dict[str,
                 "source_accuracy": accuracy(item["source_label"], cycle_label),
                 "clip_accuracy": accuracy(item["clip_label"], cycle_label),
                 "mix_accuracy": accuracy(item["mix_label"], cycle_label),
+                "teacher_accuracy": accuracy(teacher_label(item), cycle_label),
                 "agreement_rate": pct(
                     np.sum(item["source_label"] == item["clip_label"]),
                     cycle_label.shape[0],

@@ -88,4 +88,15 @@ duet-sfda-main/tools/run_office_home_temporal_conflict_probe.sh
 
 ## Status
 
-No cloud result has been observed yet.
+The temporal dynamics probe passed on A->C, P->C, and R->C. The raw result is
+archived as `temporal_conflict_dynamics_probe_result.json`.
+
+| Task | Stable conflict coverage | Stable teacher acc. | Stable CLIP acc. | Net gain | p-value |
+|---|---:|---:|---:|---:|---:|
+| A->C | 87.3137 | 65.4982 | 64.2066 | +28 | 0.000881 |
+| P->C | 87.6539 | 66.4681 | 65.2766 | +28 | 0.001873 |
+| R->C | 86.5833 | 65.5919 | 64.1001 | +31 | 0.000225 |
+
+This validates adaptation dynamics as a conflict reliability signal, but the
+gain over final CLIP is small. It should be combined with a soft teacher
+improvement rather than converted directly into hard labels.

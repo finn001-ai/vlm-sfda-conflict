@@ -3,6 +3,7 @@ import unittest
 import torch
 
 from src.utils.conflict_diffusion import (
+    adaptive_graph_teacher_fusion,
     align_probability_to_target_prior,
     calibrate_probability_prior,
     conflict_diffusion_evidence,
@@ -277,6 +278,16 @@ class ConflictDiffusionTest(unittest.TestCase):
         self.assertTrue(torch.allclose(source_cal.sum(dim=1), torch.ones(4)))
         self.assertTrue(torch.allclose(clip_cal.sum(dim=1), torch.ones(4)))
         self.assertTrue(torch.allclose(mix_prob.sum(dim=1), torch.ones(4)))
+
+    def test_adaptive_graph_teacher_fusion_preserves_probability_rows(self):
+        teacher = torch.tensor([[0.70, 0.20, 0.10], [0.20, 0.50, 0.30]])
+        graph = torch.tensor([[0.10, 0.80, 0.10], [1.0 / 3, 1.0 / 3, 1.0 / 3]])
+        fused, weight = adaptive_graph_teacher_fusion(teacher, graph, strength=0.5)
+
+        self.assertTrue(torch.allclose(fused.sum(dim=1), torch.ones(2)))
+        self.assertGreater(float(weight[0]), float(weight[1]))
+        self.assertGreater(float(fused[0, 1]), float(teacher[0, 1]))
+        self.assertTrue(torch.allclose(fused[1], teacher[1], atol=1e-6))
 
 
 if __name__ == "__main__":

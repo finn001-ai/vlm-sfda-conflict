@@ -366,6 +366,32 @@ def topology_target_prior_calibrate(
 
 
 @torch.no_grad()
+def adaptive_graph_teacher_fusion(
+    teacher_prob: torch.Tensor,
+    graph_prob: torch.Tensor,
+    strength: float,
+    eps: float = 1e-6,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Fuse a soft teacher with graph posterior using graph entropy as weight."""
+    if teacher_prob.shape != graph_prob.shape or teacher_prob.ndim != 2:
+        raise ValueError("teacher_prob and graph_prob must be matching 2D tensors")
+    if not 0.0 <= strength <= 1.0:
+        raise ValueError("fusion strength must be in [0, 1]")
+
+    graph_prob = graph_prob.to(device=teacher_prob.device, dtype=teacher_prob.dtype)
+    num_classes = teacher_prob.size(1)
+    graph_entropy = -(graph_prob.clamp_min(eps) * graph_prob.clamp_min(eps).log()).sum(dim=1)
+    graph_confidence = 1.0 - graph_entropy / math.log(num_classes)
+    weight = (strength * graph_confidence.clamp(0.0, 1.0)).unsqueeze(1)
+    fused_log = (
+        (1.0 - weight) * teacher_prob.clamp_min(eps).log()
+        + weight * graph_prob.clamp_min(eps).log()
+    )
+    fused = torch.softmax(fused_log, dim=1)
+    return fused, weight.squeeze(1)
+
+
+@torch.no_grad()
 def conflict_diffusion_evidence(
     task_posterior: torch.Tensor,
     clip_posterior: torch.Tensor,

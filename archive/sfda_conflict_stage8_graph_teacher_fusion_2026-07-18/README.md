@@ -94,4 +94,16 @@ duet-sfda-main/tools/run_office_home_graph_teacher_fusion_probe.sh
 
 ## Status
 
-No cloud result has been observed yet.
+The graph-teacher fusion probe passed on A->C, P->C, and R->C. The raw result
+is archived as `graph_teacher_fusion_probe_result.json`.
+
+| Task | both_prior teacher | fused teacher | Delta | both_prior conflict | fused conflict |
+|---|---:|---:|---:|---:|---:|
+| A->C | 61.1226 | 63.6426 | +2.5200 | 42.2417 | 46.8289 |
+| P->C | 61.9244 | 64.0092 | +2.0848 | 46.3154 | 49.6315 |
+| R->C | 61.9244 | 63.1615 | +1.2371 | 42.1515 | 44.5375 |
+
+The graph posterior alone remains weaker than `both_prior`, but continuous
+entropy-adaptive fusion improves the teacher substantially. This supports a
+training run that uses graph fusion as a soft teacher, not as a hard conflict
+resolution rule.
