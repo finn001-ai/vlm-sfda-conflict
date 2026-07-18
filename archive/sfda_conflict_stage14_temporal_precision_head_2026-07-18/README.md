@@ -23,7 +23,7 @@ source classifier frozen as an anchor.
 Create a target classifier head:
 
 ```text
-target_head = copy(source_classifier)
+target_head is initialized from source_classifier weights
 source_classifier remains frozen
 ```
 
@@ -136,3 +136,54 @@ mean over 12 tasks must beat DUET paper mean 84.7167
 no severe collapse on non-Clipart targets
 Clipart gains should remain positive relative to stage11
 ```
+
+## Full 12-Task Result
+
+Cloud full Office-Home training has been observed for
+`temporal_precision_head_all`.
+
+| Task | target_head_all | DUET paper | both_prior | ACCD frozen+persistent | Delta vs DUET | Delta vs both_prior |
+|---|---:|---:|---:|---:|---:|---:|
+| AC | 73.54 | 73.60 | 72.78 | 73.15 | -0.06 | +0.76 |
+| AP | 90.97 | 90.40 | 90.81 | 90.58 | +0.57 | +0.16 |
+| AR | 91.12 | 91.00 | 91.00 | 90.68 | +0.12 | +0.12 |
+| CA | 83.64 | 83.60 | 83.23 | 83.23 | +0.04 | +0.41 |
+| CP | 91.15 | 90.70 | 90.92 | 90.88 | +0.45 | +0.23 |
+| CR | 90.73 | 90.90 | 90.64 | 90.48 | -0.17 | +0.09 |
+| PA | 83.35 | 82.70 | 82.12 | 82.24 | +0.65 | +1.23 |
+| PC | 73.38 | 73.70 | 72.81 | 72.71 | -0.32 | +0.57 |
+| PR | 91.14 | 91.20 | 90.82 | 90.89 | -0.06 | +0.32 |
+| RA | 83.56 | 83.60 | 82.57 | 82.98 | -0.04 | +0.99 |
+| RC | 73.86 | 74.00 | 72.97 | 72.99 | -0.14 | +0.89 |
+| RP | 91.10 | 91.20 | 90.97 | 90.88 | -0.10 | +0.13 |
+| Avg | 84.7950 | 84.7167 | 84.3033 | 84.3075 | +0.0783 | +0.4917 |
+
+The full-task gate passes:
+
+```text
+target_head_all mean = 84.7950
+DUET paper mean = 84.7167
+delta vs DUET = +0.0783
+delta vs both_prior = +0.4917
+delta vs ACCD frozen+persistent = +0.4875
+```
+
+Task-level summary:
+
+```text
+beats DUET paper on 5/12 tasks
+beats both_prior on 12/12 tasks
+beats ACCD frozen+persistent on 12/12 tasks
+dynamics probe passes 12/12 tasks
+```
+
+Conclusion:
+
+```text
+temporal precision target-head is the first method in this project to exceed
+the public DUET Office-Home mean in full 12-task validation
+```
+
+This should now be treated as the main method candidate. Further work should
+prioritize robustness checks and paper-ready ablations over additional
+single-rule graph or pseudo-label admission variants.
