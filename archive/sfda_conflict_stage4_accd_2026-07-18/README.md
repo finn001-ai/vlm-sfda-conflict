@@ -475,6 +475,27 @@ absolute paper gap may partly reflect source checkpoints or environment. Method
 claims must compare against both the same-environment baseline and published
 numbers.
 
+## Partial Same-Environment PLMatch Audit
+
+Only the three Art-source tasks were already available:
+
+| Task | Earlier run | Latest run | DUET paper |
+|---|---:|---:|---:|
+| A->C | 71.84 | 72.03 | 73.60 |
+| A->P | 90.52 | 90.52 | 90.40 |
+| A->R | 90.80 | 90.82 | 91.00 |
+
+The audit fixes the latest runs (`72.03/90.52/90.82`) before seeing the other
+tasks. Complete only the nine missing tasks with:
+
+```bash
+bash tools/run_office_home_plmatch_missing_reference.sh
+```
+
+The isolated method name `plmatch_ref12` prevents old logs from entering the
+remaining-task extraction. The final same-environment average combines these
+nine values with the three fixed Art-source values above.
+
 ## Risks And Falsification
 
 - Agreement anchors can still contain wrong labels. ACCD reduces this through
