@@ -366,6 +366,21 @@ def topology_target_prior_calibrate(
 
 
 @torch.no_grad()
+def graph_entropy_confidence(prob: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    """Return one minus normalized class entropy for each probability row."""
+    if prob.ndim != 2:
+        raise ValueError("prob must be a 2D tensor")
+    num_classes = prob.size(1)
+    if num_classes < 2:
+        return torch.ones(prob.size(0), dtype=prob.dtype, device=prob.device)
+
+    prob = prob.float().clamp_min(eps)
+    prob = prob / prob.sum(dim=1, keepdim=True).clamp_min(eps)
+    entropy = -(prob * prob.log()).sum(dim=1)
+    return (1.0 - entropy / math.log(num_classes)).clamp(0.0, 1.0)
+
+
+@torch.no_grad()
 def adaptive_graph_teacher_fusion(
     teacher_prob: torch.Tensor,
     graph_prob: torch.Tensor,
@@ -379,9 +394,7 @@ def adaptive_graph_teacher_fusion(
         raise ValueError("fusion strength must be in [0, 1]")
 
     graph_prob = graph_prob.to(device=teacher_prob.device, dtype=teacher_prob.dtype)
-    num_classes = teacher_prob.size(1)
-    graph_entropy = -(graph_prob.clamp_min(eps) * graph_prob.clamp_min(eps).log()).sum(dim=1)
-    graph_confidence = 1.0 - graph_entropy / math.log(num_classes)
+    graph_confidence = graph_entropy_confidence(graph_prob, eps)
     weight = (strength * graph_confidence.clamp(0.0, 1.0)).unsqueeze(1)
     fused_log = (
         (1.0 - weight) * teacher_prob.clamp_min(eps).log()
@@ -389,6 +402,53 @@ def adaptive_graph_teacher_fusion(
     )
     fused = torch.softmax(fused_log, dim=1)
     return fused, weight.squeeze(1)
+
+
+@torch.no_grad()
+def graph_temporal_residual_weights(
+    base_prob: torch.Tensor,
+    graph_prob: torch.Tensor,
+    target_label: torch.Tensor,
+    source_label: torch.Tensor,
+    clip_label: torch.Tensor,
+    stable_label: torch.Tensor,
+    min_graph_conf: float,
+    min_disagreement: float,
+    eps: float = 1e-6,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Build residual weights for temporally stable graph-supported conflicts."""
+    if base_prob.shape != graph_prob.shape or base_prob.ndim != 2:
+        raise ValueError("base_prob and graph_prob must be matching 2D tensors")
+    num_samples = base_prob.size(0)
+    if any(
+        t.numel() != num_samples
+        for t in (target_label, source_label, clip_label, stable_label)
+    ):
+        raise ValueError("labels must match the probability sample dimension")
+    if min_graph_conf < 0.0 or min_disagreement < 0.0:
+        raise ValueError("thresholds must be non-negative")
+
+    graph_prob = graph_prob.to(device=base_prob.device, dtype=base_prob.dtype)
+    target_label = target_label.long().to(base_prob.device)
+    source_label = source_label.long().to(base_prob.device)
+    clip_label = clip_label.long().to(base_prob.device)
+    stable_label = stable_label.long().to(base_prob.device)
+
+    sample_idx = torch.arange(num_samples, device=base_prob.device)
+    graph_label = graph_prob.argmax(dim=1)
+    graph_conf = graph_entropy_confidence(graph_prob, eps).to(base_prob.device)
+    base_support = base_prob[sample_idx, target_label].clamp(0.0, 1.0)
+    disagreement = (1.0 - base_support).clamp(0.0, 1.0)
+    active = (
+        (source_label != clip_label)
+        & (stable_label == target_label)
+        & (target_label == graph_label)
+        & (stable_label >= 0)
+        & (graph_conf >= min_graph_conf)
+        & (disagreement >= min_disagreement)
+    )
+    weight = torch.where(active, graph_conf * disagreement, torch.zeros_like(graph_conf))
+    return weight, graph_conf, disagreement
 
 
 @torch.no_grad()

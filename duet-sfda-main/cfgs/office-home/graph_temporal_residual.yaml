@@ -1,6 +1,6 @@
 MODEL:
   ARCH: resnet50
-  METHOD: graph_temporal_kl_only
+  METHOD: graph_temporal_residual
 SETTING:
   DATASET: office-home
   S: 0
@@ -62,7 +62,7 @@ DCCL:
   TEMPORAL_DIAG: True
   TEMPORAL_DIAG_DIR: temporal_diagnostics
   GRAPH_TEACHER_FUSION: True
-  GTF_APPLY_TO: kl
+  GTF_APPLY_TO: none
   GTF_STRENGTH: 0.5
   GTF_GRAPH_K: 15
   GTF_TEMPERATURE: 0.07
@@ -71,7 +71,7 @@ DCCL:
   GTF_CHUNK_SIZE: 512
   GTF_ANCHOR_RATIO: 0.5
   GTF_ANCHOR_MIN_PER_CLASS: 5
-  GTR_PAR: 0.0
+  GTR_PAR: 0.05
   GTR_STABLE_CYCLES: 2
   GTR_MEMORY: reversible
   GTR_MIN_GRAPH_CONF: 0.05

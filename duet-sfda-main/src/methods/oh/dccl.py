@@ -28,6 +28,7 @@ from src.utils.conflict_diffusion import (
     adaptive_graph_teacher_fusion,
     conflict_diffusion_evidence,
     dual_space_diffusion,
+    graph_temporal_residual_weights,
     topology_prior_calibrate,
     topology_target_prior_calibrate,
     transport_candidate_mass,
@@ -360,6 +361,9 @@ def init_conflict_state(num_samples):
         "accd_pending_count": torch.zeros(num_samples, dtype=torch.long),
         "accd_resolved_label": torch.full((num_samples,), -1, dtype=torch.long),
         "accd_anchor_label": torch.full((num_samples,), -1, dtype=torch.long),
+        "gtr_pending_label": torch.full((num_samples,), -1, dtype=torch.long),
+        "gtr_pending_count": torch.zeros(num_samples, dtype=torch.long),
+        "gtr_stable_label": torch.full((num_samples,), -1, dtype=torch.long),
     }
 
 
@@ -679,6 +683,59 @@ def train_target(cfg):
             else clip_soft
         )
         kl_target, kl_weight = build_conflict_kl_target(cfg, kl_base_soft, source_label, clip_label, model_soft)
+        gtr_target = teacher_soft
+        gtr_weight = torch.zeros(source_label.size(0), dtype=torch.float)
+        if cfg.DCCL.GTR_PAR > 0:
+            if graph_teacher is None:
+                raise ValueError("DCCL.GTR_PAR requires DCCL.GRAPH_TEACHER_FUSION=True")
+            teacher_label = teacher_soft.argmax(dim=1)
+            graph_label = graph_teacher.argmax(dim=1)
+            gtr_eligible = (
+                (source_label != clip_label)
+                & (teacher_label == graph_label)
+            )
+            (
+                conflict_state["gtr_pending_label"],
+                conflict_state["gtr_pending_count"],
+                conflict_state["gtr_stable_label"],
+                gtr_newly_stable,
+                gtr_stable_mask,
+                gtr_demoted,
+            ) = update_temporal_resolution(
+                conflict_state["gtr_pending_label"],
+                conflict_state["gtr_pending_count"],
+                conflict_state["gtr_stable_label"],
+                gtr_eligible,
+                teacher_label,
+                cfg.DCCL.GTR_STABLE_CYCLES,
+                cfg.DCCL.GTR_MEMORY,
+            )
+            gtr_weight, gtr_graph_conf, gtr_disagreement = graph_temporal_residual_weights(
+                clip_soft,
+                graph_teacher,
+                teacher_label,
+                source_label,
+                clip_label,
+                conflict_state["gtr_stable_label"],
+                cfg.DCCL.GTR_MIN_GRAPH_CONF,
+                cfg.DCCL.GTR_MIN_DISAGREEMENT,
+                eps=cfg.DCCL.EPSILON,
+            )
+            active_gtr = gtr_weight > 0
+            logging.info(
+                "DCCL graph-temporal residual: eligible={}; newly_stable={}; "
+                "stable_active={}; demoted={}; loss_active={}; mean_weight={:.4f}; "
+                "mean_graph_conf={:.4f}; mean_disagreement={:.4f}".format(
+                    int(gtr_eligible.sum().item()),
+                    int(gtr_newly_stable.sum().item()),
+                    int(gtr_stable_mask.sum().item()),
+                    int(gtr_demoted.sum().item()),
+                    int(active_gtr.sum().item()),
+                    float(gtr_weight[active_gtr].mean().item()) if active_gtr.any() else 0.0,
+                    float(gtr_graph_conf[active_gtr].mean().item()) if active_gtr.any() else 0.0,
+                    float(gtr_disagreement[active_gtr].mean().item()) if active_gtr.any() else 0.0,
+                )
+            )
 
         accd_resolved_mask = torch.zeros_like(label_mask)
         accd_hard_mask = torch.zeros_like(label_mask)
@@ -855,6 +912,8 @@ def train_target(cfg):
         clip_soft = clip_soft.cuda()
         kl_target = kl_target.cuda()
         kl_weight = kl_weight.cuda()
+        gtr_target = gtr_target.cuda()
+        gtr_weight = gtr_weight.cuda()
         mem_label = hard_label.cuda()
         source_label = source_label.cuda()
         clip_label = clip_label.cuda()
@@ -930,6 +989,17 @@ def train_target(cfg):
             if kl_weight_batch.sum() > 0:
                 mi_loss = (per_sample_kl * kl_weight_batch).sum() / kl_weight_batch.sum()
                 classifier_loss += mi_loss * cfg.ACTIVE.KL_PAR
+            if cfg.DCCL.GTR_PAR > 0:
+                gtr_weight_batch = gtr_weight[tar_idx]
+                if gtr_weight_batch.sum() > 0:
+                    gtr_target_batch = gtr_target[tar_idx]
+                    per_sample_gtr = F.kl_div(
+                        weak_preds.log(), gtr_target_batch, reduction="none"
+                    ).sum(dim=1)
+                    gtr_loss = (
+                        per_sample_gtr * gtr_weight_batch
+                    ).sum() / gtr_weight_batch.sum()
+                    classifier_loss += gtr_loss * cfg.DCCL.GTR_PAR
 
             optimizer.zero_grad()
             classifier_loss.backward()

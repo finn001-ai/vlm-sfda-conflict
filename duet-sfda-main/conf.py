@@ -308,6 +308,11 @@ _C.DCCL.GTF_STEPS = 20
 _C.DCCL.GTF_CHUNK_SIZE = 512
 _C.DCCL.GTF_ANCHOR_RATIO = 0.5
 _C.DCCL.GTF_ANCHOR_MIN_PER_CLASS = 5
+_C.DCCL.GTR_PAR = 0.0
+_C.DCCL.GTR_STABLE_CYCLES = 2
+_C.DCCL.GTR_MEMORY = "reversible"
+_C.DCCL.GTR_MIN_GRAPH_CONF = 0.05
+_C.DCCL.GTR_MIN_DISAGREEMENT = 0.25
 
 # ------------------------------- ACCD options ----------------------------- #
 _C.ACCD = CfgNode()

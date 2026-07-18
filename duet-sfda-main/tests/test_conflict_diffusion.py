@@ -8,6 +8,7 @@ from src.utils.conflict_diffusion import (
     calibrate_probability_prior,
     conflict_diffusion_evidence,
     dual_space_diffusion,
+    graph_temporal_residual_weights,
     select_class_balanced_anchors,
     smooth_graph_target_prior,
     topology_prior_calibrate,
@@ -162,6 +163,36 @@ class ConflictDiffusionTest(unittest.TestCase):
         self.assertTrue(torch.equal(corrected[1], teacher[1]))
         self.assertGreater(float(shifted[0]), 0.0)
         self.assertEqual(float(shifted[1]), 0.0)
+
+    def test_graph_temporal_residual_weights_require_stable_graph_conflict(self):
+        base = torch.tensor(
+            [[0.80, 0.20], [0.20, 0.80], [0.45, 0.55], [0.50, 0.50]]
+        )
+        graph = torch.tensor(
+            [[0.10, 0.90], [0.90, 0.10], [0.95, 0.05], [0.50, 0.50]]
+        )
+        target = torch.tensor([1, 0, 0, 0])
+        source = torch.tensor([0, 0, 0, 0])
+        clip = torch.tensor([1, 1, 0, 1])
+        stable = torch.tensor([1, -1, 0, 0])
+
+        weight, graph_conf, disagreement = graph_temporal_residual_weights(
+            base,
+            graph,
+            target,
+            source,
+            clip,
+            stable,
+            min_graph_conf=0.05,
+            min_disagreement=0.25,
+        )
+
+        self.assertGreater(float(weight[0]), 0.0)
+        self.assertEqual(float(weight[1]), 0.0)
+        self.assertEqual(float(weight[2]), 0.0)
+        self.assertEqual(float(weight[3]), 0.0)
+        self.assertGreater(float(graph_conf[0]), 0.0)
+        self.assertGreater(float(disagreement[0]), 0.0)
 
     def test_prior_calibration_uses_external_class_prior(self):
         prob = torch.tensor([[0.80, 0.20], [0.60, 0.40]])

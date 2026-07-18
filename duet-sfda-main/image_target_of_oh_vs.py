@@ -116,6 +116,7 @@ if __name__ == "__main__":
         "temporal_probe",
         "graph_temporal",
         "graph_temporal_kl_only",
+        "graph_temporal_residual",
     }:
         print("using dccl method")
         acc = DCCL.train_target(cfg)

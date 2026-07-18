@@ -41,6 +41,11 @@ def main() -> None:
         "graph_teacher_fusion": re.compile(r"^\s*GRAPH_TEACHER_FUSION:\s*([^\s]+)", re.MULTILINE),
         "gtf_apply_to": re.compile(r"^\s*GTF_APPLY_TO:\s*([^\s]+)", re.MULTILINE),
         "gtf_strength": re.compile(r"^\s*GTF_STRENGTH:\s*([^\s]+)", re.MULTILINE),
+        "gtr_par": re.compile(r"^\s*GTR_PAR:\s*([^\s]+)", re.MULTILINE),
+        "gtr_stable_cycles": re.compile(r"^\s*GTR_STABLE_CYCLES:\s*([^\s]+)", re.MULTILINE),
+        "gtr_memory": re.compile(r"^\s*GTR_MEMORY:\s*([^\s]+)", re.MULTILINE),
+        "gtr_min_graph_conf": re.compile(r"^\s*GTR_MIN_GRAPH_CONF:\s*([^\s]+)", re.MULTILINE),
+        "gtr_min_disagreement": re.compile(r"^\s*GTR_MIN_DISAGREEMENT:\s*([^\s]+)", re.MULTILINE),
         "temporal_diag": re.compile(r"^\s*TEMPORAL_DIAG:\s*([^\s]+)", re.MULTILINE),
         "pl_expand": re.compile(r"^\s*PL_EXPAND:\s*([^\s]+)", re.MULTILINE),
         "pl_topk_per_class": re.compile(r"^\s*PL_TOPK_PER_CLASS:\s*([^\s]+)", re.MULTILINE),
@@ -58,7 +63,7 @@ def main() -> None:
         "accd_resolution_target": re.compile(r"^\s*RESOLUTION_TARGET:\s*([^\s]+)", re.MULTILINE),
         "accd_resolution_action": re.compile(r"^\s*RESOLUTION_ACTION:\s*([^\s]+)", re.MULTILINE),
     }
-    print("method,task,cycle,iter,accuracy,cand_par,cand_start_cycle,cand_tau,cand_weight,kl_mode,kl_candidate,calib_mode,calib_power,calib_auto_lambda,topo_graph_k,topo_alpha,topo_steps,topo_anchor_ratio,topo_target_mix,graph_teacher_fusion,gtf_apply_to,gtf_strength,temporal_diag,pl_expand,pl_topk_per_class,pl_min_conf,tau_low,promote_k,accd_enabled,accd_graph_k,accd_anchor_ratio,accd_anchor_memory,accd_candidate_mass,accd_candidate_margin,accd_stable_cycles,accd_resolution_memory,accd_resolution_target,accd_resolution_action,log")
+    print("method,task,cycle,iter,accuracy,cand_par,cand_start_cycle,cand_tau,cand_weight,kl_mode,kl_candidate,calib_mode,calib_power,calib_auto_lambda,topo_graph_k,topo_alpha,topo_steps,topo_anchor_ratio,topo_target_mix,graph_teacher_fusion,gtf_apply_to,gtf_strength,gtr_par,gtr_stable_cycles,gtr_memory,gtr_min_graph_conf,gtr_min_disagreement,temporal_diag,pl_expand,pl_topk_per_class,pl_min_conf,tau_low,promote_k,accd_enabled,accd_graph_k,accd_anchor_ratio,accd_anchor_memory,accd_candidate_mass,accd_candidate_margin,accd_stable_cycles,accd_resolution_memory,accd_resolution_target,accd_resolution_action,log")
     for path in paths:
         text = path.read_text(errors="ignore")
         matches = pattern.findall(text)
@@ -82,6 +87,9 @@ def main() -> None:
             f"{cfg_values['topo_target_mix']},"
             f"{cfg_values['graph_teacher_fusion']},{cfg_values['gtf_apply_to']},"
             f"{cfg_values['gtf_strength']},"
+            f"{cfg_values['gtr_par']},{cfg_values['gtr_stable_cycles']},"
+            f"{cfg_values['gtr_memory']},{cfg_values['gtr_min_graph_conf']},"
+            f"{cfg_values['gtr_min_disagreement']},"
             f"{cfg_values['temporal_diag']},"
             f"{cfg_values['pl_expand']},{cfg_values['pl_topk_per_class']},{cfg_values['pl_min_conf']},"
             f"{cfg_values['tau_low']},{cfg_values['promote_k']},"
