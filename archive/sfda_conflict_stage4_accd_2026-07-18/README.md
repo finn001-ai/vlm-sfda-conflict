@@ -341,6 +341,42 @@ bash tools/run_office_home_accd_teacher_abstain_ac.sh
 
 Retain this action only if it exceeds `73.36`; `73.60` remains the DUET target.
 
+## Teacher Abstention Result
+
+Topology-gated teacher abstention achieved `72.92` on A->C. It is below
+source-rescue hard labeling (`73.31`), frozen+persistent ACCD (`73.36`), and
+DUET (`73.60`), so the abstention branch is stopped without tuning its weight.
+
+Although CLIP top-1 accuracy on the selected region was only about 20%, fully
+removing its KL signal was harmful. This indicates that CLIP's non-top-1 class
+distribution still carries useful semantic structure or regularization.
+
+## Candidate-Mass Transport
+
+The next action performs a minimal intervention on the CLIP teacher. For every
+temporally stable graph-to-source conflict that is still supported by the two
+current graphs:
+
+```text
+preserve every non-candidate class probability
+preserve q(source) + q(CLIP)
+redistribute only this candidate mass using the dual-graph posterior ratio
+do not create a new hard pseudo-label
+```
+
+This directly addresses both observed failures: it does not force a 65%-accurate
+source hard label, and it does not discard CLIP's full soft distribution. It
+introduces no new loss weight or threshold.
+
+Run A->C:
+
+```bash
+bash tools/run_office_home_accd_candidate_transport_ac.sh
+```
+
+Retain only if final accuracy exceeds `73.36`; reaching `73.60` remains the
+current objective.
+
 ## Risks And Falsification
 
 - Agreement anchors can still contain wrong labels. ACCD reduces this through

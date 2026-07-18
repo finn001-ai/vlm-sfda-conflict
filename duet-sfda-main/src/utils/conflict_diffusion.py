@@ -243,6 +243,46 @@ def conflict_diffusion_evidence(
 
 
 @torch.no_grad()
+def transport_candidate_mass(
+    teacher_prob: torch.Tensor,
+    graph_prob: torch.Tensor,
+    source_label: torch.Tensor,
+    clip_label: torch.Tensor,
+    mask: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Redistribute candidate mass by graph support without changing other classes."""
+    if teacher_prob.shape != graph_prob.shape or teacher_prob.ndim != 2:
+        raise ValueError("teacher_prob and graph_prob must be matching 2D tensors")
+    num_samples = teacher_prob.size(0)
+    if any(t.numel() != num_samples for t in (source_label, clip_label, mask)):
+        raise ValueError("labels and mask must match the teacher sample dimension")
+
+    graph_prob = graph_prob.to(device=teacher_prob.device, dtype=teacher_prob.dtype)
+    source_label = source_label.long().to(teacher_prob.device)
+    clip_label = clip_label.long().to(teacher_prob.device)
+    active = mask.bool().to(teacher_prob.device) & (source_label != clip_label)
+    corrected = teacher_prob.clone()
+    shifted_mass = torch.zeros(num_samples, dtype=teacher_prob.dtype, device=teacher_prob.device)
+    if not active.any():
+        return corrected, shifted_mass
+
+    rows = torch.nonzero(active, as_tuple=False).squeeze(1)
+    source = source_label[rows]
+    clip = clip_label[rows]
+    candidate_mass = teacher_prob[rows, source] + teacher_prob[rows, clip]
+    graph_pair = graph_prob[rows, source] + graph_prob[rows, clip]
+    source_ratio = graph_prob[rows, source] / graph_pair.clamp_min(
+        torch.finfo(graph_prob.dtype).eps
+    )
+    new_source = candidate_mass * source_ratio
+    new_clip = candidate_mass - new_source
+    shifted_mass[rows] = (new_source - teacher_prob[rows, source]).abs()
+    corrected[rows, source] = new_source
+    corrected[rows, clip] = new_clip
+    return corrected, shifted_mass
+
+
+@torch.no_grad()
 def update_temporal_resolution(
     pending_label: torch.Tensor,
     pending_count: torch.Tensor,

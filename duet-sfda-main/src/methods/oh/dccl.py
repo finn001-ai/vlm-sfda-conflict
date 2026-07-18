@@ -26,6 +26,7 @@ from src.utils import loss, prompt_tuning, IID_losses
 from src.utils.conflict_diffusion import (
     conflict_diffusion_evidence,
     dual_space_diffusion,
+    transport_candidate_mass,
     update_temporal_resolution,
 )
 # from src.utils import loss, active_prompt, IID_losses
@@ -570,6 +571,8 @@ def train_target(cfg):
 
         accd_resolved_mask = torch.zeros_like(label_mask)
         accd_hard_mask = torch.zeros_like(label_mask)
+        accd_transport_mask = torch.zeros_like(label_mask)
+        accd_shifted_mass = torch.zeros_like(kl_weight)
         if cfg.ACCD.ENABLED:
             if cfg.ACCD.ANCHOR_MEMORY == "dynamic":
                 fixed_anchor_mask = None
@@ -628,6 +631,23 @@ def train_target(cfg):
             elif cfg.ACCD.RESOLUTION_ACTION == "teacher_abstain":
                 kl_weight[accd_resolved_mask] = 0.0
                 accd_hard_mask = torch.zeros_like(accd_resolved_mask)
+            elif cfg.ACCD.RESOLUTION_ACTION == "candidate_transport":
+                accd_transport_mask = (
+                    accd_resolved_mask
+                    & resolution_evidence["eligible"]
+                    & (
+                        conflict_state["accd_resolved_label"]
+                        == evidence["graph_label"]
+                    )
+                )
+                kl_target, accd_shifted_mass = transport_candidate_mass(
+                    kl_target,
+                    graph_posterior,
+                    source_label,
+                    clip_label,
+                    accd_transport_mask,
+                )
+                accd_hard_mask = torch.zeros_like(accd_resolved_mask)
             else:
                 raise ValueError(
                     f"Unknown ACCD.RESOLUTION_ACTION: {cfg.ACCD.RESOLUTION_ACTION}"
@@ -658,7 +678,8 @@ def train_target(cfg):
                 "ACCD cycle: anchors={}; conflicts={}; cross_space={}; eligible={}; "
                 "outside_candidate={}; newly_resolved={}; demoted={}; resolved_active={}; "
                 "resolution_eligible={}; anchor_memory={}; resolution_memory={}; "
-                "resolution_target={}; resolution_action={}; teacher_abstained={}".format(
+                "resolution_target={}; resolution_action={}; teacher_abstained={}; "
+                "candidate_transported={}; mean_shifted_mass={:.4f}".format(
                     int(anchor_mask.sum().item()),
                     int(evidence["conflict"].sum().item()),
                     int((evidence["conflict"] & evidence["cross_space_agreement"]).sum().item()),
@@ -673,6 +694,9 @@ def train_target(cfg):
                     cfg.ACCD.RESOLUTION_TARGET,
                     cfg.ACCD.RESOLUTION_ACTION,
                     int((kl_weight == 0).sum().item()),
+                    int(accd_transport_mask.sum().item()),
+                    float(accd_shifted_mass[accd_transport_mask].mean().item())
+                    if accd_transport_mask.any() else 0.0,
                 )
             )
             logging.info(

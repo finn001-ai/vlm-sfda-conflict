@@ -1,0 +1,8 @@
+ACCD topology-gated teacher-abstention A->C result, 2026-07-18
+
+Configuration: frozen_initial anchors, persistent resolution,
+source_only resolution target, teacher_abstain action.
+
+Final accuracy: 72.92
+Current frozen+persistent best: 73.36
+DUET paper A->C: 73.60
