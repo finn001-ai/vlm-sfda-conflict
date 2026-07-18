@@ -108,5 +108,38 @@ duet-sfda-main/tools/run_office_home_topo_prior_clipart.sh
 
 ## Status
 
-No cloud result has been observed yet for this stage. Archive the probe JSON
-and any training table here before making a full-method claim.
+The no-adaptation probe failed the training gate:
+
+| Task | both_prior mixed top-1 | topo_prior mixed top-1 | Delta |
+|---|---:|---:|---:|
+| A->C | 61.1226 | 57.2050 | -3.9176 |
+| P->C | 61.9244 | 49.5533 | -12.3711 |
+| R->C | 61.9244 | 50.7904 | -11.1340 |
+| Mean | - | - | -9.1409 |
+
+`topo_prior` had zero passing tasks and is stopped before training. The raw
+result is archived as `topology_prior_probe_result.json`.
+
+## Postmortem
+
+The failure is too large for threshold tuning. The graph posterior mean is a
+spiky anchor/connectedness estimate:
+
+| Task | graph prior max | graph prior entropy |
+|---|---:|---:|
+| A->C | 0.062244 | 3.724241 |
+| P->C | 0.085621 | 3.633934 |
+| R->C | 0.114347 | 3.628017 |
+
+The implemented `topo_prior` divided teacher probabilities by this graph prior.
+That is an inverse-prior operation, not target-prior alignment. `both_prior`
+works because it divides by each teacher's own predicted prior, implicitly
+moving predictions toward a uniform class target. If the graph posterior mean
+is interpreted as a target-domain class prior, the aligned formula should be:
+
+```text
+q(y|x) proportional to p(y|x) * (pi_target(y) / pi_teacher(y))^gamma
+```
+
+Therefore `topo_prior` itself remains a failed branch. A corrected target-prior
+alignment may be tested as a separate stage with its own no-training gate.

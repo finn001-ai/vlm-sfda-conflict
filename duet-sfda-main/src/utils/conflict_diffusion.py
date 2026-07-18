@@ -218,6 +218,57 @@ def calibrate_probability_prior(
 
 
 @torch.no_grad()
+def align_probability_to_target_prior(
+    prob: torch.Tensor,
+    target_prior: torch.Tensor,
+    power: float,
+    eps: float = 1e-6,
+) -> torch.Tensor:
+    """Align probabilities from their empirical prior to a target prior."""
+    if prob.ndim != 2:
+        raise ValueError("prob must be a 2D tensor")
+    if target_prior.ndim != 1 or target_prior.numel() != prob.size(1):
+        raise ValueError("target_prior must have one entry per class")
+    if power < 0:
+        raise ValueError("alignment power must be non-negative")
+
+    target_prior = target_prior.to(device=prob.device, dtype=prob.dtype).clamp_min(eps)
+    target_prior = target_prior / target_prior.sum().clamp_min(eps)
+    empirical_prior = prob.mean(dim=0).clamp_min(eps)
+    empirical_prior = empirical_prior / empirical_prior.sum().clamp_min(eps)
+    ratio = target_prior / empirical_prior
+    aligned = prob * ratio.pow(power).unsqueeze(0)
+    return aligned / aligned.sum(dim=1, keepdim=True).clamp_min(eps)
+
+
+@torch.no_grad()
+def smooth_graph_target_prior(
+    graph_prior: torch.Tensor,
+    target_mix: float,
+    eps: float = 1e-6,
+) -> tuple[torch.Tensor, float]:
+    """Mix a graph prior with uniform using a fixed or entropy-adaptive weight."""
+    if graph_prior.ndim != 1:
+        raise ValueError("graph_prior must be a 1D tensor")
+    graph_prior = graph_prior.float().clamp_min(eps)
+    graph_prior = graph_prior / graph_prior.sum().clamp_min(eps)
+    num_classes = graph_prior.numel()
+    uniform = torch.full_like(graph_prior, 1.0 / num_classes)
+
+    if target_mix < 0:
+        max_entropy = math.log(num_classes)
+        entropy = float(-(graph_prior * graph_prior.clamp_min(eps).log()).sum().item())
+        mix = 0.0 if max_entropy <= 0 else 1.0 - entropy / max_entropy
+    else:
+        mix = float(target_mix)
+    mix = min(1.0, max(0.0, mix))
+
+    target_prior = (1.0 - mix) * uniform + mix * graph_prior
+    target_prior = target_prior / target_prior.sum().clamp_min(eps)
+    return target_prior, mix
+
+
+@torch.no_grad()
 def topology_prior_calibrate(
     task_features: torch.Tensor,
     clip_features: torch.Tensor,
@@ -265,6 +316,53 @@ def topology_prior_calibrate(
     clip_cal = calibrate_probability_prior(clip_prob.float(), graph_prior, power, eps)
     mix_prob = (source_cal + clip_cal) / 2
     return source_cal, clip_cal, mix_prob, graph_prior, anchors
+
+
+@torch.no_grad()
+def topology_target_prior_calibrate(
+    task_features: torch.Tensor,
+    clip_features: torch.Tensor,
+    source_prob: torch.Tensor,
+    clip_prob: torch.Tensor,
+    source_label: torch.Tensor,
+    clip_label: torch.Tensor,
+    *,
+    power: float,
+    target_mix: float,
+    anchor_ratio: float,
+    anchor_min_per_class: int,
+    k: int,
+    temperature: float,
+    alpha: float,
+    steps: int,
+    chunk_size: int = 512,
+    eps: float = 1e-6,
+    device: torch.device | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, float]:
+    """Align both teachers to a smoothed graph-estimated target class prior."""
+    _, _, fused, anchors = dual_space_diffusion(
+        task_features,
+        clip_features,
+        source_prob,
+        clip_prob,
+        source_label,
+        clip_label,
+        anchor_ratio=anchor_ratio,
+        anchor_min_per_class=anchor_min_per_class,
+        k=k,
+        temperature=temperature,
+        alpha=alpha,
+        steps=steps,
+        chunk_size=chunk_size,
+        device=device,
+    )
+    graph_prior = fused.mean(dim=0).clamp_min(eps)
+    graph_prior = graph_prior / graph_prior.sum().clamp_min(eps)
+    target_prior, resolved_mix = smooth_graph_target_prior(graph_prior, target_mix, eps)
+    source_cal = align_probability_to_target_prior(source_prob.float(), target_prior, power, eps)
+    clip_cal = align_probability_to_target_prior(clip_prob.float(), target_prior, power, eps)
+    mix_prob = (source_cal + clip_cal) / 2
+    return source_cal, clip_cal, mix_prob, graph_prior, target_prior, anchors, resolved_mix
 
 
 @torch.no_grad()

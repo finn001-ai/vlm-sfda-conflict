@@ -3,11 +3,14 @@ import unittest
 import torch
 
 from src.utils.conflict_diffusion import (
+    align_probability_to_target_prior,
     calibrate_probability_prior,
     conflict_diffusion_evidence,
     dual_space_diffusion,
     select_class_balanced_anchors,
+    smooth_graph_target_prior,
     topology_prior_calibrate,
+    topology_target_prior_calibrate,
     transport_candidate_mass,
     update_temporal_resolution,
 )
@@ -168,6 +171,25 @@ class ConflictDiffusionTest(unittest.TestCase):
         self.assertGreater(float(calibrated[0, 1]), float(prob[0, 1]))
         self.assertGreater(float(calibrated[1, 1]), float(prob[1, 1]))
 
+    def test_target_prior_alignment_matches_uniform_prior_calibration(self):
+        prob = torch.tensor([[0.80, 0.20], [0.60, 0.40]])
+        uniform = torch.tensor([0.50, 0.50])
+        aligned = align_probability_to_target_prior(prob, uniform, power=0.5)
+        calibrated = calibrate_probability_prior(prob, prob.mean(dim=0), power=0.5)
+
+        self.assertTrue(torch.allclose(aligned, calibrated))
+        self.assertTrue(torch.allclose(aligned.sum(dim=1), torch.ones(2)))
+
+    def test_entropy_adaptive_target_prior_smooths_graph_prior(self):
+        graph_prior = torch.tensor([0.90, 0.10])
+        target_prior, mix = smooth_graph_target_prior(graph_prior, target_mix=-1.0)
+
+        self.assertGreater(mix, 0.0)
+        self.assertLess(mix, 1.0)
+        self.assertTrue(torch.allclose(target_prior.sum(), torch.tensor(1.0)))
+        self.assertLess(float(target_prior[0]), float(graph_prior[0]))
+        self.assertGreater(float(target_prior[1]), float(graph_prior[1]))
+
     def test_topology_prior_calibration_returns_class_level_prior(self):
         features = torch.tensor(
             [
@@ -202,6 +224,56 @@ class ConflictDiffusionTest(unittest.TestCase):
 
         self.assertEqual(int(anchors.sum()), 4)
         self.assertTrue(torch.allclose(graph_prior.sum(), torch.tensor(1.0)))
+        self.assertTrue(torch.allclose(source_cal.sum(dim=1), torch.ones(4)))
+        self.assertTrue(torch.allclose(clip_cal.sum(dim=1), torch.ones(4)))
+        self.assertTrue(torch.allclose(mix_prob.sum(dim=1), torch.ones(4)))
+
+    def test_topology_target_prior_calibration_aligns_to_smoothed_prior(self):
+        features = torch.tensor(
+            [
+                [1.0, 0.0],
+                [0.95, 0.05],
+                [0.0, 1.0],
+                [0.05, 0.95],
+            ]
+        )
+        source_prob = torch.tensor(
+            [[0.90, 0.10], [0.80, 0.20], [0.10, 0.90], [0.20, 0.80]]
+        )
+        clip_prob = source_prob.clone()
+        labels = source_prob.argmax(dim=1)
+
+        (
+            source_cal,
+            clip_cal,
+            mix_prob,
+            graph_prior,
+            target_prior,
+            anchors,
+            target_mix,
+        ) = topology_target_prior_calibrate(
+            features,
+            features,
+            source_prob,
+            clip_prob,
+            labels,
+            labels,
+            power=0.5,
+            target_mix=-1.0,
+            anchor_ratio=1.0,
+            anchor_min_per_class=1,
+            k=2,
+            temperature=0.1,
+            alpha=0.8,
+            steps=10,
+            device=torch.device("cpu"),
+        )
+
+        self.assertEqual(int(anchors.sum()), 4)
+        self.assertTrue(torch.allclose(graph_prior.sum(), torch.tensor(1.0)))
+        self.assertTrue(torch.allclose(target_prior.sum(), torch.tensor(1.0)))
+        self.assertGreaterEqual(target_mix, 0.0)
+        self.assertLessEqual(target_mix, 1.0)
         self.assertTrue(torch.allclose(source_cal.sum(dim=1), torch.ones(4)))
         self.assertTrue(torch.allclose(clip_cal.sum(dim=1), torch.ones(4)))
         self.assertTrue(torch.allclose(mix_prob.sum(dim=1), torch.ones(4)))
