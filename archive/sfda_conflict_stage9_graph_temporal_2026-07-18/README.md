@@ -98,4 +98,26 @@ duet-sfda-main/tools/run_office_home_graph_temporal_clipart.sh
 
 ## Status
 
-No cloud training result has been observed yet.
+Cloud target-Clipart training has been observed.
+
+| Task | graph_temporal | both_prior | DUET paper | Delta vs both_prior | Delta vs DUET |
+|---|---:|---:|---:|---:|---:|
+| A->C | 73.15 | 72.78 | 73.60 | +0.37 | -0.45 |
+| P->C | 72.30 | 72.81 | 73.70 | -0.51 | -1.40 |
+| R->C | 72.71 | 72.97 | 74.00 | -0.26 | -1.29 |
+
+Mean target-Clipart accuracy is 72.72. The expansion gate fails because only
+one of three target-Clipart tasks improves over `both_prior`, and the average
+does not close the DUET gap.
+
+## Conclusion
+
+Do not expand this exact graph-temporal teacher-fusion training configuration
+to all 12 Office-Home tasks.
+
+The result is useful as a negative control: graph-teacher fusion improves the
+offline teacher probe, but feeding that fused teacher directly into both CLIP
+visual update and task-model KL is not robust in training. This supports the
+current interpretation that graph diffusion contains signal, but the training
+injection needs to be weaker or more selectively applied than the default
+continuous teacher replacement used here.
