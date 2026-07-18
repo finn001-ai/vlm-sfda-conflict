@@ -442,6 +442,39 @@ The result determines whether ACCD is retained as the main method or reduced
 to a negative/diagnostic finding. Do not select per-task variants when
 computing the average.
 
+## Full ACCD Result And Stop Decision
+
+Frozen-anchor persistent ACCD achieved a 12-task average of `84.3075`:
+
+| Method | Average | Delta vs DUET | Delta vs both_prior |
+|---|---:|---:|---:|
+| DUET paper | 84.7167 | - | +0.4134 |
+| `both_prior` | 84.3033 | -0.4134 | - |
+| ACCD frozen+persistent | 84.3075 | -0.4092 | +0.0042 |
+
+ACCD beats the DUET paper on only 2/12 tasks and beats the same-environment
+`both_prior` baseline on 5/12. Its average improvement over `both_prior` is
+only `+0.0042`, so it is not an effective main method. Target-domain averages
+also show no broad rescue:
+
+| Target | ACCD | DUET paper | both_prior |
+|---|---:|---:|---:|
+| Clipart | 72.9500 | 73.7667 | 72.8533 |
+| Art | 82.8167 | 83.3000 | 82.6400 |
+| Product | 90.7800 | 90.7667 | 90.9000 |
+| RealWorld | 90.6833 | 91.0333 | 90.8200 |
+
+Stop ACCD as the paper's proposed method. Frozen/dynamic anchors, persistent/
+reversible memory, symmetric/source-only hard labels, teacher abstention,
+candidate-mass transport, and a counterfactual learned selector have now been
+tested or probed. Further combinations within this family are not justified.
+
+Before choosing a replacement method, audit the untouched PLMatch baseline in
+the same environment. A->C has previously run below the paper value, so the
+absolute paper gap may partly reflect source checkpoints or environment. Method
+claims must compare against both the same-environment baseline and published
+numbers.
+
 ## Risks And Falsification
 
 - Agreement anchors can still contain wrong labels. ACCD reduces this through
