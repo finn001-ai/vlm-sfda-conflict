@@ -103,4 +103,11 @@ duet-sfda-main/tools/run_office_home_topo_target_prior_clipart.sh
 
 ## Status
 
-No cloud result has been observed yet for this stage.
+The cloud probe was reported as:
+
+```text
+decision = fail_training_gate
+```
+
+No training run is justified. The graph-prior family is stopped: do not tune
+graph thresholds, target-prior mixing, calibration power, or loss weights.

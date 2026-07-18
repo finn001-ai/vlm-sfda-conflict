@@ -296,6 +296,8 @@ _C.DCCL.TAU_LOW = 0.4
 _C.DCCL.TAU_HIGH = 0.7
 _C.DCCL.GAP_PROMOTE = 0.3
 _C.DCCL.PROMOTE_K = 2
+_C.DCCL.TEMPORAL_DIAG = False
+_C.DCCL.TEMPORAL_DIAG_DIR = "temporal_diagnostics"
 
 # ------------------------------- ACCD options ----------------------------- #
 _C.ACCD = CfgNode()

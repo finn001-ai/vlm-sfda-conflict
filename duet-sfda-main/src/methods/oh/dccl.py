@@ -3,6 +3,7 @@ Builds upon: https://github.com/tim-learn/SHOT
 Corresponding paper: http://proceedings.mlr.press/v119/liang20a/liang20a.pdf
 """
 
+import os
 import os.path as osp
 import numpy as np
 import torch
@@ -467,6 +468,38 @@ def update_accd_state(cfg, state, evidence, curr_cycle):
     return newly_resolved, resolved_mask, demoted
 
 
+def save_temporal_diagnostics(
+    cfg,
+    curr_cycle,
+    mem_label,
+    label_mask,
+    clip_soft,
+    source_label,
+    clip_label,
+    model_soft,
+    target_label,
+):
+    if not cfg.DCCL.TEMPORAL_DIAG:
+        return
+
+    out_dir = osp.join(cfg.output_dir, cfg.DCCL.TEMPORAL_DIAG_DIR)
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = osp.join(out_dir, f"{cfg.name}_cycle{curr_cycle + 1:02d}.npz")
+    np.savez_compressed(
+        out_path,
+        cycle=np.array(curr_cycle + 1, dtype=np.int64),
+        task=np.array(cfg.name),
+        mix_label=mem_label.cpu().numpy().astype(np.int64),
+        label_mask=label_mask.cpu().numpy().astype(bool),
+        source_label=source_label.cpu().numpy().astype(np.int64),
+        clip_label=clip_label.cpu().numpy().astype(np.int64),
+        task_prob=model_soft.cpu().numpy().astype(np.float32),
+        clip_prob=clip_soft.cpu().numpy().astype(np.float32),
+        target_label=target_label.cpu().numpy().astype(np.int64),
+    )
+    logging.info("DCCL temporal diagnostics wrote: {}".format(out_path))
+
+
 def train_target(cfg):
     clip_model, preprocess, _ = clip.load(cfg.ACTIVE.ARCH)
     clip_model.float()
@@ -566,6 +599,17 @@ def train_target(cfg):
             conflict_state = init_conflict_state(source_label.size(0))
         if not cfg.ACCD.ENABLED:
             update_conflict_state(cfg, conflict_state, source_label, clip_label, model_soft)
+        save_temporal_diagnostics(
+            cfg,
+            curr_cycle,
+            mem_label,
+            label_mask,
+            clip_soft,
+            source_label,
+            clip_label,
+            model_soft,
+            target_label,
+        )
         sample_idx = torch.arange(source_label.size(0))
         candidate_mass = model_soft[sample_idx, source_label] + model_soft[sample_idx, clip_label]
         candidate_weight = get_candidate_weight(cfg, candidate_mass)
