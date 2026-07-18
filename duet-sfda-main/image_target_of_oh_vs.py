@@ -121,6 +121,7 @@ if __name__ == "__main__":
         "temporal_precision_proto",
         "temporal_precision_balanced",
         "temporal_precision_head",
+        "temporal_precision_head_all",
     }:
         print("using dccl method")
         acc = DCCL.train_target(cfg)

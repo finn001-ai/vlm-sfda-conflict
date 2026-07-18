@@ -77,3 +77,62 @@ no task drops below both_prior
 
 If this fails, archive it and stop target-head adaptation variants unless a
 new diagnostic shows the head is underfitting rather than drifting.
+
+## Result
+
+Cloud target-Clipart training has been observed.
+
+| Task | temporal_precision_head | temporal_precision_residual | both_prior | DUET paper | Delta vs stage11 | Delta vs DUET |
+|---|---:|---:|---:|---:|---:|---:|
+| A->C | 73.65 | 73.38 | 72.78 | 73.60 | +0.27 | +0.05 |
+| P->C | 73.22 | 73.06 | 72.81 | 73.70 | +0.16 | -0.48 |
+| R->C | 73.95 | 73.36 | 72.97 | 74.00 | +0.59 | -0.05 |
+
+Mean target-Clipart accuracy is 73.6067, above the stage11
+`temporal_precision_residual` mean of 73.2667 by +0.34. No Clipart task drops
+below `both_prior`. A->C exceeds the DUET paper value, and R->C is within 0.05
+of DUET.
+
+The temporal dynamics probe passes all three Clipart tasks:
+
+| Task | cycle4 teacher | cycle4 mix | cycle4 valid labels | cycle4 valid label accuracy |
+|---|---:|---:|---:|---:|
+| A->C | 73.6999 | 72.8522 | 3198 | 84.9906 |
+| P->C | 73.5395 | 72.4857 | 3199 | 84.8078 |
+| R->C | 73.8832 | 73.0584 | 3240 | 84.7531 |
+
+Conclusion:
+
+```text
+target-head adaptation is the first post-stage11 change with a clear Clipart gain
+it should be expanded to all 12 Office-Home tasks before tuning variants
+do not treat this as proof of full DUET-level performance yet
+```
+
+Next command should run the same config on all Office-Home tasks and extract a
+full 12-task table. Only after that result is known should TARGET_HEAD_MIX or
+start-cycle variants be considered.
+
+## Full 12-Task Follow-Up
+
+```bash
+cd /openbayes/home/vlm-sfda-conflict
+git pull
+cd duet-sfda-main
+bash tools/run_office_home_temporal_precision_head_all.sh
+```
+
+Bring back:
+
+```text
+output/uda/office-home/temporal_precision_head_all_accuracy.csv
+output/uda/office-home/temporal_precision_head_all_dynamics_probe.json
+```
+
+Full-task gate:
+
+```text
+mean over 12 tasks must beat DUET paper mean 84.7167
+no severe collapse on non-Clipart targets
+Clipart gains should remain positive relative to stage11
+```
