@@ -452,6 +452,92 @@ def graph_temporal_residual_weights(
 
 
 @torch.no_grad()
+def class_balanced_mask_by_prior(
+    labels: torch.Tensor,
+    candidate_mask: torch.Tensor,
+    score: torch.Tensor,
+    prior: torch.Tensor,
+    total_budget: int,
+    min_per_class: int = 1,
+    eps: float = 1e-6,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Select a class-balanced subset according to a target class prior."""
+    if labels.ndim != 1 or candidate_mask.ndim != 1 or score.ndim != 1:
+        raise ValueError("labels, candidate_mask, and score must be 1D tensors")
+    if labels.numel() != candidate_mask.numel() or labels.numel() != score.numel():
+        raise ValueError("labels, candidate_mask, and score must have matching lengths")
+    if prior.ndim != 1:
+        raise ValueError("prior must be a 1D tensor")
+    if total_budget <= 0:
+        return torch.zeros_like(candidate_mask, dtype=torch.bool), torch.zeros_like(prior, dtype=torch.long)
+    if min_per_class < 0:
+        raise ValueError("min_per_class must be non-negative")
+
+    device = labels.device
+    labels = labels.long()
+    candidate_mask = candidate_mask.bool()
+    score = score.float().to(device)
+    prior = prior.float().to(device).clamp_min(eps)
+    prior = prior / prior.sum().clamp_min(eps)
+    num_classes = prior.numel()
+    if labels.numel() == 0:
+        return candidate_mask.clone(), torch.zeros(num_classes, dtype=torch.long, device=device)
+
+    class_counts = torch.zeros(num_classes, dtype=torch.long, device=device)
+    for class_idx in range(num_classes):
+        class_counts[class_idx] = int((candidate_mask & (labels == class_idx)).sum().item())
+
+    active_classes = class_counts > 0
+    budget = min(int(total_budget), int(candidate_mask.sum().item()))
+    quotas_float = prior * float(budget)
+    quotas = torch.floor(quotas_float).long()
+    if int(active_classes.sum().item()) * min_per_class <= budget:
+        quotas = torch.where(
+            active_classes,
+            torch.maximum(quotas, torch.full_like(quotas, min_per_class)),
+            torch.zeros_like(quotas),
+        )
+    else:
+        quotas = torch.where(active_classes, quotas, torch.zeros_like(quotas))
+    quotas = torch.minimum(quotas, class_counts)
+
+    while int(quotas.sum().item()) > budget:
+        reducible = quotas > 0
+        if int(active_classes.sum().item()) * min_per_class <= budget:
+            reducible = quotas > min_per_class
+        if not reducible.any():
+            break
+        class_idx = torch.argmax(torch.where(reducible, quotas, torch.full_like(quotas, -1))).item()
+        quotas[class_idx] -= 1
+
+    remainder = budget - int(quotas.sum().item())
+    if remainder > 0:
+        fractional = quotas_float - torch.floor(quotas_float)
+        for class_idx in torch.argsort(fractional, descending=True).tolist():
+            if remainder <= 0:
+                break
+            room = int(class_counts[class_idx].item() - quotas[class_idx].item())
+            if room <= 0:
+                continue
+            add = min(room, remainder)
+            quotas[class_idx] += add
+            remainder -= add
+
+    selected = torch.zeros_like(candidate_mask, dtype=torch.bool)
+    for class_idx in range(num_classes):
+        keep = int(quotas[class_idx].item())
+        if keep <= 0:
+            continue
+        rows = torch.nonzero(candidate_mask & (labels == class_idx), as_tuple=False).squeeze(1)
+        if rows.numel() <= keep:
+            selected[rows] = True
+        else:
+            top_rows = rows[torch.topk(score[rows], k=keep).indices]
+            selected[top_rows] = True
+    return selected, quotas
+
+
+@torch.no_grad()
 def conflict_diffusion_evidence(
     task_posterior: torch.Tensor,
     clip_posterior: torch.Tensor,

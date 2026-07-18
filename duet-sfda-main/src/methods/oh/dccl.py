@@ -26,6 +26,7 @@ from src.data.data_list import *
 from src.utils import loss, prompt_tuning, IID_losses
 from src.utils.conflict_diffusion import (
     adaptive_graph_teacher_fusion,
+    class_balanced_mask_by_prior,
     conflict_diffusion_evidence,
     dual_space_diffusion,
     graph_temporal_residual_weights,
@@ -1202,6 +1203,7 @@ def apply_pseudo_label_memory(
     prev_label_mask,
     matching_indices,
     all_mix_output_pred,
+    all_mix_output,
     mix_conf,
     pl_state,
     curr_cycle,
@@ -1269,6 +1271,33 @@ def apply_pseudo_label_memory(
             pl_state["stable_label"],
             all_mix_output_pred,
         )
+
+    if cfg.DCCL.PL_CLASS_BALANCE and not warmup:
+        budget = int(round(float(cfg.DCCL.PL_BALANCE_COVERAGE) * memory_label.numel()))
+        if budget <= 0:
+            budget = int(label_mask.sum().item())
+        target_prior = all_mix_output.mean(dim=0)
+        balanced_mask, quotas = class_balanced_mask_by_prior(
+            memory_label,
+            label_mask,
+            mix_conf,
+            target_prior,
+            budget,
+            min_per_class=cfg.DCCL.PL_BALANCE_MIN_PER_CLASS,
+            eps=cfg.DCCL.EPSILON,
+        )
+        logging.info(
+            "DCCL pseudo-label class balance: selected={}->{}; budget={}; "
+            "active_classes={}; quota_range=({},{})".format(
+                int(label_mask.sum().item()),
+                int(balanced_mask.sum().item()),
+                int(budget),
+                int((quotas > 0).sum().item()),
+                int(quotas[quotas > 0].min().item()) if (quotas > 0).any() else 0,
+                int(quotas.max().item()) if quotas.numel() else 0,
+            )
+        )
+        label_mask = balanced_mask
 
     logging.info(
         "DCCL pseudo-label memory: mode={}; stable_memory={}; warmup={}; "
@@ -1528,6 +1557,7 @@ def obtain_label(
         prev_label_mask,
         matching_indices,
         all_mix_output_pred,
+        all_mix_output,
         mix_conf,
         pl_state,
         curr_cycle,

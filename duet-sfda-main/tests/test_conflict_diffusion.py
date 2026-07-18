@@ -6,6 +6,7 @@ from src.utils.conflict_diffusion import (
     adaptive_graph_teacher_fusion,
     align_probability_to_target_prior,
     calibrate_probability_prior,
+    class_balanced_mask_by_prior,
     conflict_diffusion_evidence,
     dual_space_diffusion,
     graph_temporal_residual_weights,
@@ -193,6 +194,27 @@ class ConflictDiffusionTest(unittest.TestCase):
         self.assertEqual(float(weight[3]), 0.0)
         self.assertGreater(float(graph_conf[0]), 0.0)
         self.assertGreater(float(disagreement[0]), 0.0)
+
+    def test_class_balanced_mask_by_prior_caps_overrepresented_classes(self):
+        labels = torch.tensor([0, 0, 0, 0, 1, 1, 2, 2])
+        candidate_mask = torch.ones(8, dtype=torch.bool)
+        score = torch.tensor([0.1, 0.9, 0.8, 0.2, 0.6, 0.5, 0.4, 0.3])
+        prior = torch.tensor([1.0, 1.0, 1.0])
+
+        selected, quotas = class_balanced_mask_by_prior(
+            labels,
+            candidate_mask,
+            score,
+            prior,
+            total_budget=6,
+            min_per_class=1,
+        )
+
+        self.assertEqual(int(selected.sum()), 6)
+        self.assertEqual(quotas.tolist(), [2, 2, 2])
+        self.assertTrue(selected[1])
+        self.assertTrue(selected[2])
+        self.assertFalse(selected[0])
 
     def test_prior_calibration_uses_external_class_prior(self):
         prob = torch.tensor([[0.80, 0.20], [0.60, 0.40]])

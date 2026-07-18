@@ -84,3 +84,28 @@ no task drops below both_prior
 
 If this fails, archive the result and move away from target prototype
 adaptation.
+
+## Result
+
+Cloud target-Clipart training has been observed.
+
+| Task | temporal_precision_proto | temporal_precision_residual | both_prior | DUET paper | Delta vs stage11 | Delta vs DUET |
+|---|---:|---:|---:|---:|---:|---:|
+| A->C | 73.06 | 73.38 | 72.78 | 73.60 | -0.32 | -0.54 |
+| P->C | 72.90 | 73.06 | 72.81 | 73.70 | -0.16 | -0.80 |
+| R->C | 73.47 | 73.36 | 72.97 | 74.00 | +0.11 | -0.53 |
+
+Mean target-Clipart accuracy is 73.14, below the stage11
+`temporal_precision_residual` mean of 73.27. No task reaches the DUET paper
+number. The prototype adapter therefore fails the stage gate.
+
+Conclusion:
+
+```text
+do not tune PROTO_MIX/temperature/min_per_class variants
+move away from target prototype adaptation
+```
+
+The useful signal remains stage11's temporal precision memory. The next
+direction should improve the pseudo-label pool's target-class coverage and
+class balance rather than perturb the classifier logits.

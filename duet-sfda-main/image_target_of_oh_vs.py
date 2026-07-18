@@ -119,6 +119,7 @@ if __name__ == "__main__":
         "graph_temporal_residual",
         "temporal_precision_residual",
         "temporal_precision_proto",
+        "temporal_precision_balanced",
     }:
         print("using dccl method")
         acc = DCCL.train_target(cfg)
