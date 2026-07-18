@@ -265,6 +265,47 @@ bash tools/run_office_home_accd_frozen_persistent_ac.sh
 This branch is accepted only if it exceeds v1 (`73.31`). Otherwise dynamic
 anchors are retained and further anchor-memory variants are stopped.
 
+## Frozen-Anchor Persistent Result
+
+The controlled A->C ablation achieved `73.36`:
+
+| Method | A->C |
+|---|---:|
+| `both_prior` | 72.78 |
+| ACCD v1, dynamic + persistent | 73.31 |
+| ACCD frozen + reversible | 73.10 / 73.17 |
+| ACCD frozen + persistent | **73.36** |
+| DUET paper | 73.60 |
+
+Freezing the initial anchor bank is retained, but its isolated gain is only
+`+0.05`; further anchor-memory variants are stopped.
+
+## Asymmetric Source Rescue
+
+The remaining training action is unnecessarily symmetric. When the graph
+selects the CLIP candidate, ACCD currently converts a conflict into a hard CLIP
+label even though DUET already supplies soft CLIP supervision through KL. This
+adds no new teacher information and can harden CLIP errors. The actual new
+signal is the opposite case: both target graphs support the source candidate
+against CLIP.
+
+The next mechanism therefore uses ACCD as an asymmetric adjudicator:
+
+```text
+graph selects source candidate -> temporal promotion and graph target
+graph selects CLIP candidate   -> unchanged DUET conflict path
+```
+
+All graph parameters, anchor settings, calibration, loss weights, and temporal
+stability requirements remain unchanged. Run A->C only:
+
+```bash
+bash tools/run_office_home_accd_source_rescue_ac.sh
+```
+
+This source-rescue branch must exceed `73.36` to be retained and must reach
+`73.60` to meet the current A->C objective.
+
 ## Risks And Falsification
 
 - Agreement anchors can still contain wrong labels. ACCD reduces this through

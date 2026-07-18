@@ -1,0 +1,7 @@
+accd_fp,AC,4/4,276/276,73.36,anchor_memory=frozen_initial,resolution_memory=persistent,resolution_target=both
+
+Reference:
+both_prior=72.78
+accd_v1=73.31
+accd_v2=73.10/73.17
+DUET_paper=73.60

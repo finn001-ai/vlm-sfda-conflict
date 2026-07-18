@@ -1,6 +1,6 @@
 MODEL:
   ARCH: resnet50
-  METHOD: accd_v2
+  METHOD: accd_sr
 SETTING:
   DATASET: office-home
   S: 0
@@ -65,5 +65,5 @@ ACCD:
   CANDIDATE_MARGIN: 0.1
   START_CYCLE: 0
   STABLE_CYCLES: 2
-  RESOLUTION_MEMORY: reversible
-  RESOLUTION_TARGET: both
+  RESOLUTION_MEMORY: persistent
+  RESOLUTION_TARGET: source_only

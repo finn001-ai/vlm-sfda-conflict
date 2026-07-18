@@ -306,6 +306,7 @@ _C.ACCD.CANDIDATE_MARGIN = 0.1
 _C.ACCD.START_CYCLE = 0
 _C.ACCD.STABLE_CYCLES = 2
 _C.ACCD.RESOLUTION_MEMORY = "persistent"
+_C.ACCD.RESOLUTION_TARGET = "both"
 # --------------------------------- TSD options ----------------------------- #
 _C.TSD = CfgNode()
 

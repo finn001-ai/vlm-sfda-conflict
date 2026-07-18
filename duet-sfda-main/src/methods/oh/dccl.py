@@ -611,8 +611,15 @@ def train_target(cfg):
                 candidate_mass_threshold=cfg.ACCD.CANDIDATE_MASS,
                 candidate_margin_threshold=cfg.ACCD.CANDIDATE_MARGIN,
             )
+            resolution_evidence = dict(evidence)
+            if cfg.ACCD.RESOLUTION_TARGET == "source_only":
+                resolution_evidence["eligible"] = (
+                    evidence["eligible"] & (evidence["graph_label"] == source_label)
+                )
+            elif cfg.ACCD.RESOLUTION_TARGET != "both":
+                raise ValueError(f"Unknown ACCD.RESOLUTION_TARGET: {cfg.ACCD.RESOLUTION_TARGET}")
             newly_resolved, accd_resolved_mask, demoted = update_accd_state(
-                cfg, conflict_state, evidence, curr_cycle
+                cfg, conflict_state, resolution_evidence, curr_cycle
             )
             kl_target[accd_resolved_mask] = graph_posterior[accd_resolved_mask]
 
@@ -623,13 +630,25 @@ def train_target(cfg):
             )
             eligible_correct = evidence["graph_label"][eligible] == target_label[eligible]
             eligible_clip_correct = clip_label[eligible] == target_label[eligible]
+            resolution_eligible = resolution_evidence["eligible"]
+            resolution_correct = (
+                evidence["graph_label"][resolution_eligible]
+                == target_label[resolution_eligible]
+            )
+            resolution_clip_correct = (
+                clip_label[resolution_eligible] == target_label[resolution_eligible]
+            )
             resolved_to_source = eligible & (evidence["graph_label"] == source_label)
             resolved_to_clip = eligible & (evidence["graph_label"] == clip_label)
             eligible_net_gain = int(eligible_correct.sum().item() - eligible_clip_correct.sum().item())
+            resolution_net_gain = int(
+                resolution_correct.sum().item() - resolution_clip_correct.sum().item()
+            )
             logging.info(
                 "ACCD cycle: anchors={}; conflicts={}; cross_space={}; eligible={}; "
                 "outside_candidate={}; newly_resolved={}; demoted={}; resolved_active={}; "
-                "anchor_memory={}; resolution_memory={}".format(
+                "resolution_eligible={}; anchor_memory={}; resolution_memory={}; "
+                "resolution_target={}".format(
                     int(anchor_mask.sum().item()),
                     int(evidence["conflict"].sum().item()),
                     int((evidence["conflict"] & evidence["cross_space_agreement"]).sum().item()),
@@ -638,18 +657,27 @@ def train_target(cfg):
                     int(newly_resolved.sum().item()),
                     int(demoted.sum().item()),
                     int(accd_resolved_mask.sum().item()),
+                    int(resolution_evidence["eligible"].sum().item()),
                     cfg.ACCD.ANCHOR_MEMORY,
                     cfg.ACCD.RESOLUTION_MEMORY,
+                    cfg.ACCD.RESOLUTION_TARGET,
                 )
             )
             logging.info(
                 "ACCD oracle diagnostics only: eligible_accuracy={:.2f}%; clip_accuracy={:.2f}%; "
-                "net_gain={}; to_source={}; to_clip={}; resolved_accuracy={:.2f}%".format(
+                "net_gain={}; to_source={}; to_clip={}; resolution_accuracy={:.2f}%; "
+                "resolution_clip_accuracy={:.2f}%; resolution_net_gain={}; "
+                "resolved_accuracy={:.2f}%".format(
                     float(eligible_correct.float().mean().item() * 100.0) if eligible.any() else 0.0,
                     float(eligible_clip_correct.float().mean().item() * 100.0) if eligible.any() else 0.0,
                     eligible_net_gain,
                     int(resolved_to_source.sum().item()),
                     int(resolved_to_clip.sum().item()),
+                    float(resolution_correct.float().mean().item() * 100.0)
+                    if resolution_eligible.any() else 0.0,
+                    float(resolution_clip_correct.float().mean().item() * 100.0)
+                    if resolution_eligible.any() else 0.0,
+                    resolution_net_gain,
                     float(resolved_correct.float().mean().item() * 100.0) if accd_resolved_mask.any() else 0.0,
                 )
             )
