@@ -159,3 +159,24 @@ Gate:
 expand only if at least two target-Clipart tasks improve over both_prior
 and the mean is above the previous graph_temporal mean of 72.72
 ```
+
+Observed KL-only temporal diagnostics:
+
+| Task | Stable coverage | Stable teacher acc | Stable CLIP acc | Net gain vs final CLIP | p-value |
+|---|---:|---:|---:|---:|---:|
+| A->C | 86.83 | 67.25 | 64.10 | +68 | 0.000001 |
+| P->C | 87.32 | 66.25 | 64.33 | +45 | 0.001563 |
+| R->C | 87.13 | 65.95 | 63.46 | +52 | 0.000203 |
+
+Decision:
+
+```text
+temporal diagnostics pass on 3/3 target-Clipart tasks
+training expansion gate is still pending final accuracy CSV
+```
+
+The KL-only probe preserves the temporal signal and increases net gains over
+the earlier temporal-only probe. This supports the hypothesis that the previous
+graph-temporal failure was likely caused by graph-fused teacher feedback into
+the CLIP visual branch, not by the graph signal itself. Do not expand until the
+final training accuracy CSV confirms at least two target-Clipart improvements.

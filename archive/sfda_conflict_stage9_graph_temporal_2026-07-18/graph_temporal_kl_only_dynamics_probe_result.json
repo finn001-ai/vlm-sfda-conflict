@@ -1,0 +1,220 @@
+{
+  "config": {
+    "glob": "output/uda/office-home/*/graph_temporal_kl_only/temporal_diagnostics/*_cycle*.npz",
+    "out": "output/uda/office-home/graph_temporal_kl_only_dynamics_probe.json",
+    "min_coverage": 5.0,
+    "min_pass_tasks": 2
+  },
+  "decision": "pass_training_gate",
+  "reason": "Temporal stable predictions beat final CLIP on enough conflict tasks.",
+  "pass_tasks": 3,
+  "tasks": [
+    {
+      "task": "AC",
+      "cycles": 4,
+      "samples": 4365,
+      "initial_conflicts": 2483,
+      "initial_conflict_rate": 56.8843,
+      "final_conflicts": 845,
+      "final_conflict_rate": 19.3585,
+      "stable_mix_on_initial_conflicts": 2156,
+      "stable_mix_conflict_coverage": 86.8304,
+      "first_source_accuracy_on_initial_conflicts": 15.7068,
+      "first_clip_accuracy_on_initial_conflicts": 42.9722,
+      "final_source_accuracy_on_initial_conflicts": 60.2094,
+      "final_clip_accuracy_on_initial_conflicts": 59.847,
+      "final_mix_accuracy_on_initial_conflicts": 62.1828,
+      "stable_mix_accuracy": 67.2542,
+      "stable_clip_accuracy": 64.1002,
+      "stable_source_accuracy": 65.3989,
+      "corrections_over_final_clip": 136,
+      "degradations_from_final_clip": 68,
+      "net_correct_gain_over_final_clip": 68,
+      "discordant_decisions": 204,
+      "one_sided_correction_p_value": 1e-06,
+      "outside_final_candidate_selected": 44,
+      "outside_final_candidate_accuracy": 18.1818,
+      "cycle_metrics": [
+        {
+          "cycle": 1,
+          "source_accuracy": 46.071,
+          "clip_accuracy": 61.5808,
+          "mix_accuracy": 61.5349,
+          "teacher_accuracy": 63.299,
+          "agreement_rate": 43.1157,
+          "valid_pseudo_labels": 1882,
+          "valid_pseudo_label_accuracy": 86.1318
+        },
+        {
+          "cycle": 2,
+          "source_accuracy": 61.764,
+          "clip_accuracy": 68.9347,
+          "mix_accuracy": 70.126,
+          "teacher_accuracy": 70.7675,
+          "agreement_rate": 64.1237,
+          "valid_pseudo_labels": 2934,
+          "valid_pseudo_label_accuracy": 83.606
+        },
+        {
+          "cycle": 3,
+          "source_accuracy": 69.0493,
+          "clip_accuracy": 70.7446,
+          "mix_accuracy": 71.9588,
+          "teacher_accuracy": 72.5086,
+          "agreement_rate": 75.0286,
+          "valid_pseudo_labels": 3493,
+          "valid_pseudo_label_accuracy": 80.7329
+        },
+        {
+          "cycle": 4,
+          "source_accuracy": 72.0275,
+          "clip_accuracy": 71.5006,
+          "mix_accuracy": 72.9897,
+          "teacher_accuracy": 72.9668,
+          "agreement_rate": 80.6415,
+          "valid_pseudo_labels": 3756,
+          "valid_pseudo_label_accuracy": 79.4196
+        }
+      ],
+      "pass_task_gate": true
+    },
+    {
+      "task": "PC",
+      "cycles": 4,
+      "samples": 4365,
+      "initial_conflicts": 2681,
+      "initial_conflict_rate": 61.4204,
+      "final_conflicts": 844,
+      "final_conflict_rate": 19.3356,
+      "stable_mix_on_initial_conflicts": 2341,
+      "stable_mix_conflict_coverage": 87.3182,
+      "first_source_accuracy_on_initial_conflicts": 13.204,
+      "first_clip_accuracy_on_initial_conflicts": 44.9459,
+      "final_source_accuracy_on_initial_conflicts": 59.9776,
+      "final_clip_accuracy_on_initial_conflicts": 60.2014,
+      "final_mix_accuracy_on_initial_conflicts": 61.7307,
+      "stable_mix_accuracy": 66.2537,
+      "stable_clip_accuracy": 64.3315,
+      "stable_source_accuracy": 64.5023,
+      "corrections_over_final_clip": 134,
+      "degradations_from_final_clip": 89,
+      "net_correct_gain_over_final_clip": 45,
+      "discordant_decisions": 223,
+      "one_sided_correction_p_value": 0.001563,
+      "outside_final_candidate_selected": 39,
+      "outside_final_candidate_accuracy": 33.3333,
+      "cycle_metrics": [
+        {
+          "cycle": 1,
+          "source_accuracy": 42.0848,
+          "clip_accuracy": 61.5808,
+          "mix_accuracy": 61.1455,
+          "teacher_accuracy": 63.0011,
+          "agreement_rate": 38.5796,
+          "valid_pseudo_labels": 1684,
+          "valid_pseudo_label_accuracy": 88.0641
+        },
+        {
+          "cycle": 2,
+          "source_accuracy": 60.2749,
+          "clip_accuracy": 68.8431,
+          "mix_accuracy": 69.7136,
+          "teacher_accuracy": 69.7824,
+          "agreement_rate": 62.543,
+          "valid_pseudo_labels": 2842,
+          "valid_pseudo_label_accuracy": 84.1309
+        },
+        {
+          "cycle": 3,
+          "source_accuracy": 68.0412,
+          "clip_accuracy": 70.3093,
+          "mix_accuracy": 71.2944,
+          "teacher_accuracy": 71.5693,
+          "agreement_rate": 74.8225,
+          "valid_pseudo_labels": 3479,
+          "valid_pseudo_label_accuracy": 79.9943
+        },
+        {
+          "cycle": 4,
+          "source_accuracy": 71.1569,
+          "clip_accuracy": 70.9049,
+          "mix_accuracy": 72.0275,
+          "teacher_accuracy": 72.0275,
+          "agreement_rate": 80.6644,
+          "valid_pseudo_labels": 3764,
+          "valid_pseudo_label_accuracy": 78.3741
+        }
+      ],
+      "pass_task_gate": true
+    },
+    {
+      "task": "RC",
+      "cycles": 4,
+      "samples": 4365,
+      "initial_conflicts": 2400,
+      "initial_conflict_rate": 54.9828,
+      "final_conflicts": 843,
+      "final_conflict_rate": 19.3127,
+      "stable_mix_on_initial_conflicts": 2091,
+      "stable_mix_conflict_coverage": 87.125,
+      "first_source_accuracy_on_initial_conflicts": 16.2083,
+      "first_clip_accuracy_on_initial_conflicts": 41.5417,
+      "final_source_accuracy_on_initial_conflicts": 58.7917,
+      "final_clip_accuracy_on_initial_conflicts": 59.125,
+      "final_mix_accuracy_on_initial_conflicts": 61.7083,
+      "stable_mix_accuracy": 65.9493,
+      "stable_clip_accuracy": 63.4625,
+      "stable_source_accuracy": 63.6538,
+      "corrections_over_final_clip": 131,
+      "degradations_from_final_clip": 79,
+      "net_correct_gain_over_final_clip": 52,
+      "discordant_decisions": 210,
+      "one_sided_correction_p_value": 0.000203,
+      "outside_final_candidate_selected": 37,
+      "outside_final_candidate_accuracy": 32.4324,
+      "cycle_metrics": [
+        {
+          "cycle": 1,
+          "source_accuracy": 47.6518,
+          "clip_accuracy": 61.5808,
+          "mix_accuracy": 61.4433,
+          "teacher_accuracy": 63.0699,
+          "agreement_rate": 45.0172,
+          "valid_pseudo_labels": 1965,
+          "valid_pseudo_label_accuracy": 86.056
+        },
+        {
+          "cycle": 2,
+          "source_accuracy": 62.291,
+          "clip_accuracy": 69.0722,
+          "mix_accuracy": 70.4696,
+          "teacher_accuracy": 70.8133,
+          "agreement_rate": 65.4983,
+          "valid_pseudo_labels": 2990,
+          "valid_pseudo_label_accuracy": 83.0435
+        },
+        {
+          "cycle": 3,
+          "source_accuracy": 69.3471,
+          "clip_accuracy": 70.4696,
+          "mix_accuracy": 72.0046,
+          "teacher_accuracy": 72.0962,
+          "agreement_rate": 75.5097,
+          "valid_pseudo_labels": 3535,
+          "valid_pseudo_label_accuracy": 80.3395
+        },
+        {
+          "cycle": 4,
+          "source_accuracy": 71.3631,
+          "clip_accuracy": 71.3631,
+          "mix_accuracy": 72.921,
+          "teacher_accuracy": 72.8981,
+          "agreement_rate": 80.6873,
+          "valid_pseudo_labels": 3799,
+          "valid_pseudo_label_accuracy": 78.9418
+        }
+      ],
+      "pass_task_gate": true
+    }
+  ]
+}
