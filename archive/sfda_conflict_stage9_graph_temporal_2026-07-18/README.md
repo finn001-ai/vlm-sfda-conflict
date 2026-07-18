@@ -121,3 +121,41 @@ visual update and task-model KL is not robust in training. This supports the
 current interpretation that graph diffusion contains signal, but the training
 injection needs to be weaker or more selectively applied than the default
 continuous teacher replacement used here.
+
+## Follow-up Probe
+
+The next test keeps the graph-fused teacher out of CLIP visual adaptation and
+uses it only as the task-model KL target:
+
+```text
+MODEL.METHOD = graph_temporal_kl_only
+DCCL.GRAPH_TEACHER_FUSION = True
+DCCL.GTF_APPLY_TO = kl
+```
+
+This is a weaker injection test, not a new stage. It directly checks whether
+the previous failure came from graph teacher feedback into the CLIP visual
+branch.
+
+Cloud command:
+
+```bash
+cd /openbayes/home/vlm-sfda-conflict
+git pull
+cd duet-sfda-main
+bash tools/run_office_home_graph_temporal_kl_only_clipart.sh
+```
+
+Bring back both generated files:
+
+```text
+output/uda/office-home/graph_temporal_kl_only_clipart_accuracy.csv
+output/uda/office-home/graph_temporal_kl_only_dynamics_probe.json
+```
+
+Gate:
+
+```text
+expand only if at least two target-Clipart tasks improve over both_prior
+and the mean is above the previous graph_temporal mean of 72.72
+```

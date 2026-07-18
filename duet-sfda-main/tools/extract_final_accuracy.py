@@ -39,6 +39,7 @@ def main() -> None:
         "topo_anchor_ratio": re.compile(r"^\s*TOPO_ANCHOR_RATIO:\s*([^\s]+)", re.MULTILINE),
         "topo_target_mix": re.compile(r"^\s*TOPO_TARGET_MIX:\s*([^\s]+)", re.MULTILINE),
         "graph_teacher_fusion": re.compile(r"^\s*GRAPH_TEACHER_FUSION:\s*([^\s]+)", re.MULTILINE),
+        "gtf_apply_to": re.compile(r"^\s*GTF_APPLY_TO:\s*([^\s]+)", re.MULTILINE),
         "gtf_strength": re.compile(r"^\s*GTF_STRENGTH:\s*([^\s]+)", re.MULTILINE),
         "temporal_diag": re.compile(r"^\s*TEMPORAL_DIAG:\s*([^\s]+)", re.MULTILINE),
         "pl_expand": re.compile(r"^\s*PL_EXPAND:\s*([^\s]+)", re.MULTILINE),
@@ -57,7 +58,7 @@ def main() -> None:
         "accd_resolution_target": re.compile(r"^\s*RESOLUTION_TARGET:\s*([^\s]+)", re.MULTILINE),
         "accd_resolution_action": re.compile(r"^\s*RESOLUTION_ACTION:\s*([^\s]+)", re.MULTILINE),
     }
-    print("method,task,cycle,iter,accuracy,cand_par,cand_start_cycle,cand_tau,cand_weight,kl_mode,kl_candidate,calib_mode,calib_power,calib_auto_lambda,topo_graph_k,topo_alpha,topo_steps,topo_anchor_ratio,topo_target_mix,graph_teacher_fusion,gtf_strength,temporal_diag,pl_expand,pl_topk_per_class,pl_min_conf,tau_low,promote_k,accd_enabled,accd_graph_k,accd_anchor_ratio,accd_anchor_memory,accd_candidate_mass,accd_candidate_margin,accd_stable_cycles,accd_resolution_memory,accd_resolution_target,accd_resolution_action,log")
+    print("method,task,cycle,iter,accuracy,cand_par,cand_start_cycle,cand_tau,cand_weight,kl_mode,kl_candidate,calib_mode,calib_power,calib_auto_lambda,topo_graph_k,topo_alpha,topo_steps,topo_anchor_ratio,topo_target_mix,graph_teacher_fusion,gtf_apply_to,gtf_strength,temporal_diag,pl_expand,pl_topk_per_class,pl_min_conf,tau_low,promote_k,accd_enabled,accd_graph_k,accd_anchor_ratio,accd_anchor_memory,accd_candidate_mass,accd_candidate_margin,accd_stable_cycles,accd_resolution_memory,accd_resolution_target,accd_resolution_action,log")
     for path in paths:
         text = path.read_text(errors="ignore")
         matches = pattern.findall(text)
@@ -79,7 +80,8 @@ def main() -> None:
             f"{cfg_values['topo_graph_k']},{cfg_values['topo_alpha']},"
             f"{cfg_values['topo_steps']},{cfg_values['topo_anchor_ratio']},"
             f"{cfg_values['topo_target_mix']},"
-            f"{cfg_values['graph_teacher_fusion']},{cfg_values['gtf_strength']},"
+            f"{cfg_values['graph_teacher_fusion']},{cfg_values['gtf_apply_to']},"
+            f"{cfg_values['gtf_strength']},"
             f"{cfg_values['temporal_diag']},"
             f"{cfg_values['pl_expand']},{cfg_values['pl_topk_per_class']},{cfg_values['pl_min_conf']},"
             f"{cfg_values['tau_low']},{cfg_values['promote_k']},"

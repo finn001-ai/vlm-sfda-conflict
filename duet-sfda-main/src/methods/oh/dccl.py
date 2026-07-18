@@ -508,6 +508,8 @@ def build_graph_fused_teacher(cfg, task_features, clip_features, model_soft, cli
     if not cfg.DCCL.GRAPH_TEACHER_FUSION:
         teacher_soft = (model_soft + clip_soft) / 2
         return teacher_soft, None, None, None
+    if cfg.DCCL.GTF_APPLY_TO not in {"both", "clip", "kl", "none"}:
+        raise ValueError(f"Unknown DCCL.GTF_APPLY_TO: {cfg.DCCL.GTF_APPLY_TO}")
 
     _, _, graph_post, anchors = dual_space_diffusion(
         task_features,
@@ -533,9 +535,11 @@ def build_graph_fused_teacher(cfg, task_features, clip_features, model_soft, cli
     )
     logging.info(
         "DCCL graph-teacher fusion: anchors={}; strength={:.3f}; "
-        "mean_graph_weight={:.4f}; max_graph_weight={:.4f}; changed_top1={}".format(
+        "apply_to={}; mean_graph_weight={:.4f}; max_graph_weight={:.4f}; "
+        "changed_top1={}".format(
             int(anchors.sum().item()),
             float(cfg.DCCL.GTF_STRENGTH),
+            cfg.DCCL.GTF_APPLY_TO,
             float(graph_weight.mean().item()),
             float(graph_weight.max().item()),
             int((base_teacher.argmax(dim=1) != teacher_soft.argmax(dim=1)).sum().item()),
@@ -652,7 +656,7 @@ def train_target(cfg):
             source_label,
             clip_label,
         )
-        if cfg.DCCL.GRAPH_TEACHER_FUSION:
+        if cfg.DCCL.GRAPH_TEACHER_FUSION and cfg.DCCL.GTF_APPLY_TO in {"both", "clip"}:
             confi_dis = teacher_soft.detach()
         save_temporal_diagnostics(
             cfg,
@@ -669,7 +673,11 @@ def train_target(cfg):
         sample_idx = torch.arange(source_label.size(0))
         candidate_mass = model_soft[sample_idx, source_label] + model_soft[sample_idx, clip_label]
         candidate_weight = get_candidate_weight(cfg, candidate_mass)
-        kl_base_soft = teacher_soft if cfg.DCCL.GRAPH_TEACHER_FUSION else clip_soft
+        kl_base_soft = (
+            teacher_soft
+            if cfg.DCCL.GRAPH_TEACHER_FUSION and cfg.DCCL.GTF_APPLY_TO in {"both", "kl"}
+            else clip_soft
+        )
         kl_target, kl_weight = build_conflict_kl_target(cfg, kl_base_soft, source_label, clip_label, model_soft)
 
         accd_resolved_mask = torch.zeros_like(label_mask)
