@@ -16,6 +16,7 @@ from sklearn.metrics import accuracy_score
 from sklearn.model_selection import GroupKFold, cross_val_predict
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
+from scipy.stats import binomtest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -291,6 +292,15 @@ def analyze(path: Path, args: argparse.Namespace) -> dict[str, int | float | str
     corrections = choose_source & source_correct & (~clip_correct)
     degradations = choose_source & (~source_correct) & clip_correct
     net_gain = int(corrections.sum() - degradations.sum())
+    discordant = int(corrections.sum() + degradations.sum())
+    correction_p_value = float(
+        binomtest(
+            int(corrections.sum()),
+            discordant,
+            p=0.5,
+            alternative="greater",
+        ).pvalue
+    ) if discordant else 1.0
     candidate_recall = source_correct | clip_correct
 
     return {
@@ -307,12 +317,19 @@ def analyze(path: Path, args: argparse.Namespace) -> dict[str, int | float | str
         "always_source_accuracy": pct(source_correct.sum(), int(conflict_rows.size)),
         "always_clip_accuracy": pct(clip_correct.sum(), int(conflict_rows.size)),
         "adjudicator_accuracy": pct(selected_correct.sum(), int(conflict_rows.size)),
+        "synthetic_to_real_accuracy_gap": round(
+            100.0 * synthetic_cv_accuracy
+            - pct(selected_correct.sum(), int(conflict_rows.size)),
+            4,
+        ),
         "source_selection_rate": pct(choose_source.sum(), int(conflict_rows.size)),
         "corrections_over_clip": int(corrections.sum()),
         "degradations_from_clip": int(degradations.sum()),
         "net_correct_gain_over_clip": net_gain,
+        "discordant_decisions": discordant,
+        "one_sided_correction_p_value": round(correction_p_value, 6),
         "projected_full_accuracy_gain": round(100.0 * net_gain / labels.size, 4),
-        "pass_training_gate": bool(net_gain > 0 and selected_correct.sum() > clip_correct.sum()),
+        "pass_training_gate": bool(net_gain > 0 and correction_p_value < 0.05),
     }
 
 

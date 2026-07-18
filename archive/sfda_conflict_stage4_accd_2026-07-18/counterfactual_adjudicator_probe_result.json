@@ -1,0 +1,30 @@
+{
+  "decision": "fail_training_gate",
+  "reason": "No task has statistically significant net corrections over always-CLIP.",
+  "tasks": [
+    {
+      "task": "AC",
+      "always_clip_accuracy": 43.6378,
+      "adjudicator_accuracy": 43.7575,
+      "net_correct_gain_over_clip": 3,
+      "projected_full_accuracy_gain": 0.0687,
+      "one_sided_correction_p_value": 0.4695
+    },
+    {
+      "task": "PC",
+      "always_clip_accuracy": 46.3154,
+      "adjudicator_accuracy": 46.5733,
+      "net_correct_gain_over_clip": 7,
+      "projected_full_accuracy_gain": 0.1604,
+      "one_sided_correction_p_value": 0.4014
+    },
+    {
+      "task": "RC",
+      "always_clip_accuracy": 42.1515,
+      "adjudicator_accuracy": 43.5329,
+      "net_correct_gain_over_clip": 33,
+      "projected_full_accuracy_gain": 0.756,
+      "one_sided_correction_p_value": 0.0925
+    }
+  ]
+}

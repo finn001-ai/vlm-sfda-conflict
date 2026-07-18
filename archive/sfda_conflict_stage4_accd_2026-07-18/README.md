@@ -410,6 +410,38 @@ bash tools/run_office_home_counterfactual_probe.sh
 Do not integrate the adjudicator into training unless it beats always-CLIP on
 multiple tasks with positive net corrections.
 
+## Counterfactual Adjudicator Result
+
+The adjudicator does not pass a statistically meaningful training gate:
+
+| Task | Always CLIP | Adjudicator | Net corrections | Projected full gain | One-sided p |
+|---|---:|---:|---:|---:|---:|
+| A->C | 43.6378 | 43.7575 | +3 | +0.0687 | 0.4695 |
+| P->C | 46.3154 | 46.5733 | +7 | +0.1604 | 0.4014 |
+| R->C | 42.1515 | 43.5329 | +33 | +0.7560 | 0.0925 |
+
+Synthetic grouped cross-validation was `99.84%-100%`, but real-conflict
+accuracy was only `43.53%-46.57%`. The model learned the synthetic corruption
+mechanism and did not transfer reliably to natural conflicts. The previous
+`pass_training_gate` check was too permissive because any positive integer net
+gain passed; it is replaced with a one-sided paired correction test at
+`p < 0.05`. None of these tasks passes, so the adjudicator is not integrated.
+
+## Full ACCD Validation
+
+Single-task A->C method search is now stopped. The alternative project target
+is a 12-task average above DUET's `84.70`. Run the current best controlled
+mechanism, frozen anchors with persistent conflict labels, in an isolated
+output directory:
+
+```bash
+bash tools/run_office_home_accd_frozen_persistent_all.sh
+```
+
+The result determines whether ACCD is retained as the main method or reduced
+to a negative/diagnostic finding. Do not select per-task variants when
+computing the average.
+
 ## Risks And Falsification
 
 - Agreement anchors can still contain wrong labels. ACCD reduces this through
