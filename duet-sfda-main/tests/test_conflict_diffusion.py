@@ -3,9 +3,11 @@ import unittest
 import torch
 
 from src.utils.conflict_diffusion import (
+    calibrate_probability_prior,
     conflict_diffusion_evidence,
     dual_space_diffusion,
     select_class_balanced_anchors,
+    topology_prior_calibrate,
     transport_candidate_mass,
     update_temporal_resolution,
 )
@@ -156,6 +158,53 @@ class ConflictDiffusionTest(unittest.TestCase):
         self.assertTrue(torch.equal(corrected[1], teacher[1]))
         self.assertGreater(float(shifted[0]), 0.0)
         self.assertEqual(float(shifted[1]), 0.0)
+
+    def test_prior_calibration_uses_external_class_prior(self):
+        prob = torch.tensor([[0.80, 0.20], [0.60, 0.40]])
+        prior = torch.tensor([0.80, 0.20])
+        calibrated = calibrate_probability_prior(prob, prior, power=1.0)
+
+        self.assertTrue(torch.allclose(calibrated.sum(dim=1), torch.ones(2)))
+        self.assertGreater(float(calibrated[0, 1]), float(prob[0, 1]))
+        self.assertGreater(float(calibrated[1, 1]), float(prob[1, 1]))
+
+    def test_topology_prior_calibration_returns_class_level_prior(self):
+        features = torch.tensor(
+            [
+                [1.0, 0.0],
+                [0.95, 0.05],
+                [0.0, 1.0],
+                [0.05, 0.95],
+            ]
+        )
+        source_prob = torch.tensor(
+            [[0.90, 0.10], [0.80, 0.20], [0.10, 0.90], [0.20, 0.80]]
+        )
+        clip_prob = source_prob.clone()
+        labels = source_prob.argmax(dim=1)
+
+        source_cal, clip_cal, mix_prob, graph_prior, anchors = topology_prior_calibrate(
+            features,
+            features,
+            source_prob,
+            clip_prob,
+            labels,
+            labels,
+            power=0.5,
+            anchor_ratio=1.0,
+            anchor_min_per_class=1,
+            k=2,
+            temperature=0.1,
+            alpha=0.8,
+            steps=10,
+            device=torch.device("cpu"),
+        )
+
+        self.assertEqual(int(anchors.sum()), 4)
+        self.assertTrue(torch.allclose(graph_prior.sum(), torch.tensor(1.0)))
+        self.assertTrue(torch.allclose(source_cal.sum(dim=1), torch.ones(4)))
+        self.assertTrue(torch.allclose(clip_cal.sum(dim=1), torch.ones(4)))
+        self.assertTrue(torch.allclose(mix_prob.sum(dim=1), torch.ones(4)))
 
 
 if __name__ == "__main__":

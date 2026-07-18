@@ -197,6 +197,77 @@ def dual_space_diffusion(
 
 
 @torch.no_grad()
+def calibrate_probability_prior(
+    prob: torch.Tensor,
+    prior: torch.Tensor,
+    power: float,
+    eps: float = 1e-6,
+) -> torch.Tensor:
+    """Calibrate class probabilities by an externally estimated class prior."""
+    if prob.ndim != 2:
+        raise ValueError("prob must be a 2D tensor")
+    if prior.ndim != 1 or prior.numel() != prob.size(1):
+        raise ValueError("prior must have one entry per class")
+    if power < 0:
+        raise ValueError("calibration power must be non-negative")
+
+    prior = prior.to(device=prob.device, dtype=prob.dtype).clamp_min(eps)
+    prior = prior / prior.sum().clamp_min(eps)
+    calibrated = prob / prior.pow(power).unsqueeze(0)
+    return calibrated / calibrated.sum(dim=1, keepdim=True).clamp_min(eps)
+
+
+@torch.no_grad()
+def topology_prior_calibrate(
+    task_features: torch.Tensor,
+    clip_features: torch.Tensor,
+    source_prob: torch.Tensor,
+    clip_prob: torch.Tensor,
+    source_label: torch.Tensor,
+    clip_label: torch.Tensor,
+    *,
+    power: float,
+    anchor_ratio: float,
+    anchor_min_per_class: int,
+    k: int,
+    temperature: float,
+    alpha: float,
+    steps: int,
+    chunk_size: int = 512,
+    eps: float = 1e-6,
+    device: torch.device | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Calibrate both teachers using a target-topology class prior.
+
+    The graph posterior is used only after averaging over all target samples.
+    This supplies a class-level prior estimate without selecting or relabeling
+    individual conflict samples.
+    """
+    _, _, fused, anchors = dual_space_diffusion(
+        task_features,
+        clip_features,
+        source_prob,
+        clip_prob,
+        source_label,
+        clip_label,
+        anchor_ratio=anchor_ratio,
+        anchor_min_per_class=anchor_min_per_class,
+        k=k,
+        temperature=temperature,
+        alpha=alpha,
+        steps=steps,
+        chunk_size=chunk_size,
+        device=device,
+    )
+    graph_prior = fused.mean(dim=0).clamp_min(eps)
+    graph_prior = graph_prior / graph_prior.sum().clamp_min(eps)
+    source_cal = calibrate_probability_prior(source_prob.float(), graph_prior, power, eps)
+    clip_cal = calibrate_probability_prior(clip_prob.float(), graph_prior, power, eps)
+    mix_prob = (source_cal + clip_cal) / 2
+    return source_cal, clip_cal, mix_prob, graph_prior, anchors
+
+
+@torch.no_grad()
 def conflict_diffusion_evidence(
     task_posterior: torch.Tensor,
     clip_posterior: torch.Tensor,

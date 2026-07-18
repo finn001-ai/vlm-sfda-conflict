@@ -26,6 +26,7 @@ from src.utils import loss, prompt_tuning, IID_losses
 from src.utils.conflict_diffusion import (
     conflict_diffusion_evidence,
     dual_space_diffusion,
+    topology_prior_calibrate,
     transport_candidate_mass,
     update_temporal_resolution,
 )
@@ -957,9 +958,45 @@ def score_calibration_candidate(cfg, source_prob, clip_prob, mix_prob):
     return float(score.item()), float(coverage.item()), float(agreement_conf.item())
 
 
-def apply_classwise_calibration(cfg, source_prob, clip_prob):
+def apply_classwise_calibration(cfg, source_prob, clip_prob, task_features=None, clip_features=None):
     mode = cfg.DCCL.CALIB_MODE
     selected_mode = mode
+    if mode == "topo_prior":
+        if task_features is None or clip_features is None:
+            raise ValueError("topo_prior calibration requires task and CLIP features")
+        raw_source_label = source_prob.argmax(dim=1)
+        raw_clip_label = clip_prob.argmax(dim=1)
+        source_cal, clip_cal, mix_prob, graph_prior, anchors = topology_prior_calibrate(
+            task_features,
+            clip_features,
+            source_prob,
+            clip_prob,
+            raw_source_label,
+            raw_clip_label,
+            power=cfg.DCCL.CALIB_POWER,
+            anchor_ratio=cfg.DCCL.TOPO_ANCHOR_RATIO,
+            anchor_min_per_class=cfg.DCCL.TOPO_ANCHOR_MIN_PER_CLASS,
+            k=cfg.DCCL.TOPO_GRAPH_K,
+            temperature=cfg.DCCL.TOPO_TEMPERATURE,
+            alpha=cfg.DCCL.TOPO_ALPHA,
+            steps=cfg.DCCL.TOPO_STEPS,
+            chunk_size=cfg.DCCL.TOPO_CHUNK_SIZE,
+            eps=cfg.DCCL.EPSILON,
+        )
+        logging.info(
+            "DCCL topology-prior calibration: anchors={}; graph_prior_range=({:.4f},{:.4f}); "
+            "graph_prior_entropy={:.4f}; k={}; alpha={:.3f}; steps={}".format(
+                int(anchors.sum().item()),
+                float(graph_prior.min().item()),
+                float(graph_prior.max().item()),
+                float(-(graph_prior * graph_prior.clamp_min(cfg.DCCL.EPSILON).log()).sum().item()),
+                int(cfg.DCCL.TOPO_GRAPH_K),
+                float(cfg.DCCL.TOPO_ALPHA),
+                int(cfg.DCCL.TOPO_STEPS),
+            )
+        )
+        return source_cal, clip_cal, mix_prob
+
     if mode == "auto_agree":
         candidate_modes = ["none", "source_prior", "clip_prior", "both_prior", "mix_prior"]
         scored = []
@@ -1040,7 +1077,9 @@ def obtain_label(cfg, loader, netF, netB, netC, text_inputs, text_features, clip
 
     all_output = nn.Softmax(dim=1)(all_output)
     clip_all_output = nn.Softmax(dim=1)(all_clip_score).cpu()
-    all_output, clip_all_output, all_mix_output = apply_classwise_calibration(cfg, all_output, clip_all_output)
+    all_output, clip_all_output, all_mix_output = apply_classwise_calibration(
+        cfg, all_output, clip_all_output, all_task_features, all_clip_features
+    )
 
     # Compute predictions for all_output and clip_all_output
     _, all_output_pred = torch.max(all_output, dim=1)

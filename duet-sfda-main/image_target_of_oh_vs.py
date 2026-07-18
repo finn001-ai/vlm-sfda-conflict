@@ -109,7 +109,7 @@ if __name__ == "__main__":
         print("using plmatch method")
         acc = PLMATCH.train_target(cfg)
 
-    elif cfg.MODEL.METHOD == "dccl":
+    elif cfg.MODEL.METHOD in {"dccl", "topo_prior"}:
         print("using dccl method")
         acc = DCCL.train_target(cfg)
 
