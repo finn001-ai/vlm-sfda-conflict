@@ -307,6 +307,7 @@ _C.ACCD.START_CYCLE = 0
 _C.ACCD.STABLE_CYCLES = 2
 _C.ACCD.RESOLUTION_MEMORY = "persistent"
 _C.ACCD.RESOLUTION_TARGET = "both"
+_C.ACCD.RESOLUTION_ACTION = "hard_label"
 # --------------------------------- TSD options ----------------------------- #
 _C.TSD = CfgNode()
 

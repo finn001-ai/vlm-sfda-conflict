@@ -306,6 +306,41 @@ bash tools/run_office_home_accd_source_rescue_ac.sh
 This source-rescue branch must exceed `73.36` to be retained and must reach
 `73.60` to meet the current A->C objective.
 
+## Asymmetric Source Rescue Result
+
+Source rescue achieved `73.31` on A->C, below frozen+persistent ACCD (`73.36`)
+and DUET (`73.60`). The branch is therefore not retained as the final action.
+
+The diagnostic signal remains useful. At the final cycle, the 135 currently
+eligible graph-to-source conflicts had `56.30%` graph/source accuracy versus
+only `21.48%` CLIP accuracy. The 99 temporally resolved samples had `66.67%`
+accuracy. Thus dual-space topology reliably identifies a region where CLIP is
+especially harmful, but source accuracy is still too low for hard labels.
+
+## Topology-Gated Teacher Abstention
+
+The next controlled action treats graph-to-source evidence as a teacher-noise
+detector rather than a replacement teacher:
+
+```text
+stable graph-to-source conflict -> suppress CLIP KL only
+                                -> do not add a hard source label
+all other samples               -> unchanged DUET supervision
+```
+
+This differs from the failed global `conflict_kl_off` experiment (`67.31`):
+global removal discards useful CLIP supervision from every conflict, whereas
+this intervention abstains only on the small subset selected independently by
+two target-domain manifolds. All numerical settings remain fixed.
+
+Run A->C:
+
+```bash
+bash tools/run_office_home_accd_teacher_abstain_ac.sh
+```
+
+Retain this action only if it exceeds `73.36`; `73.60` remains the DUET target.
+
 ## Risks And Falsification
 
 - Agreement anchors can still contain wrong labels. ACCD reduces this through

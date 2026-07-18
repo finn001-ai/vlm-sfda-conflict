@@ -1,0 +1,8 @@
+ACCD source-rescue A->C result, 2026-07-18
+
+Configuration: frozen_initial anchors, persistent resolution,
+source_only resolution target, hard_label action.
+
+Final accuracy: 73.31
+Current frozen+persistent best: 73.36
+DUET paper A->C: 73.60

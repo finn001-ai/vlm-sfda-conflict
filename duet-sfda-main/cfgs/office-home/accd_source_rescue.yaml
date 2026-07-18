@@ -67,3 +67,4 @@ ACCD:
   STABLE_CYCLES: 2
   RESOLUTION_MEMORY: persistent
   RESOLUTION_TARGET: source_only
+  RESOLUTION_ACTION: hard_label

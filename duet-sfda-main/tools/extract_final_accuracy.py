@@ -47,8 +47,9 @@ def main() -> None:
         "accd_stable_cycles": re.compile(r"^\s*STABLE_CYCLES:\s*([^\s]+)", re.MULTILINE),
         "accd_resolution_memory": re.compile(r"^\s*RESOLUTION_MEMORY:\s*([^\s]+)", re.MULTILINE),
         "accd_resolution_target": re.compile(r"^\s*RESOLUTION_TARGET:\s*([^\s]+)", re.MULTILINE),
+        "accd_resolution_action": re.compile(r"^\s*RESOLUTION_ACTION:\s*([^\s]+)", re.MULTILINE),
     }
-    print("method,task,cycle,iter,accuracy,cand_par,cand_start_cycle,cand_tau,cand_weight,kl_mode,kl_candidate,calib_mode,calib_power,calib_auto_lambda,pl_expand,pl_topk_per_class,pl_min_conf,tau_low,promote_k,accd_enabled,accd_graph_k,accd_anchor_ratio,accd_anchor_memory,accd_candidate_mass,accd_candidate_margin,accd_stable_cycles,accd_resolution_memory,accd_resolution_target,log")
+    print("method,task,cycle,iter,accuracy,cand_par,cand_start_cycle,cand_tau,cand_weight,kl_mode,kl_candidate,calib_mode,calib_power,calib_auto_lambda,pl_expand,pl_topk_per_class,pl_min_conf,tau_low,promote_k,accd_enabled,accd_graph_k,accd_anchor_ratio,accd_anchor_memory,accd_candidate_mass,accd_candidate_margin,accd_stable_cycles,accd_resolution_memory,accd_resolution_target,accd_resolution_action,log")
     for path in paths:
         text = path.read_text(errors="ignore")
         matches = pattern.findall(text)
@@ -73,7 +74,7 @@ def main() -> None:
             f"{cfg_values['accd_anchor_memory']},"
             f"{cfg_values['accd_candidate_mass']},{cfg_values['accd_candidate_margin']},"
             f"{cfg_values['accd_stable_cycles']},{cfg_values['accd_resolution_memory']},"
-            f"{cfg_values['accd_resolution_target']},{path}"
+            f"{cfg_values['accd_resolution_target']},{cfg_values['accd_resolution_action']},{path}"
         )
 
 

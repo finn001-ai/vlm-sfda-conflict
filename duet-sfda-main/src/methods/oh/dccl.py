@@ -569,6 +569,7 @@ def train_target(cfg):
         kl_target, kl_weight = build_conflict_kl_target(cfg, clip_soft, source_label, clip_label, model_soft)
 
         accd_resolved_mask = torch.zeros_like(label_mask)
+        accd_hard_mask = torch.zeros_like(label_mask)
         if cfg.ACCD.ENABLED:
             if cfg.ACCD.ANCHOR_MEMORY == "dynamic":
                 fixed_anchor_mask = None
@@ -621,7 +622,16 @@ def train_target(cfg):
             newly_resolved, accd_resolved_mask, demoted = update_accd_state(
                 cfg, conflict_state, resolution_evidence, curr_cycle
             )
-            kl_target[accd_resolved_mask] = graph_posterior[accd_resolved_mask]
+            if cfg.ACCD.RESOLUTION_ACTION == "hard_label":
+                kl_target[accd_resolved_mask] = graph_posterior[accd_resolved_mask]
+                accd_hard_mask = accd_resolved_mask
+            elif cfg.ACCD.RESOLUTION_ACTION == "teacher_abstain":
+                kl_weight[accd_resolved_mask] = 0.0
+                accd_hard_mask = torch.zeros_like(accd_resolved_mask)
+            else:
+                raise ValueError(
+                    f"Unknown ACCD.RESOLUTION_ACTION: {cfg.ACCD.RESOLUTION_ACTION}"
+                )
 
             eligible = evidence["eligible"]
             resolved_correct = (
@@ -648,7 +658,7 @@ def train_target(cfg):
                 "ACCD cycle: anchors={}; conflicts={}; cross_space={}; eligible={}; "
                 "outside_candidate={}; newly_resolved={}; demoted={}; resolved_active={}; "
                 "resolution_eligible={}; anchor_memory={}; resolution_memory={}; "
-                "resolution_target={}".format(
+                "resolution_target={}; resolution_action={}; teacher_abstained={}".format(
                     int(anchor_mask.sum().item()),
                     int(evidence["conflict"].sum().item()),
                     int((evidence["conflict"] & evidence["cross_space_agreement"]).sum().item()),
@@ -661,6 +671,8 @@ def train_target(cfg):
                     cfg.ACCD.ANCHOR_MEMORY,
                     cfg.ACCD.RESOLUTION_MEMORY,
                     cfg.ACCD.RESOLUTION_TARGET,
+                    cfg.ACCD.RESOLUTION_ACTION,
+                    int((kl_weight == 0).sum().item()),
                 )
             )
             logging.info(
@@ -685,12 +697,12 @@ def train_target(cfg):
         promoted_mask = conflict_state["promoted_label"] >= 0
         hard_label = mem_label.clone()
         hard_label[promoted_mask] = conflict_state["promoted_label"][promoted_mask]
-        hard_label[accd_resolved_mask] = conflict_state["accd_resolved_label"][accd_resolved_mask]
-        hard_mask = label_mask | promoted_mask | accd_resolved_mask
+        hard_label[accd_hard_mask] = conflict_state["accd_resolved_label"][accd_hard_mask]
+        hard_mask = label_mask | promoted_mask | accd_hard_mask
         candidate_mask = (
             (source_label != clip_label)
             & (~promoted_mask)
-            & (~accd_resolved_mask)
+            & (~accd_hard_mask)
             & (~conflict_state["rejected"])
             & (candidate_mass >= cfg.DCCL.CAND_TAU)
             & (curr_cycle >= cfg.DCCL.CAND_START_CYCLE)
