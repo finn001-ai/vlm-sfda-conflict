@@ -5,6 +5,7 @@ Corresponding paper: http://proceedings.mlr.press/v119/liang20a/liang20a.pdf
 
 import os
 import os.path as osp
+import copy
 import numpy as np
 import torch
 import torch.nn as nn
@@ -264,6 +265,20 @@ def apply_target_prototype_logits(cfg, features, logits, proto_state):
     return logits + float(cfg.DCCL.PROTO_MIX) * proto_delta.to(logits.dtype)
 
 
+def apply_target_head_logits(cfg, features, source_logits, target_head, curr_cycle):
+    if (
+        not cfg.DCCL.TARGET_HEAD_ADAPT
+        or target_head is None
+        or curr_cycle < cfg.DCCL.TARGET_HEAD_START_CYCLE
+    ):
+        return source_logits
+    if not 0.0 <= cfg.DCCL.TARGET_HEAD_MIX <= 1.0:
+        raise ValueError("DCCL.TARGET_HEAD_MIX must be in [0, 1]")
+    target_logits = target_head(features)
+    mix = float(cfg.DCCL.TARGET_HEAD_MIX)
+    return (1.0 - mix) * source_logits + mix * target_logits
+
+
 @torch.no_grad()
 def update_target_prototype_state(cfg, features, labels, mask, proto_state):
     if not cfg.DCCL.PROTO_ADAPT:
@@ -311,7 +326,17 @@ def update_target_prototype_state(cfg, features, labels, mask, proto_state):
     return {"prototypes": prototypes, "mask": proto_mask}
 
 
-def cal_acc(loader, netF, netB, netC, cfg=None, proto_state=None, flag=False):
+def cal_acc(
+    loader,
+    netF,
+    netB,
+    netC,
+    cfg=None,
+    proto_state=None,
+    target_head=None,
+    curr_cycle=0,
+    flag=False,
+):
     start_test = True
     with torch.no_grad():
         iter_test = iter(loader)
@@ -323,6 +348,9 @@ def cal_acc(loader, netF, netB, netC, cfg=None, proto_state=None, flag=False):
             feas = netB(netF(inputs))
             outputs = netC(feas)
             if cfg is not None:
+                outputs = apply_target_head_logits(
+                    cfg, feas, outputs, target_head, curr_cycle
+                )
                 outputs = apply_target_prototype_logits(cfg, feas, outputs, proto_state)
             if start_test:
                 all_output = outputs.float().cpu()
@@ -665,6 +693,7 @@ def train_target(cfg):
         v.requires_grad = False
 
     param_group = []
+    target_head = None
 
     for k, v in netF.named_parameters():
         if cfg.OPTIM.LR_DECAY1 > 0:
@@ -676,6 +705,23 @@ def train_target(cfg):
             param_group += [{'params': v, 'lr': cfg.OPTIM.LR * cfg.OPTIM.LR_DECAY2}]
         else:
             v.requires_grad = False
+    if cfg.DCCL.TARGET_HEAD_ADAPT:
+        if cfg.DCCL.TARGET_HEAD_LR_MULT <= 0:
+            raise ValueError("DCCL.TARGET_HEAD_LR_MULT must be positive")
+        target_head = copy.deepcopy(netC).cuda()
+        target_head.train()
+        for k, v in target_head.named_parameters():
+            v.requires_grad = True
+            param_group += [
+                {'params': v, 'lr': cfg.OPTIM.LR * cfg.DCCL.TARGET_HEAD_LR_MULT}
+            ]
+        logging.info(
+            "DCCL target head enabled: mix={:.3f}; start_cycle={}; lr_mult={:.3f}".format(
+                float(cfg.DCCL.TARGET_HEAD_MIX),
+                int(cfg.DCCL.TARGET_HEAD_START_CYCLE),
+                float(cfg.DCCL.TARGET_HEAD_LR_MULT),
+            )
+        )
 
     optimizer = optim.SGD(param_group)
     optimizer = op_copy(optimizer)
@@ -712,6 +758,8 @@ def train_target(cfg):
 
         netF.eval()
         netB.eval()
+        if target_head is not None:
+            target_head.eval()
         # netC.eval()
         (
             mem_label,
@@ -728,7 +776,8 @@ def train_target(cfg):
             pl_state,
         ) = obtain_label(
             cfg,
-            dset_loaders['test_aug'], netF, netB, netC, text_inputs, text_features, clip_model, prev_label_mask,
+            dset_loaders['test_aug'], netF, netB, netC, target_head,
+            text_inputs, text_features, clip_model, prev_label_mask,
             proto_state, pl_state, curr_cycle,
         )
         proto_state = update_target_prototype_state(
@@ -1015,6 +1064,8 @@ def train_target(cfg):
         # mem_label = torch.from_numpy(mem_label).cuda()
         netF.train()
         netB.train()
+        if target_head is not None:
+            target_head.train()
         # netC.train()
         while iter_num < max_iter:
             try:
@@ -1037,6 +1088,12 @@ def train_target(cfg):
 
             weak_logits = netC(weak_feas)
             strong_logits = netC(strong_feas)
+            weak_logits = apply_target_head_logits(
+                cfg, weak_feas, weak_logits, target_head, curr_cycle
+            )
+            strong_logits = apply_target_head_logits(
+                cfg, strong_feas, strong_logits, target_head, curr_cycle
+            )
             weak_logits = apply_target_prototype_logits(cfg, weak_feas, weak_logits, proto_state)
             strong_logits = apply_target_prototype_logits(cfg, strong_feas, strong_logits, proto_state)
 
@@ -1097,10 +1154,13 @@ def train_target(cfg):
             if iter_num % interval_iter == 0 or iter_num == max_iter:
                 netF.eval()
                 netB.eval()
+                if target_head is not None:
+                    target_head.eval()
                 # netC.eval()
                 if cfg.SETTING.DATASET == 'VISDA-C':
                     acc_s_te, acc_list = cal_acc(
-                        dset_loaders['test'], netF, netB, netC, cfg, proto_state, True
+                        dset_loaders['test'], netF, netB, netC, cfg,
+                        proto_state, target_head, curr_cycle, True
                     )
                     log_str = ('Task: {}, Iter:{}/{}; Cycle: {}/{}; '
                                'Accuracy = {:.2f}%; classifier_loss = {}').format(cfg.name, iter_num, max_iter,
@@ -1109,7 +1169,8 @@ def train_target(cfg):
                                                                                   classifier_loss) + '\n' + acc_list
                 else:
                     acc_s_te, _ = cal_acc(
-                        dset_loaders['test'], netF, netB, netC, cfg, proto_state, False
+                        dset_loaders['test'], netF, netB, netC, cfg,
+                        proto_state, target_head, curr_cycle, False
                     )
                     log_str = ('Task: {}, Iter:{}/{}; Cycle: {}/{}; '
                                'Accuracy = {:.2f}%; classifier_loss = {}').format(cfg.name, iter_num, max_iter,
@@ -1122,6 +1183,8 @@ def train_target(cfg):
                 logging.info(log_str)
                 netF.train()
                 netB.train()
+                if target_head is not None:
+                    target_head.train()
                 # netC.train()
         curr_cycle += 1
 
@@ -1486,6 +1549,7 @@ def obtain_label(
     netF,
     netB,
     netC,
+    target_head,
     text_inputs,
     text_features,
     clip_model,
@@ -1513,6 +1577,9 @@ def obtain_label(
             # strong_feas = netB(netF(strong_x))
 
             weak_outputs = netC(weak_feas)
+            weak_outputs = apply_target_head_logits(
+                cfg, weak_feas, weak_outputs, target_head, curr_cycle
+            )
             weak_outputs = apply_target_prototype_logits(
                 cfg, weak_feas, weak_outputs, proto_state
             )

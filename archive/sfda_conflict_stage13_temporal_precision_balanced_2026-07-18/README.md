@@ -83,3 +83,31 @@ no task drops below both_prior
 
 If this fails, archive it and do not continue pseudo-label admission variants
 without a new diagnostic.
+
+## Result
+
+Cloud target-Clipart training has been observed.
+
+| Task | temporal_precision_balanced | temporal_precision_residual | both_prior | DUET paper | Delta vs stage11 | Delta vs DUET |
+|---|---:|---:|---:|---:|---:|---:|
+| A->C | 73.22 | 73.38 | 72.78 | 73.60 | -0.16 | -0.38 |
+| P->C | 72.60 | 73.06 | 72.81 | 73.70 | -0.46 | -1.10 |
+| R->C | 73.42 | 73.36 | 72.97 | 74.00 | +0.06 | -0.58 |
+
+Mean target-Clipart accuracy is 73.08, below the stage11
+`temporal_precision_residual` mean of 73.27. P->C also drops below
+`both_prior`. The stage therefore fails its gate.
+
+The temporal dynamics probe still passes all three Clipart tasks, so this is a
+training-accuracy failure rather than a diagnostic-signal failure.
+
+Conclusion:
+
+```text
+do not tune PL_BALANCE_COVERAGE or class-balance variants
+stop pseudo-label admission variants unless a new diagnostic motivates them
+```
+
+Temporal precision memory remains the strongest mechanism. The next direction
+should address target-domain decision boundary adaptation without perturbing
+the pseudo-label pool composition.
