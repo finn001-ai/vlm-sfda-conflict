@@ -469,11 +469,11 @@ reversible memory, symmetric/source-only hard labels, teacher abstention,
 candidate-mass transport, and a counterfactual learned selector have now been
 tested or probed. Further combinations within this family are not justified.
 
-Before choosing a replacement method, audit the untouched PLMatch baseline in
-the same environment. A->C has previously run below the paper value, so the
-absolute paper gap may partly reflect source checkpoints or environment. Method
-claims must compare against both the same-environment baseline and published
-numbers.
+An untouched same-environment PLMatch audit is useful for implementation
+diagnostics, but it is not a substitute for the published DUET comparison.
+A local reproduction gap may reflect checkpoints or environment; it does not
+invalidate the public `84.7` result. ACCD therefore fails the project objective
+regardless of whether it improves over the local PLMatch reproduction.
 
 ## Partial Same-Environment PLMatch Audit
 
@@ -486,15 +486,17 @@ Only the three Art-source tasks were already available:
 | A->R | 90.80 | 90.82 | 91.00 |
 
 The audit fixes the latest runs (`72.03/90.52/90.82`) before seeing the other
-tasks. Complete only the nine missing tasks with:
+tasks. If a complete reproduction audit is later needed, run only the nine
+missing tasks with:
 
 ```bash
 bash tools/run_office_home_plmatch_missing_reference.sh
 ```
 
 The isolated method name `plmatch_ref12` prevents old logs from entering the
-remaining-task extraction. The final same-environment average combines these
-nine values with the three fixed Art-source values above.
+remaining-task extraction. This run is optional and is no longer a prerequisite
+for selecting the next method. Any final performance claim must still compare
+against the published DUET table and newer methods.
 
 ## Risks And Falsification
 
