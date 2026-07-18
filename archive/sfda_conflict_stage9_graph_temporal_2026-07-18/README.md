@@ -172,11 +172,37 @@ Decision:
 
 ```text
 temporal diagnostics pass on 3/3 target-Clipart tasks
-training expansion gate is still pending final accuracy CSV
+training expansion gate fails final accuracy CSV
 ```
 
 The KL-only probe preserves the temporal signal and increases net gains over
 the earlier temporal-only probe. This supports the hypothesis that the previous
 graph-temporal failure was likely caused by graph-fused teacher feedback into
-the CLIP visual branch, not by the graph signal itself. Do not expand until the
-final training accuracy CSV confirms at least two target-Clipart improvements.
+the CLIP visual branch, not by the graph signal itself.
+
+Observed KL-only training accuracy:
+
+| Task | graph_temporal_kl_only | both_prior | DUET paper | Delta vs both_prior | Delta vs DUET |
+|---|---:|---:|---:|---:|---:|
+| A->C | 72.74 | 72.78 | 73.60 | -0.04 | -0.86 |
+| P->C | 72.03 | 72.81 | 73.70 | -0.78 | -1.67 |
+| R->C | 73.08 | 72.97 | 74.00 | +0.11 | -0.92 |
+
+Mean target-Clipart accuracy is 72.62. The expansion gate fails because only
+one of three target-Clipart tasks improves over `both_prior`, and the mean is
+below the previous `graph_temporal` mean of 72.72.
+
+Final conclusion:
+
+```text
+do not expand graph_temporal_kl_only to all 12 Office-Home tasks
+do not continue simple graph-fused teacher replacement variants
+```
+
+The useful signal is now narrower: graph diffusion and temporal stability both
+identify better conflict decisions offline, but direct teacher replacement,
+even KL-only, does not convert that signal into robust target training. A next
+attempt should not be another apply-to/strength variant; it needs a different
+training interface, such as an auxiliary regularizer that preserves the
+baseline teacher while penalizing only high-stability graph/temporal
+disagreement.
