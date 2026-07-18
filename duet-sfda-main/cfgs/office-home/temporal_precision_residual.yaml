@@ -1,6 +1,6 @@
 MODEL:
   ARCH: resnet50
-  METHOD: graph_temporal_residual
+  METHOD: temporal_precision_residual
 SETTING:
   DATASET: office-home
   S: 0
@@ -54,7 +54,7 @@ DCCL:
   PL_EXPAND: none
   PL_TOPK_PER_CLASS: 0
   PL_MIN_CONF: 0.0
-  PL_MEMORY: monotonic
+  PL_MEMORY: stable
   PL_STABLE_CYCLES: 2
   PL_STABLE_MEMORY: reversible
   PL_MEMORY_WARMUP_CYCLES: 1

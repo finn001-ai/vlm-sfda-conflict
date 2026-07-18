@@ -109,3 +109,30 @@ at least one task materially closes the DUET paper gap
 
 If this fails, archive the result and stop graph-temporal residual
 regularization unless a new diagnostic shows a different failure mode.
+
+## Result
+
+Cloud target-Clipart training has been observed.
+
+| Task | graph_temporal_residual | both_prior | DUET paper | Delta vs both_prior | Delta vs DUET |
+|---|---:|---:|---:|---:|---:|
+| A->C | 72.99 | 72.78 | 73.60 | +0.21 | -0.61 |
+| P->C | 73.15 | 72.81 | 73.70 | +0.34 | -0.55 |
+| R->C | 72.90 | 72.97 | 74.00 | -0.07 | -1.10 |
+
+Mean target-Clipart accuracy is 73.01. This improves over both_prior on two
+of three target-Clipart tasks and beats the previous `graph_temporal` mean of
+72.72, but it remains below the DUET paper values.
+
+Observed temporal diagnostics still pass on 3/3 tasks:
+
+| Task | Stable coverage | Stable teacher acc | Stable CLIP acc | Net gain vs final CLIP |
+|---|---:|---:|---:|---:|
+| A->C | 88.07 | 66.56 | 64.09 | +54 |
+| P->C | 88.70 | 66.74 | 65.05 | +40 |
+| R->C | 87.79 | 66.97 | 63.69 | +69 |
+
+The important failure mode is not lack of graph/temporal signal. It is noisy
+pseudo-label admission: by the final cycle, valid pseudo labels grow to about
+4000/4365 samples while their accuracy drops to about 76-77%. The next method
+should change pseudo-label memory/admission rather than add another loss term.

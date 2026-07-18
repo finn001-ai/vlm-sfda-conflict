@@ -618,6 +618,7 @@ def train_target(cfg):
     interval_iter = max_iter // cfg.TEST.INTERVAL
 
     prev_label_mask = None
+    pl_state = None
     conflict_state = None
     text_features = None
     curr_cycle = 0
@@ -642,10 +643,11 @@ def train_target(cfg):
             task_features,
             clip_features,
             target_label,
+            pl_state,
         ) = obtain_label(
             cfg,
             dset_loaders['test_aug'], netF, netB, netC, text_inputs, text_features, clip_model, prev_label_mask,
-            curr_cycle,
+            pl_state, curr_cycle,
         )
         if conflict_state is None:
             conflict_state = init_conflict_state(source_label.size(0))
@@ -1097,6 +1099,101 @@ def expand_pseudo_label_mask(cfg, label_mask, all_mix_output, all_mix_output_pre
     return expanded_mask
 
 
+def init_pseudo_label_state(num_samples):
+    return {
+        "pending_label": torch.full((num_samples,), -1, dtype=torch.long),
+        "pending_count": torch.zeros(num_samples, dtype=torch.long),
+        "stable_label": torch.full((num_samples,), -1, dtype=torch.long),
+    }
+
+
+def apply_pseudo_label_memory(
+    cfg,
+    prev_label_mask,
+    matching_indices,
+    all_mix_output_pred,
+    mix_conf,
+    pl_state,
+    curr_cycle,
+):
+    mode = cfg.DCCL.PL_MEMORY
+    confidence_mask = mix_conf >= cfg.DCCL.PL_MEMORY_MIN_CONF
+    current_mask = matching_indices & confidence_mask
+
+    if mode == "monotonic":
+        if prev_label_mask is not None:
+            label_mask = prev_label_mask | (~prev_label_mask & current_mask)
+        else:
+            label_mask = current_mask
+        return label_mask, all_mix_output_pred, pl_state
+
+    if mode == "current":
+        return current_mask, all_mix_output_pred, pl_state
+
+    if mode != "stable":
+        raise ValueError(f"Unknown DCCL.PL_MEMORY: {mode}")
+    if cfg.DCCL.PL_STABLE_CYCLES <= 0:
+        raise ValueError("DCCL.PL_STABLE_CYCLES must be positive")
+    if cfg.DCCL.PL_STABLE_MEMORY not in {"persistent", "reversible"}:
+        raise ValueError(f"Unknown DCCL.PL_STABLE_MEMORY: {cfg.DCCL.PL_STABLE_MEMORY}")
+
+    if pl_state is None:
+        pl_state = init_pseudo_label_state(all_mix_output_pred.numel())
+
+    same_label = pl_state["pending_label"] == all_mix_output_pred
+    pl_state["pending_count"] = torch.where(
+        current_mask & same_label,
+        pl_state["pending_count"] + 1,
+        torch.where(
+            current_mask,
+            torch.ones_like(pl_state["pending_count"]),
+            torch.zeros_like(pl_state["pending_count"]),
+        ),
+    )
+    pl_state["pending_label"] = torch.where(
+        current_mask,
+        all_mix_output_pred,
+        torch.full_like(pl_state["pending_label"], -1),
+    )
+    stable = current_mask & (pl_state["pending_count"] >= cfg.DCCL.PL_STABLE_CYCLES)
+    if cfg.DCCL.PL_STABLE_MEMORY == "persistent":
+        pl_state["stable_label"] = torch.where(
+            stable, all_mix_output_pred, pl_state["stable_label"]
+        )
+    else:
+        pl_state["stable_label"] = torch.where(
+            stable,
+            all_mix_output_pred,
+            torch.full_like(pl_state["stable_label"], -1),
+        )
+
+    stable_mask = pl_state["stable_label"] >= 0
+    warmup = curr_cycle < cfg.DCCL.PL_MEMORY_WARMUP_CYCLES
+    if warmup:
+        label_mask = current_mask
+        memory_label = all_mix_output_pred
+    else:
+        label_mask = stable_mask
+        memory_label = torch.where(
+            stable_mask,
+            pl_state["stable_label"],
+            all_mix_output_pred,
+        )
+
+    logging.info(
+        "DCCL pseudo-label memory: mode={}; stable_memory={}; warmup={}; "
+        "current={}; stable={}; selected={}".format(
+            cfg.DCCL.PL_MEMORY,
+            cfg.DCCL.PL_STABLE_MEMORY,
+            int(warmup),
+            int(current_mask.sum().item()),
+            int(stable_mask.sum().item()),
+            int(label_mask.sum().item()),
+        )
+    )
+    return label_mask, memory_label, pl_state
+
+
 def prior_calibrate(prob, power, eps):
     prior = prob.mean(dim=0).clamp_min(eps)
     calibrated = prob / prior.pow(power)
@@ -1264,7 +1361,19 @@ def apply_classwise_calibration(cfg, source_prob, clip_prob, task_features=None,
     return source_cal, clip_cal, mix_prob
 
 
-def obtain_label(cfg, loader, netF, netB, netC, text_inputs, text_features, clip_model, prev_label_mask, curr_cycle):
+def obtain_label(
+    cfg,
+    loader,
+    netF,
+    netB,
+    netC,
+    text_inputs,
+    text_features,
+    clip_model,
+    prev_label_mask,
+    pl_state,
+    curr_cycle,
+):
     # class_logit_bias = get_class_bias(netF, netB, netC)
     start_test = True
     with torch.no_grad():
@@ -1319,15 +1428,20 @@ def obtain_label(cfg, loader, netF, netB, netC, text_inputs, text_features, clip
     # Find indices where predictions match
     matching_indices = all_output_pred == clip_all_output_pred
 
-    # Update label mask based on previous label mask
-    if prev_label_mask is not None:
-        label_mask = prev_label_mask | (~prev_label_mask & matching_indices)
-    else:
-        label_mask = matching_indices
+    mix_conf, _ = torch.max(all_mix_output, dim=1)
+    label_mask, all_mix_output_pred, pl_state = apply_pseudo_label_memory(
+        cfg,
+        prev_label_mask,
+        matching_indices,
+        all_mix_output_pred,
+        mix_conf,
+        pl_state,
+        curr_cycle,
+    )
     label_mask = expand_pseudo_label_mask(cfg, label_mask, all_mix_output, all_mix_output_pred)
 
     # Filter predictions and labels based on the updated label mask
-    valid_preds = all_output_pred[label_mask]
+    valid_preds = all_mix_output_pred[label_mask]
     valid_labels = all_label[label_mask]
 
     # Calculate pseudo label accuracy
@@ -1344,7 +1458,10 @@ def obtain_label(cfg, loader, netF, netB, netC, text_inputs, text_features, clip
     )
     logging.info(log_str)
     valid_mixed = all_mix_output_pred[label_mask]
-    mixed_output_accuracy = torch.sum(valid_mixed == valid_labels).item() / float(len(valid_preds))
+    if len(valid_preds) > 0:
+        mixed_output_accuracy = torch.sum(valid_mixed == valid_labels).item() / float(len(valid_preds))
+    else:
+        mixed_output_accuracy = 0.0
     log_str_valid = "Mixed output with valid mask: {:.2f}%".format(mixed_output_accuracy * 100)
     logging.info(log_str_valid)
 
@@ -1373,6 +1490,7 @@ def obtain_label(cfg, loader, netF, netB, netC, text_inputs, text_features, clip
         all_task_features,
         all_clip_features,
         all_label.long(),
+        pl_state,
     )
 
 
