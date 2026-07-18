@@ -377,6 +377,39 @@ bash tools/run_office_home_accd_candidate_transport_ac.sh
 Retain only if final accuracy exceeds `73.36`; reaching `73.60` remains the
 current objective.
 
+## Candidate-Mass Transport Result
+
+Candidate-mass transport achieved `72.88` on A->C, below teacher abstention
+(`72.92`), source rescue (`73.31`), frozen+persistent ACCD (`73.36`), and DUET
+(`73.60`). The final cycle transported 54 samples with mean shifted mass
+`0.6385`. Preserving total candidate mass did not make the intervention mild;
+the graph ratio still moved most of that mass and behaved like a soft hard
+selection.
+
+This closes the fixed graph-action family. No sweep over transport strength,
+abstention weight, graph threshold, or action mixture is planned.
+
+## Counterfactual Adjudicator Probe
+
+The next direction replaces hand-written conflict actions with a learned
+pairwise reliability model while remaining source-free and label-free:
+
+1. Select high-confidence source/CLIP agreement anchors.
+2. Treat their shared prediction as a noisy target pseudo-label.
+3. Corrupt one teacher's candidate scores to synthesize both conflict directions.
+4. Learn a logistic pairwise adjudicator from expert probabilities, two graph
+   posteriors, fused diffusion, task/CLIP prototype support, and class support.
+5. Evaluate on real conflicts; ground truth is used only in the final report.
+
+Run the no-adaptation probe on the existing A->C/P->C/R->C NPZ exports:
+
+```bash
+bash tools/run_office_home_counterfactual_probe.sh
+```
+
+Do not integrate the adjudicator into training unless it beats always-CLIP on
+multiple tasks with positive net corrections.
+
 ## Risks And Falsification
 
 - Agreement anchors can still contain wrong labels. ACCD reduces this through

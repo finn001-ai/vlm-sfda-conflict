@@ -1,0 +1,10 @@
+ACCD candidate-mass transport A->C result, 2026-07-18
+
+Configuration: frozen_initial anchors, persistent source-only resolution,
+candidate_transport action.
+
+Final accuracy: 72.88
+Current frozen+persistent best: 73.36
+DUET paper A->C: 73.60
+
+Final cycle: 54 transported samples; mean shifted candidate mass 0.6385.
