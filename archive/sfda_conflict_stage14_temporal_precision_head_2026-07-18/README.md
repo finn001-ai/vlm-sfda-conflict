@@ -187,3 +187,46 @@ the public DUET Office-Home mean in full 12-task validation
 This should now be treated as the main method candidate. Further work should
 prioritize robustness checks and paper-ready ablations over additional
 single-rule graph or pseudo-label admission variants.
+
+## Stability Validation Plan
+
+Because the full 12-task gain over DUET is small (+0.0783), this result should
+not be claimed as robust until adaptation-seed stability is checked.
+
+First validation:
+
+```text
+same source checkpoint
+same target-head method
+vary target adaptation seed over 2020, 2021, 2022
+run all 12 Office-Home tasks
+```
+
+Cloud command:
+
+```bash
+cd /openbayes/home/vlm-sfda-conflict
+git pull
+cd duet-sfda-main
+bash tools/run_office_home_temporal_precision_head_seed_sweep.sh
+```
+
+Bring back:
+
+```text
+output/uda/office-home/temporal_precision_head_seed_sweep_accuracy.csv
+output/uda/office-home/temporal_precision_head_seed_sweep_summary.json
+```
+
+Stability gate:
+
+```text
+all adaptation seeds should beat DUET mean 84.7167
+the minimum seed mean matters more than the average seed mean
+large per-task variance should be reported even if the mean passes
+```
+
+If this gate fails, the honest paper framing is that target-head adaptation is
+a promising single-run result, not yet a stable state-of-the-art improvement.
+If it passes, the next validation should use independent source checkpoints,
+which requires matching source weights for each source seed.
