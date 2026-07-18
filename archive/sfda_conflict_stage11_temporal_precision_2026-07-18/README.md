@@ -88,3 +88,30 @@ pseudo-label accuracy is higher than stage 10 at comparable or acceptable covera
 
 If this fails, the next direction should move away from pseudo-label memory and
 toward representation-level or source-model reliability analysis.
+
+## Result
+
+Cloud target-Clipart training has been observed.
+
+| Task | temporal_precision_residual | both_prior | graph_temporal_residual | DUET paper | Delta vs both_prior | Delta vs DUET |
+|---|---:|---:|---:|---:|---:|---:|
+| A->C | 73.38 | 72.78 | 72.99 | 73.60 | +0.60 | -0.22 |
+| P->C | 73.06 | 72.81 | 73.15 | 73.70 | +0.25 | -0.64 |
+| R->C | 73.36 | 72.97 | 72.90 | 74.00 | +0.39 | -0.64 |
+
+Mean target-Clipart accuracy is 73.27. This passes the stage gate: all three
+target-Clipart tasks improve over `both_prior`, and the mean improves over
+`graph_temporal_residual` by +0.26.
+
+Pseudo-label memory is the main improvement:
+
+| Task | Cycle-4 valid labels | Cycle-4 valid-label acc | Stage-10 valid-label acc |
+|---|---:|---:|---:|
+| A->C | 3267 | 84.18 | 76.71 |
+| P->C | 3252 | 84.35 | 76.86 |
+| R->C | 3292 | 83.60 | 76.46 |
+
+The method is still below the DUET paper numbers, but the failure mode changed.
+The previous bottleneck was noisy pseudo-label admission; stage 11 largely
+fixes that. The next direction should move to target-domain decision boundary
+or classifier adaptation rather than loss weighting.

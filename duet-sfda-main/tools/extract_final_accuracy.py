@@ -55,6 +55,11 @@ def main() -> None:
         "pl_stable_memory": re.compile(r"^\s*PL_STABLE_MEMORY:\s*([^\s]+)", re.MULTILINE),
         "pl_memory_warmup_cycles": re.compile(r"^\s*PL_MEMORY_WARMUP_CYCLES:\s*([^\s]+)", re.MULTILINE),
         "pl_memory_min_conf": re.compile(r"^\s*PL_MEMORY_MIN_CONF:\s*([^\s]+)", re.MULTILINE),
+        "proto_adapt": re.compile(r"^\s*PROTO_ADAPT:\s*([^\s]+)", re.MULTILINE),
+        "proto_mix": re.compile(r"^\s*PROTO_MIX:\s*([^\s]+)", re.MULTILINE),
+        "proto_temperature": re.compile(r"^\s*PROTO_TEMPERATURE:\s*([^\s]+)", re.MULTILINE),
+        "proto_min_per_class": re.compile(r"^\s*PROTO_MIN_PER_CLASS:\s*([^\s]+)", re.MULTILINE),
+        "proto_momentum": re.compile(r"^\s*PROTO_MOMENTUM:\s*([^\s]+)", re.MULTILINE),
         "tau_low": re.compile(r"^\s*TAU_LOW:\s*([^\s]+)", re.MULTILINE),
         "promote_k": re.compile(r"^\s*PROMOTE_K:\s*([^\s]+)", re.MULTILINE),
         "accd_enabled": re.compile(r"^\s*ENABLED:\s*([^\s]+)", re.MULTILINE),
@@ -68,7 +73,7 @@ def main() -> None:
         "accd_resolution_target": re.compile(r"^\s*RESOLUTION_TARGET:\s*([^\s]+)", re.MULTILINE),
         "accd_resolution_action": re.compile(r"^\s*RESOLUTION_ACTION:\s*([^\s]+)", re.MULTILINE),
     }
-    print("method,task,cycle,iter,accuracy,cand_par,cand_start_cycle,cand_tau,cand_weight,kl_mode,kl_candidate,calib_mode,calib_power,calib_auto_lambda,topo_graph_k,topo_alpha,topo_steps,topo_anchor_ratio,topo_target_mix,graph_teacher_fusion,gtf_apply_to,gtf_strength,gtr_par,gtr_stable_cycles,gtr_memory,gtr_min_graph_conf,gtr_min_disagreement,temporal_diag,pl_expand,pl_topk_per_class,pl_min_conf,pl_memory,pl_stable_cycles,pl_stable_memory,pl_memory_warmup_cycles,pl_memory_min_conf,tau_low,promote_k,accd_enabled,accd_graph_k,accd_anchor_ratio,accd_anchor_memory,accd_candidate_mass,accd_candidate_margin,accd_stable_cycles,accd_resolution_memory,accd_resolution_target,accd_resolution_action,log")
+    print("method,task,cycle,iter,accuracy,cand_par,cand_start_cycle,cand_tau,cand_weight,kl_mode,kl_candidate,calib_mode,calib_power,calib_auto_lambda,topo_graph_k,topo_alpha,topo_steps,topo_anchor_ratio,topo_target_mix,graph_teacher_fusion,gtf_apply_to,gtf_strength,gtr_par,gtr_stable_cycles,gtr_memory,gtr_min_graph_conf,gtr_min_disagreement,temporal_diag,pl_expand,pl_topk_per_class,pl_min_conf,pl_memory,pl_stable_cycles,pl_stable_memory,pl_memory_warmup_cycles,pl_memory_min_conf,proto_adapt,proto_mix,proto_temperature,proto_min_per_class,proto_momentum,tau_low,promote_k,accd_enabled,accd_graph_k,accd_anchor_ratio,accd_anchor_memory,accd_candidate_mass,accd_candidate_margin,accd_stable_cycles,accd_resolution_memory,accd_resolution_target,accd_resolution_action,log")
     for path in paths:
         text = path.read_text(errors="ignore")
         matches = pattern.findall(text)
@@ -100,6 +105,9 @@ def main() -> None:
             f"{cfg_values['pl_memory']},{cfg_values['pl_stable_cycles']},"
             f"{cfg_values['pl_stable_memory']},{cfg_values['pl_memory_warmup_cycles']},"
             f"{cfg_values['pl_memory_min_conf']},"
+            f"{cfg_values['proto_adapt']},{cfg_values['proto_mix']},"
+            f"{cfg_values['proto_temperature']},{cfg_values['proto_min_per_class']},"
+            f"{cfg_values['proto_momentum']},"
             f"{cfg_values['tau_low']},{cfg_values['promote_k']},"
             f"{cfg_values['accd_enabled']},{cfg_values['accd_graph_k']},{cfg_values['accd_anchor_ratio']},"
             f"{cfg_values['accd_anchor_memory']},"

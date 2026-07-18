@@ -233,7 +233,84 @@ def data_load(cfg):
     return dset_loaders
 
 
-def cal_acc(loader, netF, netB, netC, flag=False):
+def apply_target_prototype_logits(cfg, features, logits, proto_state):
+    if not cfg.DCCL.PROTO_ADAPT or proto_state is None:
+        return logits
+    prototypes = proto_state.get("prototypes")
+    proto_mask = proto_state.get("mask")
+    if prototypes is None or proto_mask is None or not proto_mask.any():
+        return logits
+    if cfg.DCCL.PROTO_MIX <= 0:
+        return logits
+    if cfg.DCCL.PROTO_TEMPERATURE <= 0:
+        raise ValueError("DCCL.PROTO_TEMPERATURE must be positive")
+
+    prototypes = prototypes.to(device=features.device, dtype=features.dtype)
+    proto_mask = proto_mask.to(device=features.device)
+    proto_logits = F.normalize(features.float(), dim=1) @ prototypes.t()
+    proto_logits = proto_logits / float(cfg.DCCL.PROTO_TEMPERATURE)
+    active_proto = proto_logits[:, proto_mask]
+    if active_proto.numel() == 0:
+        return logits
+
+    proto_center = active_proto.mean(dim=1, keepdim=True)
+    proto_scale = active_proto.std(dim=1, keepdim=True, unbiased=False).clamp_min(cfg.DCCL.EPSILON)
+    source_scale = logits.detach().float().std(dim=1, keepdim=True, unbiased=False).clamp_min(cfg.DCCL.EPSILON)
+    proto_delta = torch.zeros_like(logits.float())
+    proto_delta[:, proto_mask] = (
+        (active_proto - proto_center) / proto_scale * source_scale
+    ).to(proto_delta.dtype)
+    return logits + float(cfg.DCCL.PROTO_MIX) * proto_delta.to(logits.dtype)
+
+
+@torch.no_grad()
+def update_target_prototype_state(cfg, features, labels, mask, proto_state):
+    if not cfg.DCCL.PROTO_ADAPT:
+        return proto_state
+    if cfg.DCCL.PROTO_MIN_PER_CLASS <= 0:
+        raise ValueError("DCCL.PROTO_MIN_PER_CLASS must be positive")
+    if not 0.0 <= cfg.DCCL.PROTO_MOMENTUM < 1.0:
+        raise ValueError("DCCL.PROTO_MOMENTUM must be in [0, 1)")
+
+    features = F.normalize(features.float(), dim=1).cpu()
+    labels = labels.long().cpu()
+    mask = mask.bool().cpu()
+    num_classes = cfg.class_num
+    prototypes = torch.zeros(num_classes, features.size(1), dtype=torch.float)
+    proto_mask = torch.zeros(num_classes, dtype=torch.bool)
+    for class_idx in range(num_classes):
+        class_rows = mask & (labels == class_idx)
+        if int(class_rows.sum().item()) < int(cfg.DCCL.PROTO_MIN_PER_CLASS):
+            continue
+        proto = features[class_rows].mean(dim=0)
+        prototypes[class_idx] = F.normalize(proto.unsqueeze(0), dim=1).squeeze(0)
+        proto_mask[class_idx] = True
+
+    if proto_state is not None and proto_state.get("prototypes") is not None:
+        prev_proto = proto_state["prototypes"].float().cpu()
+        prev_mask = proto_state["mask"].bool().cpu()
+        keep_prev = prev_mask & (~proto_mask)
+        prototypes[keep_prev] = prev_proto[keep_prev]
+        proto_mask = proto_mask | keep_prev
+        update_mask = proto_mask & prev_mask & (~keep_prev)
+        if update_mask.any() and cfg.DCCL.PROTO_MOMENTUM > 0:
+            momentum = float(cfg.DCCL.PROTO_MOMENTUM)
+            blended = momentum * prev_proto[update_mask] + (1.0 - momentum) * prototypes[update_mask]
+            prototypes[update_mask] = F.normalize(blended, dim=1)
+
+    logging.info(
+        "DCCL target prototypes: active_classes={}/{}; min_per_class={}; mix={:.3f}; temp={:.3f}".format(
+            int(proto_mask.sum().item()),
+            int(num_classes),
+            int(cfg.DCCL.PROTO_MIN_PER_CLASS),
+            float(cfg.DCCL.PROTO_MIX),
+            float(cfg.DCCL.PROTO_TEMPERATURE),
+        )
+    )
+    return {"prototypes": prototypes, "mask": proto_mask}
+
+
+def cal_acc(loader, netF, netB, netC, cfg=None, proto_state=None, flag=False):
     start_test = True
     with torch.no_grad():
         iter_test = iter(loader)
@@ -242,7 +319,10 @@ def cal_acc(loader, netF, netB, netC, flag=False):
             inputs = data[0]
             labels = data[1]
             inputs = inputs.cuda()
-            outputs = netC(netB(netF(inputs)))
+            feas = netB(netF(inputs))
+            outputs = netC(feas)
+            if cfg is not None:
+                outputs = apply_target_prototype_logits(cfg, feas, outputs, proto_state)
             if start_test:
                 all_output = outputs.float().cpu()
                 all_label = labels.float()
@@ -619,6 +699,7 @@ def train_target(cfg):
 
     prev_label_mask = None
     pl_state = None
+    proto_state = None
     conflict_state = None
     text_features = None
     curr_cycle = 0
@@ -647,7 +728,10 @@ def train_target(cfg):
         ) = obtain_label(
             cfg,
             dset_loaders['test_aug'], netF, netB, netC, text_inputs, text_features, clip_model, prev_label_mask,
-            pl_state, curr_cycle,
+            proto_state, pl_state, curr_cycle,
+        )
+        proto_state = update_target_prototype_state(
+            cfg, task_features, mem_label, label_mask, proto_state
         )
         if conflict_state is None:
             conflict_state = init_conflict_state(source_label.size(0))
@@ -952,6 +1036,8 @@ def train_target(cfg):
 
             weak_logits = netC(weak_feas)
             strong_logits = netC(strong_feas)
+            weak_logits = apply_target_prototype_logits(cfg, weak_feas, weak_logits, proto_state)
+            strong_logits = apply_target_prototype_logits(cfg, strong_feas, strong_logits, proto_state)
 
             # batch_cos = cal_cosine(weak_feas, strong_feas)
             # weak_logits = weak_logits * batch_cos
@@ -1012,14 +1098,18 @@ def train_target(cfg):
                 netB.eval()
                 # netC.eval()
                 if cfg.SETTING.DATASET == 'VISDA-C':
-                    acc_s_te, acc_list = cal_acc(dset_loaders['test'], netF, netB, netC, True)
+                    acc_s_te, acc_list = cal_acc(
+                        dset_loaders['test'], netF, netB, netC, cfg, proto_state, True
+                    )
                     log_str = ('Task: {}, Iter:{}/{}; Cycle: {}/{}; '
                                'Accuracy = {:.2f}%; classifier_loss = {}').format(cfg.name, iter_num, max_iter,
                                                                                   curr_cycle + 1, cfg.ACTIVE.CYCLE,
                                                                                   acc_s_te,
                                                                                   classifier_loss) + '\n' + acc_list
                 else:
-                    acc_s_te, _ = cal_acc(dset_loaders['test'], netF, netB, netC, False)
+                    acc_s_te, _ = cal_acc(
+                        dset_loaders['test'], netF, netB, netC, cfg, proto_state, False
+                    )
                     log_str = ('Task: {}, Iter:{}/{}; Cycle: {}/{}; '
                                'Accuracy = {:.2f}%; classifier_loss = {}').format(cfg.name, iter_num, max_iter,
                                                                                   curr_cycle + 1, cfg.ACTIVE.CYCLE,
@@ -1371,6 +1461,7 @@ def obtain_label(
     text_features,
     clip_model,
     prev_label_mask,
+    proto_state,
     pl_state,
     curr_cycle,
 ):
@@ -1393,6 +1484,9 @@ def obtain_label(
             # strong_feas = netB(netF(strong_x))
 
             weak_outputs = netC(weak_feas)
+            weak_outputs = apply_target_prototype_logits(
+                cfg, weak_feas, weak_outputs, proto_state
+            )
             # strong_outputs = netC(strong_feas)
 
             clip_image_features = F.normalize(clip_model.encode_image(weak_x), dim=1)
