@@ -1,4 +1,7 @@
 import unittest
+import subprocess
+import sys
+from pathlib import Path
 
 from tools.summarize_pair_feature_gtr import (
     MATCHED_ONLINE,
@@ -49,6 +52,23 @@ def make_full_rows(offset=0.2):
 
 
 class PairFeatureGtrSummaryTest(unittest.TestCase):
+    def test_summary_script_supports_direct_execution(self):
+        project_root = Path(__file__).resolve().parents[1]
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(project_root / "tools" / "summarize_pair_feature_gtr.py"),
+                "--help",
+            ],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_preflight_passes_with_valid_route_and_accuracy(self):
         summary = summarize_preflight(make_rows())
 

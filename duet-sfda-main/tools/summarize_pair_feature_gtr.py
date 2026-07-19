@@ -8,7 +8,10 @@ import csv
 import json
 from pathlib import Path
 
-from tools.summarize_office_home_pair_feature import summarize_rows
+if __package__:
+    from tools.summarize_office_home_pair_feature import summarize_rows
+else:
+    from summarize_office_home_pair_feature import summarize_rows
 
 
 PREFLIGHT_TASKS = ["AC", "PA", "RA"]
