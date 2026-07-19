@@ -65,7 +65,7 @@ class ClassPairFeatureAdapter(nn.Module):
             return self.gate_logit.detach().new_zeros(())
         return self.max_gate * torch.sigmoid(self.gate_logit.detach())
 
-    def forward(self, features):
+    def forward(self, features, detach_delta: bool = False):
         if not self.is_effective():
             return features
         coefficient = torch.tanh(self.router(features).float())
@@ -77,4 +77,24 @@ class ClassPairFeatureAdapter(nn.Module):
         ).clamp_min(self.epsilon)
         gate = self.max_gate * torch.sigmoid(self.gate_logit.float())
         delta = gate * feature_norm * bounded_delta
+        if detach_delta:
+            delta = delta.detach()
         return features + delta.to(features.dtype)
+
+
+def weighted_graph_temporal_kl(logits, target_prob, sample_weight, epsilon):
+    """Weighted graph-temporal distillation with a differentiable zero case."""
+    if logits.ndim != 2 or target_prob.shape != logits.shape:
+        raise ValueError("Pair-feature logits and graph target must have equal 2D shape")
+    if sample_weight.ndim != 1 or sample_weight.numel() != logits.size(0):
+        raise ValueError("Pair-feature graph weights must have one value per sample")
+    weights = sample_weight.detach().float().clamp_min(0.0)
+    weight_sum = weights.sum()
+    if float(weight_sum.item()) <= 0.0:
+        return logits.sum() * 0.0
+    per_sample = F.kl_div(
+        F.log_softmax(logits.float(), dim=1),
+        target_prob.detach().float(),
+        reduction="none",
+    ).sum(dim=1)
+    return (per_sample * weights).sum() / weight_sum.clamp_min(float(epsilon))

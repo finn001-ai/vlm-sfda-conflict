@@ -46,7 +46,10 @@ from src.utils.class_pair_flow import (
     update_class_pair_flow,
     update_soft_class_pair_flow,
 )
-from src.utils.class_pair_feature_adapter import ClassPairFeatureAdapter
+from src.utils.class_pair_feature_adapter import (
+    ClassPairFeatureAdapter,
+    weighted_graph_temporal_kl,
+)
 from src.utils.agreement_covariance_transport import AgreementCovarianceTransport
 # from src.utils import loss, active_prompt, IID_losses
 # from proposed_method import *
@@ -346,7 +349,15 @@ def apply_pair_feature_adapter(cfg, features, adapter, curr_cycle):
         or curr_cycle < cfg.DCCL.PAIR_FEATURE_START_CYCLE
     ):
         return features
-    return adapter(features)
+    gradient_mode = cfg.DCCL.PAIR_FEATURE_GRADIENT_MODE
+    if gradient_mode not in {"joint", "gtr_only"}:
+        raise ValueError(
+            "DCCL.PAIR_FEATURE_GRADIENT_MODE must be joint or gtr_only"
+        )
+    return adapter(
+        features,
+        detach_delta=gradient_mode == "gtr_only" and torch.is_grad_enabled(),
+    )
 
 
 def apply_agreement_covariance_transport(
@@ -939,6 +950,17 @@ def train_target(cfg):
             )
         if cfg.DCCL.PAIR_FEATURE_LR_MULT <= 0:
             raise ValueError("DCCL.PAIR_FEATURE_LR_MULT must be positive")
+        if cfg.DCCL.PAIR_FEATURE_GRADIENT_MODE not in {"joint", "gtr_only"}:
+            raise ValueError(
+                "DCCL.PAIR_FEATURE_GRADIENT_MODE must be joint or gtr_only"
+            )
+        if (
+            cfg.DCCL.PAIR_FEATURE_GRADIENT_MODE == "gtr_only"
+            and cfg.DCCL.GTR_PAR <= 0
+        ):
+            raise ValueError(
+                "gtr_only pair-feature training requires DCCL.GTR_PAR > 0"
+            )
         pair_feature_adapter = ClassPairFeatureAdapter(
             feature_dim=cfg.bottleneck,
             rank=int(cfg.DCCL.PAIR_FLOW_RANK),
@@ -954,17 +976,21 @@ def train_target(cfg):
                 "params": parameter,
                 "lr": cfg.OPTIM.LR * cfg.DCCL.PAIR_FEATURE_LR_MULT,
             }
-            if name == "gate_logit":
+            if (
+                name == "gate_logit"
+                or cfg.DCCL.PAIR_FEATURE_GRADIENT_MODE == "gtr_only"
+            ):
                 group["weight_decay_scale"] = 0.0
             param_group.append(group)
         logging.info(
             "DCCL pair-feature adapter enabled: rank={}; min_active_rank={}; max_gate={:.4f}; "
-            "start_cycle={}; lr_mult={:.3f}".format(
+            "start_cycle={}; lr_mult={:.3f}; gradient_mode={}".format(
                 int(cfg.DCCL.PAIR_FLOW_RANK),
                 int(cfg.DCCL.PAIR_FEATURE_MIN_ACTIVE_RANK),
                 float(cfg.DCCL.PAIR_FEATURE_MAX_GATE),
                 int(cfg.DCCL.PAIR_FEATURE_START_CYCLE),
                 float(cfg.DCCL.PAIR_FEATURE_LR_MULT),
+                cfg.DCCL.PAIR_FEATURE_GRADIENT_MODE,
             )
         )
 
@@ -1458,6 +1484,8 @@ def train_target(cfg):
             target_head.train()
         if pair_feature_adapter is not None:
             pair_feature_adapter.train()
+        pair_feature_gtr_loss_sum = 0.0
+        pair_feature_gtr_loss_batches = 0
         # netC.train()
         while iter_num < max_iter:
             try:
@@ -1475,13 +1503,13 @@ def train_target(cfg):
             iter_num += 1
             optimizer = cosine_scheduler(cfg, optimizer, iter_num=iter_num, max_iter=max_iter)
 
-            weak_feas = netB(netF(weak_x))
-            strong_feas = netB(netF(strong_x))
+            weak_base_feas = netB(netF(weak_x))
+            strong_base_feas = netB(netF(strong_x))
             weak_feas = apply_pair_feature_adapter(
-                cfg, weak_feas, pair_feature_adapter, curr_cycle
+                cfg, weak_base_feas, pair_feature_adapter, curr_cycle
             )
             strong_feas = apply_pair_feature_adapter(
-                cfg, strong_feas, pair_feature_adapter, curr_cycle
+                cfg, strong_base_feas, pair_feature_adapter, curr_cycle
             )
             weak_feas = apply_agreement_covariance_transport(
                 cfg, weak_feas, covariance_transport, curr_cycle, tar_idx
@@ -1550,6 +1578,27 @@ def train_target(cfg):
                         per_sample_gtr * gtr_weight_batch
                     ).sum() / gtr_weight_batch.sum()
                     classifier_loss += gtr_loss * cfg.DCCL.GTR_PAR
+                    if (
+                        pair_feature_adapter is not None
+                        and cfg.DCCL.PAIR_FEATURE_GRADIENT_MODE == "gtr_only"
+                        and curr_cycle >= cfg.DCCL.PAIR_FEATURE_START_CYCLE
+                        and pair_feature_adapter.is_effective()
+                    ):
+                        pair_gtr_feas = pair_feature_adapter(
+                            weak_base_feas.detach(), detach_delta=False
+                        )
+                        pair_gtr_logits = netC(pair_gtr_feas)
+                        pair_gtr_loss = weighted_graph_temporal_kl(
+                            pair_gtr_logits,
+                            gtr_target_batch,
+                            gtr_weight_batch,
+                            cfg.DCCL.EPSILON,
+                        )
+                        classifier_loss += pair_gtr_loss * cfg.DCCL.GTR_PAR
+                        pair_feature_gtr_loss_sum += float(
+                            pair_gtr_loss.detach().item()
+                        )
+                        pair_feature_gtr_loss_batches += 1
 
             optimizer.zero_grad()
             classifier_loss.backward()
@@ -1635,12 +1684,31 @@ def train_target(cfg):
                     )
                     log_str += (
                         "; pair_feature_gate={:.6f}; pair_feature_router_norm={:.6f}; "
-                        "pair_flow_active_rank={}; pair_feature_effective={}"
+                        "pair_flow_active_rank={}; pair_feature_effective={}; "
+                        "pair_feature_gradient_mode={}; pair_feature_gtr_active={}; "
+                        "pair_feature_gtr_loss={:.6f}; pair_feature_gtr_batches={}"
                     ).format(
                         float(pair_feature_adapter.effective_gate().item()),
                         float(pair_feature_adapter.router.weight.detach().norm().item()),
                         active_rank,
                         bool(pair_feature_adapter.is_effective()),
+                        cfg.DCCL.PAIR_FEATURE_GRADIENT_MODE,
+                        int(
+                            (gtr_weight > 0).sum().item()
+                            if (
+                                cfg.DCCL.PAIR_FEATURE_GRADIENT_MODE == "gtr_only"
+                                and curr_cycle >= cfg.DCCL.PAIR_FEATURE_START_CYCLE
+                                and pair_feature_adapter.is_effective()
+                            )
+                            else 0
+                        ),
+                        (
+                            pair_feature_gtr_loss_sum
+                            / pair_feature_gtr_loss_batches
+                            if pair_feature_gtr_loss_batches > 0
+                            else 0.0
+                        ),
+                        pair_feature_gtr_loss_batches,
                     )
                 if covariance_transport is not None:
                     transport_diagnostics = covariance_transport.diagnostics()
@@ -1658,6 +1726,8 @@ def train_target(cfg):
                 # cfg.out_file.flush()
                 # print(log_str+'\n')
                 logging.info(log_str)
+                pair_feature_gtr_loss_sum = 0.0
+                pair_feature_gtr_loss_batches = 0
                 if captured_trajectory_snapshot and len(trajectory_snapshots) >= 2:
                     trajectory_acc, _ = cal_acc_trajectory_ensemble(
                         dset_loaders['test'],

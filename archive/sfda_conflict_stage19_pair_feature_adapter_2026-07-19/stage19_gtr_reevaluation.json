@@ -1,0 +1,32 @@
+{
+  "date": "2026-07-19",
+  "decision": "run_stage19_gtr_only_before_stage20",
+  "stage20_status": "implemented_but_deferred_before_cloud",
+  "scope": {
+    "graph_allowed_when_mechanistically_justified": true,
+    "loss_allowed_when_mechanistically_justified": true,
+    "prompt_only_adjustment_allowed": false
+  },
+  "evidence": {
+    "stage8_offline_graph_teacher_gain_range": [1.2371, 2.52],
+    "stage9_direct_teacher_replacement": "failed",
+    "stage10_graph_temporal_residual": "improved_two_of_three_clipart_tasks",
+    "stage19_peak_mean": 84.6908,
+    "stage19_delta_vs_duet": -0.0258,
+    "stage19_delta_vs_matched_online": -0.0317,
+    "stage19_c_rank_fallback": "failed"
+  },
+  "causal_gap": "Stage19 pair-router parameters received joint gradients from consistency, CE, ordinary KL, and GTR, so pair-direction utility was not isolated.",
+  "stage19_g": {
+    "gradient_mode": "gtr_only",
+    "main_pair_residual_gradient": "detached",
+    "router_supervision": "stable reversible graph-temporal weighted KL through frozen source classifier",
+    "new_loss_weight": false,
+    "gtr_par": 0.05,
+    "selection": "peak",
+    "preflight_tasks": ["AC", "PA", "RA"],
+    "preflight_matched_mean": 80.0733,
+    "complete_required_mean": 84.7225
+  },
+  "failure_route": "If diagnostics are valid but accuracy fails, archive Stage19-G and run the deferred Stage20 covariance preflight without parameter sweeps."
+}

@@ -312,3 +312,126 @@ the low active rank correlation was not the main causal explanation
 close rank thresholds, gate scaling, and all learned pair-router variants
 move to Stage20 agreement-anchor covariance transport
 ```
+
+## Scope Re-evaluation: Stage19-G
+
+The previous closure bundled two different claims: the Stage19-C rank fallback
+failed, and all learned pair routing should stop. Only the first claim follows
+from the preflight. The project scope was subsequently clarified: graph
+structure and auxiliary losses remain admissible when they have a specific
+mechanistic role; prompt-only adjustment is excluded.
+
+Re-reading Stages 8-11 changes the next experiment:
+
+- graph diffusion improved the offline teacher by `+1.24` to `+2.52` points;
+- direct graph-teacher replacement failed in Stage9;
+- low-weight graph-temporal residual training improved two of three Clipart
+  tasks in Stage10 and remained part of the strongest Stage14 baseline;
+- Stage19 learned its router from CE, ordinary KL, consistency, and GTR at the
+  same time, so its aggregate pair directions had no mechanism-specific
+  gradient attribution.
+
+Stage20 covariance transport is therefore deferred before cloud execution.
+The next controlled test remains in Stage19 and changes the training interface,
+not the graph rule, prompt, gate, or target head.
+
+### Stage19-G Method
+
+The forward model keeps the Stage19 bounded feature residual. During the main
+Stage14 loss path, that residual is detached:
+
+```text
+z_main = z + stop_gradient(delta_pair(z))
+```
+
+The backbone and blend head still train normally through the identity path,
+but CE, ordinary KL, consistency, and the original full-model GTR cannot update
+the pair router. A second branch uses detached backbone features and the frozen
+source classifier:
+
+```text
+z_route = stop_gradient(z) + delta_pair(stop_gradient(z))
+L_route = weighted_KL(source_head(z_route), stable_graph_temporal_teacher)
+```
+
+Only samples admitted by the existing reversible two-cycle GTR memory have
+nonzero weights. `L_route` uses the already validated `GTR_PAR=0.05`; no new
+loss weight is introduced. Its gradients reach only the pair router and gate,
+and optimizer weight decay is disabled for those parameters in this mode.
+The original Stage14 GTR remains unchanged for the backbone and blend head.
+
+Fixed differences from the valid Stage19 run:
+
+```text
+PAIR_FEATURE_GRADIENT_MODE = gtr_only
+PAIR_FEATURE_MIN_ACTIVE_RANK = 1
+COV_TRANSPORT_ADAPT = False
+all other Stage14/Stage19 values unchanged
+```
+
+This directly tests whether aggregate conflict directions become useful when
+their coefficients are learned only from the graph-temporal evidence that
+survived the earlier teacher-interface tests.
+
+### Step 0: AC/PA/RA Preflight
+
+```bash
+cd /openbayes/home/vlm-sfda-conflict
+git pull
+cd duet-sfda-main
+bash tools/run_office_home_temporal_precision_head_pair_feature_gtr_preflight.sh
+```
+
+Bring back:
+
+```text
+output/uda/office-home/temporal_precision_head_pair_feature_gtr_preflight_accuracy.csv
+output/uda/office-home/temporal_precision_head_pair_feature_gtr_preflight_summary.json
+output/uda/office-home/temporal_precision_head_pair_feature_gtr_preflight_flow.json
+```
+
+All reported accuracies use target-label-selected `peak`, as requested. The
+preflight passes only if every task has a valid `gtr_only` route, the AC/PA/RA
+mean exceeds the matched online Stage14 mean `80.0733`, the projected complete
+mean exceeds `84.7225`, and no task loses more than `0.30` from matched Stage14.
+The projection reuses nine archived Stage19 rows and is only a compute gate.
+
+### Step 1: Complete Seed-2022 Gate
+
+Run only after `pass_gtr_preflight`:
+
+```bash
+bash tools/run_office_home_temporal_precision_head_pair_feature_gtr_seed2022.sh
+```
+
+Bring back the four `pair_feature_gtr_seed2022` CSV/JSON files. A pass requires
+peak mean above `84.7225`, at least ten active/trained pair adapters, a valid
+GTR-only route on all 12 tasks, and worst task delta versus DUET above `-1.50`.
+
+### Step 2: Three-Seed Stability
+
+Run only after `pass_gtr_seed2022_gate`:
+
+```bash
+bash tools/run_office_home_temporal_precision_head_pair_feature_gtr_seed_sweep.sh
+```
+
+The stability protocol remains unchanged: all three peak means above DUET,
+sample standard deviation at most `0.10`, and mean over seeds above the Stage14
+peak mean `84.7825`.
+
+### Stage19-G Failure Route
+
+If the route diagnostics fail, audit the implementation before interpreting
+accuracy. If the route is valid but the AC/PA/RA or complete accuracy gate
+fails, archive the result and do not sweep `GTR_PAR`, gate size, rank, or graph
+parameters. Resume the already implemented Stage20 covariance preflight. That
+is an orthogonal test of agreement geometry and remains the next proposal.
+
+Stage19-G local status:
+
+```text
+implementation complete
+local validation passed (70 tests)
+cloud preflight pending
+```

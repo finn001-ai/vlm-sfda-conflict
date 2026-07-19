@@ -102,9 +102,10 @@ PAIR_FEATURE_ADAPT: True
 PAIR_FEATURE_START_CYCLE: 1
 PAIR_FEATURE_LR_MULT: 1.0
 PAIR_FEATURE_MIN_ACTIVE_RANK: 8
+PAIR_FEATURE_GRADIENT_MODE: gtr_only
 PAIR_FEATURE_MAX_GATE: 0.05
 PAIR_FEATURE_GATE_INIT: -2.0
-Task: AC, Iter:40/40; Cycle: 4/4; Accuracy = 74.20%; pair_feature_gate=0.0000; pair_feature_router_norm=0.0; pair_flow_active_rank=7; pair_feature_effective=False
+Task: AC, Iter:40/40; Cycle: 4/4; Accuracy = 74.20%; pair_feature_gate=0.0000; pair_feature_router_norm=0.0; pair_flow_active_rank=7; pair_feature_effective=False; pair_feature_gradient_mode=gtr_only; pair_feature_gtr_active=31; pair_feature_gtr_loss=0.123; pair_feature_gtr_batches=4
 """
             )
             stdout = io.StringIO()
@@ -121,10 +122,14 @@ Task: AC, Iter:40/40; Cycle: 4/4; Accuracy = 74.20%; pair_feature_gate=0.0000; p
         rows = list(csv.DictReader(io.StringIO(stdout.getvalue())))
         self.assertEqual(rows[0]["pair_feature_adapt"], "True")
         self.assertEqual(rows[0]["pair_feature_min_active_rank"], "8")
+        self.assertEqual(rows[0]["pair_feature_gradient_mode"], "gtr_only")
         self.assertEqual(rows[0]["pair_feature_gate_final"], "0.0000")
         self.assertEqual(rows[0]["pair_feature_router_norm"], "0.0")
         self.assertEqual(rows[0]["pair_flow_active_rank"], "7")
         self.assertEqual(rows[0]["pair_feature_effective"], "False")
+        self.assertEqual(rows[0]["pair_feature_gtr_active"], "31")
+        self.assertEqual(rows[0]["pair_feature_gtr_loss"], "0.123")
+        self.assertEqual(rows[0]["pair_feature_gtr_batches"], "4")
 
     def test_covariance_transport_metrics_are_extracted(self):
         with tempfile.TemporaryDirectory() as tmpdir:
