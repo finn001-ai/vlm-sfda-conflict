@@ -157,5 +157,11 @@ without per-sample hard source-vs-CLIP selection.
 ```text
 implementation complete
 local validation passed (80 tests)
-cloud preflight pending
+cloud preflight run reported as lower accuracy
+standard CSV/JSON artifacts not yet archived
 ```
+
+The current conclusion is qualitative only: the user stopped/rejected the
+route after observing lower accuracy. Exact task values, selected strengths,
+and held-out transport diagnostics are not available in the local workspace,
+so no quantitative Stage21 claim is made yet.
