@@ -1,0 +1,55 @@
+{
+  "decision": "pass_transport_diagnostics",
+  "num_logs": 3,
+  "valid_tasks": 3,
+  "tasks": [
+    {
+      "method": "temporal_precision_head_seed2022_covariance_preflight",
+      "task": "AC",
+      "anchors": 1909,
+      "active_classes": 60,
+      "fixed_conflicts": 2456,
+      "eligible_conflicts": 2170,
+      "eligible_coverage": 0.88355,
+      "mean_relative_shift": 0.05,
+      "checks": {
+        "class_geometry_present": true,
+        "conflict_coverage_present": true,
+        "transport_nonzero_and_bounded": true
+      },
+      "mechanism_valid": true
+    },
+    {
+      "method": "temporal_precision_head_seed2022_covariance_preflight",
+      "task": "PA",
+      "anchors": 1204,
+      "active_classes": 50,
+      "fixed_conflicts": 1223,
+      "eligible_conflicts": 759,
+      "eligible_coverage": 0.620605,
+      "mean_relative_shift": 0.05,
+      "checks": {
+        "class_geometry_present": true,
+        "conflict_coverage_present": true,
+        "transport_nonzero_and_bounded": true
+      },
+      "mechanism_valid": true
+    },
+    {
+      "method": "temporal_precision_head_seed2022_covariance_preflight",
+      "task": "RA",
+      "anchors": 1478,
+      "active_classes": 60,
+      "fixed_conflicts": 949,
+      "eligible_conflicts": 868,
+      "eligible_coverage": 0.914647,
+      "mean_relative_shift": 0.05,
+      "checks": {
+        "class_geometry_present": true,
+        "conflict_coverage_present": true,
+        "transport_nonzero_and_bounded": true
+      },
+      "mechanism_valid": true
+    }
+  ]
+}

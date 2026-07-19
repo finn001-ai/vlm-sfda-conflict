@@ -1,0 +1,56 @@
+{
+  "decision": "fail_covariance_preflight",
+  "selection": "peak",
+  "warning": "peak accuracy uses target labels and is diagnostic only",
+  "mean_accuracy": 79.8733,
+  "matched_base_mean": 80.0733,
+  "delta_vs_matched_base": -0.2,
+  "duet_subset_mean": 79.9667,
+  "delta_vs_duet_subset": -0.0933,
+  "checks": {
+    "config_valid": true,
+    "mechanism_valid": true,
+    "mean_beats_matched_base": false,
+    "mean_beats_duet_subset": false,
+    "no_task_collapse": true
+  },
+  "tasks": [
+    {
+      "task": "AC",
+      "accuracy": 73.45,
+      "matched_base": 73.59,
+      "delta_vs_matched_base": -0.14,
+      "duet": 73.6,
+      "delta_vs_duet": -0.15,
+      "active_classes": 60,
+      "eligible_coverage": 0.88355,
+      "mean_relative_shift": 0.05,
+      "config_valid": true
+    },
+    {
+      "task": "PA",
+      "accuracy": 82.82,
+      "matched_base": 83.11,
+      "delta_vs_matched_base": -0.29,
+      "duet": 82.7,
+      "delta_vs_duet": 0.12,
+      "active_classes": 50,
+      "eligible_coverage": 0.620605,
+      "mean_relative_shift": 0.05,
+      "config_valid": true
+    },
+    {
+      "task": "RA",
+      "accuracy": 83.35,
+      "matched_base": 83.52,
+      "delta_vs_matched_base": -0.17,
+      "duet": 83.6,
+      "delta_vs_duet": -0.25,
+      "active_classes": 60,
+      "eligible_coverage": 0.914647,
+      "mean_relative_shift": 0.05,
+      "config_valid": true
+    }
+  ],
+  "next": "replace candidate-conditioned transport with global agreement-whitened optimal transport"
+}

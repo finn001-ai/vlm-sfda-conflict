@@ -175,5 +175,40 @@ assumption.
 implementation complete
 local validation passed (71 tests)
 Stage19-G prerequisite failed validly
-cloud covariance preflight is the next experiment
+cloud covariance preflight complete: valid mechanism failure
+```
+
+## Cloud Preflight Result
+
+The conditional covariance transport activated strongly on every task, so the
+failure is not caused by missing class geometry or conflict coverage:
+
+| Task | Peak | Matched Stage14 | Delta | Active classes | Coverage | Mean shift |
+|---|---:|---:|---:|---:|---:|---:|
+| AC | 73.45 | 73.59 | -0.14 | 60 | 88.36% | 5.00% |
+| PA | 82.82 | 83.11 | -0.29 | 50 | 62.06% | 5.00% |
+| RA | 83.35 | 83.52 | -0.17 | 60 | 91.46% | 5.00% |
+
+Aggregate result:
+
+```text
+decision = fail_covariance_preflight
+transport diagnostics = pass (3/3)
+peak mean = 79.8733
+delta vs matched Stage14 = -0.2000
+delta vs DUET subset = -0.0933
+```
+
+All three tasks moved exactly to the `5%` bound and all three regressed. The
+candidate-conditioned projection direction is therefore not useful under this
+training interface. A smaller fixed gate would only tune the magnitude of an
+already adverse direction and is not approved.
+
+Conclusion:
+
+```text
+do not run the complete 12-task Stage20 script
+close candidate-conditioned covariance transport
+do not sweep rank, minimum anchors, or gate
+proceed to Stage21 global agreement-whitened transport
 ```

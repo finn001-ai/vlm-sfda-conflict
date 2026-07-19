@@ -51,6 +51,7 @@ from src.utils.class_pair_feature_adapter import (
     weighted_graph_temporal_kl,
 )
 from src.utils.agreement_covariance_transport import AgreementCovarianceTransport
+from src.utils.agreement_whitened_transport import AgreementWhitenedTransport
 # from src.utils import loss, active_prompt, IID_losses
 # from proposed_method import *
 from torch.nn.functional import normalize
@@ -1003,23 +1004,51 @@ def train_target(cfg):
             raise ValueError(
                 "Agreement covariance transport cannot use the learned pair adapter"
             )
-        covariance_transport = AgreementCovarianceTransport(
-            num_classes=cfg.class_num,
-            feature_dim=cfg.bottleneck,
-            rank=int(cfg.DCCL.COV_TRANSPORT_RANK),
-            min_anchors=int(cfg.DCCL.COV_TRANSPORT_MIN_ANCHORS),
-            max_gate=float(cfg.DCCL.COV_TRANSPORT_MAX_GATE),
-            epsilon=float(cfg.DCCL.EPSILON),
-        ).cuda()
-        logging.info(
-            "DCCL agreement covariance transport enabled: rank={}; "
-            "min_anchors={}; max_gate={:.4f}; start_cycle={}".format(
-                int(cfg.DCCL.COV_TRANSPORT_RANK),
-                int(cfg.DCCL.COV_TRANSPORT_MIN_ANCHORS),
-                float(cfg.DCCL.COV_TRANSPORT_MAX_GATE),
-                int(cfg.DCCL.COV_TRANSPORT_START_CYCLE),
+        if cfg.DCCL.COV_TRANSPORT_MODE == "conditional":
+            covariance_transport = AgreementCovarianceTransport(
+                num_classes=cfg.class_num,
+                feature_dim=cfg.bottleneck,
+                rank=int(cfg.DCCL.COV_TRANSPORT_RANK),
+                min_anchors=int(cfg.DCCL.COV_TRANSPORT_MIN_ANCHORS),
+                max_gate=float(cfg.DCCL.COV_TRANSPORT_MAX_GATE),
+                epsilon=float(cfg.DCCL.EPSILON),
+            ).cuda()
+            logging.info(
+                "DCCL agreement covariance transport enabled: mode=conditional; "
+                "rank={}; min_anchors={}; max_gate={:.4f}; start_cycle={}".format(
+                    int(cfg.DCCL.COV_TRANSPORT_RANK),
+                    int(cfg.DCCL.COV_TRANSPORT_MIN_ANCHORS),
+                    float(cfg.DCCL.COV_TRANSPORT_MAX_GATE),
+                    int(cfg.DCCL.COV_TRANSPORT_START_CYCLE),
+                )
             )
-        )
+        elif cfg.DCCL.COV_TRANSPORT_MODE == "global_whitened":
+            covariance_transport = AgreementWhitenedTransport(
+                num_classes=cfg.class_num,
+                feature_dim=cfg.bottleneck,
+                min_anchors=int(cfg.DCCL.COV_GLOBAL_MIN_ANCHORS),
+                shrinkage=float(cfg.DCCL.COV_GLOBAL_SHRINKAGE),
+                holdout_ratio=float(cfg.DCCL.COV_GLOBAL_HOLDOUT_RATIO),
+                max_gate=float(cfg.DCCL.COV_TRANSPORT_MAX_GATE),
+                min_improvement=float(cfg.DCCL.COV_GLOBAL_MIN_IMPROVEMENT),
+                epsilon=float(cfg.DCCL.EPSILON),
+            ).cuda()
+            logging.info(
+                "DCCL agreement-whitened transport enabled: min_anchors={}; "
+                "shrinkage={:.4f}; holdout_ratio={:.4f}; max_gate={:.4f}; "
+                "min_improvement={:.6f}; start_cycle={}".format(
+                    int(cfg.DCCL.COV_GLOBAL_MIN_ANCHORS),
+                    float(cfg.DCCL.COV_GLOBAL_SHRINKAGE),
+                    float(cfg.DCCL.COV_GLOBAL_HOLDOUT_RATIO),
+                    float(cfg.DCCL.COV_TRANSPORT_MAX_GATE),
+                    float(cfg.DCCL.COV_GLOBAL_MIN_IMPROVEMENT),
+                    int(cfg.DCCL.COV_TRANSPORT_START_CYCLE),
+                )
+            )
+        else:
+            raise ValueError(
+                "DCCL.COV_TRANSPORT_MODE must be conditional or global_whitened"
+            )
 
     optimizer = optim.SGD(param_group)
     optimizer = op_copy(optimizer)
@@ -1114,24 +1143,48 @@ def train_target(cfg):
         if covariance_transport is not None and not bool(
             covariance_transport.fitted.item()
         ):
-            transport_diagnostics = covariance_transport.fit(
-                task_features,
-                source_label,
-                clip_label,
-                confi_dis,
-            )
-            logging.info(
-                "DCCL agreement covariance geometry frozen: anchors={}; "
-                "active_classes={}; fixed_conflicts={}; eligible_conflicts={}; "
-                "eligible_coverage={:.6f}; mean_relative_shift={:.6f}".format(
-                    transport_diagnostics["anchors"],
-                    transport_diagnostics["active_classes"],
-                    transport_diagnostics["fixed_conflicts"],
-                    transport_diagnostics["eligible_conflicts"],
-                    transport_diagnostics["eligible_coverage"],
-                    transport_diagnostics["mean_relative_shift"],
+            if isinstance(covariance_transport, AgreementWhitenedTransport):
+                transport_diagnostics = covariance_transport.fit(
+                    task_features,
+                    source_label,
+                    clip_label,
+                    netC.fc.weight,
+                    netC.fc.bias,
                 )
-            )
+                logging.info(
+                    "DCCL agreement-whitened geometry frozen: anchors={}; "
+                    "train_anchors={}; heldout_anchors={}; active_classes={}; "
+                    "selected_strength={:.6f}; heldout_loss_improvement={:.6f}; "
+                    "heldout_accuracy_delta={:.6f}; mean_relative_shift={:.6f}".format(
+                        transport_diagnostics["anchors"],
+                        transport_diagnostics["train_anchors"],
+                        transport_diagnostics["heldout_anchors"],
+                        transport_diagnostics["active_classes"],
+                        transport_diagnostics["selected_strength"],
+                        transport_diagnostics["heldout_loss_improvement"],
+                        transport_diagnostics["heldout_accuracy_delta"],
+                        transport_diagnostics["mean_relative_shift"],
+                    )
+                )
+            else:
+                transport_diagnostics = covariance_transport.fit(
+                    task_features,
+                    source_label,
+                    clip_label,
+                    confi_dis,
+                )
+                logging.info(
+                    "DCCL agreement covariance geometry frozen: anchors={}; "
+                    "active_classes={}; fixed_conflicts={}; eligible_conflicts={}; "
+                    "eligible_coverage={:.6f}; mean_relative_shift={:.6f}".format(
+                        transport_diagnostics["anchors"],
+                        transport_diagnostics["active_classes"],
+                        transport_diagnostics["fixed_conflicts"],
+                        transport_diagnostics["eligible_conflicts"],
+                        transport_diagnostics["eligible_coverage"],
+                        transport_diagnostics["mean_relative_shift"],
+                    )
+                )
         if isinstance(target_head, ClassPairFlowAdapter):
             was_frozen = bool(pair_flow_state and pair_flow_state["frozen"])
             pair_flow_state = update_class_pair_flow(
@@ -1712,15 +1765,32 @@ def train_target(cfg):
                     )
                 if covariance_transport is not None:
                     transport_diagnostics = covariance_transport.diagnostics()
-                    log_str += (
-                        "; cov_transport_active_classes={}; "
-                        "cov_transport_coverage={:.6f}; "
-                        "cov_transport_mean_shift={:.6f}"
-                    ).format(
-                        transport_diagnostics["active_classes"],
-                        transport_diagnostics["eligible_coverage"],
-                        transport_diagnostics["mean_relative_shift"],
-                    )
+                    if isinstance(
+                        covariance_transport, AgreementWhitenedTransport
+                    ):
+                        log_str += (
+                            "; cov_global_active_classes={}; "
+                            "cov_global_selected_strength={:.6f}; "
+                            "cov_global_heldout_improvement={:.6f}; "
+                            "cov_global_accuracy_delta={:.6f}; "
+                            "cov_global_mean_shift={:.6f}"
+                        ).format(
+                            transport_diagnostics["active_classes"],
+                            transport_diagnostics["selected_strength"],
+                            transport_diagnostics["heldout_loss_improvement"],
+                            transport_diagnostics["heldout_accuracy_delta"],
+                            transport_diagnostics["mean_relative_shift"],
+                        )
+                    else:
+                        log_str += (
+                            "; cov_transport_active_classes={}; "
+                            "cov_transport_coverage={:.6f}; "
+                            "cov_transport_mean_shift={:.6f}"
+                        ).format(
+                            transport_diagnostics["active_classes"],
+                            transport_diagnostics["eligible_coverage"],
+                            transport_diagnostics["mean_relative_shift"],
+                        )
 
                 # cfg.out_file.write(log_str + '\n')
                 # cfg.out_file.flush()

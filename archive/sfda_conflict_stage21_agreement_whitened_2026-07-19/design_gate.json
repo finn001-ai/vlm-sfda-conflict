@@ -1,0 +1,29 @@
+{
+  "date": "2026-07-19",
+  "stage": 21,
+  "method": "global_agreement_whitened_transport",
+  "trigger": {
+    "stage20_decision": "fail_covariance_preflight",
+    "stage20_mechanism_valid": true,
+    "stage20_delta_vs_matched_base": -0.2,
+    "stage20_all_tasks_hit_max_shift": true
+  },
+  "fixed_config": {
+    "min_anchors": 512,
+    "shrinkage": 0.1,
+    "holdout_ratio": 0.2,
+    "max_relative_shift": 0.05,
+    "min_heldout_improvement": 0.001,
+    "candidate_strengths": [0.0, 0.005, 0.0125, 0.025, 0.0375, 0.05]
+  },
+  "selection": {
+    "uses_target_labels": false,
+    "objective": "class-balanced source-classifier CE on held-out source/CLIP agreements",
+    "constraint": "held-out consensus accuracy must not decrease",
+    "policy": "select the smallest nonzero strength meeting the improvement and accuracy constraints",
+    "identity_fallback": true
+  },
+  "preflight_tasks": ["AC", "PA", "RA"],
+  "performance_selection": "peak",
+  "failure_route": "three-view class-conditional noise EM consensus over source, CLIP, and graph-temporal posteriors"
+}
