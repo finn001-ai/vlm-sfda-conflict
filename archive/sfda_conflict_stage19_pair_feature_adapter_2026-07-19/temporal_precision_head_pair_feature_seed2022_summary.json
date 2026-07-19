@@ -1,0 +1,134 @@
+{
+  "decision": "fail_seed2022_gate",
+  "gate": "peak mean > 84.7225; active and trained pair-feature adapter on at least 10/12 tasks; worst task delta vs DUET >= -1.50",
+  "method": "temporal_precision_head_seed2022_pair_feature_probe",
+  "selection": "peak",
+  "duet_mean": 84.7167,
+  "historical_stage14_seed2022_mean": 84.6783,
+  "matched_stage17_online_seed2022_mean": 84.7225,
+  "mean_accuracy": 84.6908,
+  "delta_vs_duet": -0.0258,
+  "delta_vs_historical_stage14": 0.0125,
+  "delta_vs_matched_online": -0.0317,
+  "task_wins_vs_duet": 6,
+  "active_pair_feature_tasks": 12,
+  "trained_pair_feature_tasks": 12,
+  "worst_task_delta_vs_duet": -0.53,
+  "checks": {
+    "mean_passes": false,
+    "basis_activation_passes": true,
+    "router_training_passes": true,
+    "collapse_passes": true
+  },
+  "next_if_fail": "replace learned routing with agreement-anchor class-conditional subspace transport using covariance geometry and soft conflict mass",
+  "tasks": [
+    {
+      "task": "AC",
+      "accuracy": 73.77,
+      "duet": 73.6,
+      "delta_vs_duet": 0.17,
+      "pair_flow_active_rank": 12,
+      "pair_feature_gate_final": 0.00596,
+      "pair_feature_router_norm": 0.062525
+    },
+    {
+      "task": "AP",
+      "accuracy": 91.01,
+      "duet": 90.4,
+      "delta_vs_duet": 0.61,
+      "pair_flow_active_rank": 16,
+      "pair_feature_gate_final": 0.005962,
+      "pair_feature_router_norm": 0.060439
+    },
+    {
+      "task": "AR",
+      "accuracy": 91.05,
+      "duet": 91.0,
+      "delta_vs_duet": 0.05,
+      "pair_flow_active_rank": 13,
+      "pair_feature_gate_final": 0.005961,
+      "pair_feature_router_norm": 0.061119
+    },
+    {
+      "task": "CA",
+      "accuracy": 83.6,
+      "duet": 83.6,
+      "delta_vs_duet": 0.0,
+      "pair_flow_active_rank": 2,
+      "pair_feature_gate_final": 0.00596,
+      "pair_feature_router_norm": 0.018214
+    },
+    {
+      "task": "CP",
+      "accuracy": 90.92,
+      "duet": 90.7,
+      "delta_vs_duet": 0.22,
+      "pair_flow_active_rank": 16,
+      "pair_feature_gate_final": 0.005962,
+      "pair_feature_router_norm": 0.057869
+    },
+    {
+      "task": "CR",
+      "accuracy": 90.77,
+      "duet": 90.9,
+      "delta_vs_duet": -0.13,
+      "pair_flow_active_rank": 16,
+      "pair_feature_gate_final": 0.005959,
+      "pair_feature_router_norm": 0.070114
+    },
+    {
+      "task": "PA",
+      "accuracy": 82.49,
+      "duet": 82.7,
+      "delta_vs_duet": -0.21,
+      "pair_flow_active_rank": 2,
+      "pair_feature_gate_final": 0.005961,
+      "pair_feature_router_norm": 0.022654
+    },
+    {
+      "task": "PC",
+      "accuracy": 73.65,
+      "duet": 73.7,
+      "delta_vs_duet": -0.05,
+      "pair_flow_active_rank": 9,
+      "pair_feature_gate_final": 0.005961,
+      "pair_feature_router_norm": 0.05628
+    },
+    {
+      "task": "PR",
+      "accuracy": 90.73,
+      "duet": 91.2,
+      "delta_vs_duet": -0.47,
+      "pair_flow_active_rank": 14,
+      "pair_feature_gate_final": 0.005958,
+      "pair_feature_router_norm": 0.064612
+    },
+    {
+      "task": "RA",
+      "accuracy": 83.07,
+      "duet": 83.6,
+      "delta_vs_duet": -0.53,
+      "pair_flow_active_rank": 1,
+      "pair_feature_gate_final": 0.00596,
+      "pair_feature_router_norm": 0.012587
+    },
+    {
+      "task": "RC",
+      "accuracy": 73.97,
+      "duet": 74.0,
+      "delta_vs_duet": -0.03,
+      "pair_flow_active_rank": 11,
+      "pair_feature_gate_final": 0.005959,
+      "pair_feature_router_norm": 0.061041
+    },
+    {
+      "task": "RP",
+      "accuracy": 91.26,
+      "duet": 91.2,
+      "delta_vs_duet": 0.06,
+      "pair_flow_active_rank": 9,
+      "pair_feature_gate_final": 0.005959,
+      "pair_feature_router_norm": 0.043589
+    }
+  ]
+}

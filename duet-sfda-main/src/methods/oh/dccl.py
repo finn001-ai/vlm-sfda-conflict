@@ -917,6 +917,7 @@ def train_target(cfg):
         pair_feature_adapter = ClassPairFeatureAdapter(
             feature_dim=cfg.bottleneck,
             rank=int(cfg.DCCL.PAIR_FLOW_RANK),
+            min_active_rank=int(cfg.DCCL.PAIR_FEATURE_MIN_ACTIVE_RANK),
             max_gate=float(cfg.DCCL.PAIR_FEATURE_MAX_GATE),
             gate_init=float(cfg.DCCL.PAIR_FEATURE_GATE_INIT),
             epsilon=float(cfg.DCCL.EPSILON),
@@ -932,9 +933,10 @@ def train_target(cfg):
                 group["weight_decay_scale"] = 0.0
             param_group.append(group)
         logging.info(
-            "DCCL pair-feature adapter enabled: rank={}; max_gate={:.4f}; "
+            "DCCL pair-feature adapter enabled: rank={}; min_active_rank={}; max_gate={:.4f}; "
             "start_cycle={}; lr_mult={:.3f}".format(
                 int(cfg.DCCL.PAIR_FLOW_RANK),
+                int(cfg.DCCL.PAIR_FEATURE_MIN_ACTIVE_RANK),
                 float(cfg.DCCL.PAIR_FEATURE_MAX_GATE),
                 int(cfg.DCCL.PAIR_FEATURE_START_CYCLE),
                 float(cfg.DCCL.PAIR_FEATURE_LR_MULT),
@@ -1551,11 +1553,12 @@ def train_target(cfg):
                     )
                     log_str += (
                         "; pair_feature_gate={:.6f}; pair_feature_router_norm={:.6f}; "
-                        "pair_flow_active_rank={}"
+                        "pair_flow_active_rank={}; pair_feature_effective={}"
                     ).format(
                         float(pair_feature_adapter.effective_gate().item()),
                         float(pair_feature_adapter.router.weight.detach().norm().item()),
                         active_rank,
+                        bool(pair_feature_adapter.is_effective()),
                     )
 
                 # cfg.out_file.write(log_str + '\n')

@@ -19,16 +19,24 @@ FLOW_PATTERN = re.compile(
 PAIR_PATTERN = re.compile(r"pair-feature directions frozen: pairs=(\[[^\n]+\])")
 TASK_PATTERN = re.compile(r"Task:\s*([A-Z]{2}),")
 ROUTER_PATTERN = re.compile(r"pair_feature_router_norm=([0-9.]+)")
+EFFECTIVE_PATTERN = re.compile(r"pair_feature_effective=(True|False)")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--glob", required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument("--min-active-rank", type=int, default=1)
+    parser.add_argument("--allow-fallback", action="store_true")
     return parser.parse_args()
 
 
-def summarize_log(text: str, method: str) -> dict:
+def summarize_log(
+    text: str,
+    method: str,
+    min_active_rank: int = 1,
+    allow_fallback: bool = False,
+) -> dict:
     task_matches = TASK_PATTERN.findall(text)
     flow_matches = FLOW_PATTERN.findall(text)
     if not task_matches or not flow_matches:
@@ -51,6 +59,19 @@ def summarize_log(text: str, method: str) -> dict:
     router_matches = ROUTER_PATTERN.findall(text)
     router_norm = float(router_matches[-1]) if router_matches else 0.0
     final_rank = cycles[-1]["active_rank"]
+    expected_effective = final_rank >= min_active_rank
+    effective_matches = EFFECTIVE_PATTERN.findall(text)
+    effective = (
+        effective_matches[-1] == "True"
+        if effective_matches
+        else expected_effective
+    )
+    mechanism_active = effective and router_norm > 0.0
+    mechanism_valid = effective == expected_effective and (
+        router_norm > 0.0
+        if effective
+        else allow_fallback and router_norm == 0.0
+    )
     return {
         "method": method,
         "task": task_matches[-1],
@@ -58,7 +79,10 @@ def summarize_log(text: str, method: str) -> dict:
         "final_active_rank": final_rank,
         "frozen_pairs": [list(pair) for pair in pairs],
         "pair_feature_router_norm": router_norm,
-        "mechanism_active": final_rank > 0 and router_norm > 0.0,
+        "min_active_rank": min_active_rank,
+        "pair_feature_effective": effective,
+        "mechanism_active": mechanism_active,
+        "mechanism_valid": mechanism_valid,
         "cycles": cycles,
     }
 
@@ -66,15 +90,24 @@ def summarize_log(text: str, method: str) -> dict:
 def main() -> None:
     args = parse_args()
     paths = sorted(Path(path) for path in glob.glob(args.glob))
-    tasks = [summarize_log(path.read_text(errors="ignore"), path.parent.name) for path in paths]
+    tasks = [
+        summarize_log(
+            path.read_text(errors="ignore"),
+            path.parent.name,
+            args.min_active_rank,
+            args.allow_fallback,
+        )
+        for path in paths
+    ]
     summary = {
         "decision": (
             "pass_flow_diagnostics"
-            if tasks and all(item["mechanism_active"] for item in tasks)
+            if tasks and all(item["mechanism_valid"] for item in tasks)
             else "fail_flow_diagnostics"
         ),
         "num_logs": len(tasks),
         "active_tasks": sum(item["mechanism_active"] for item in tasks),
+        "fallback_tasks": sum(not item["pair_feature_effective"] for item in tasks),
         "tasks": tasks,
     }
     out_path = Path(args.out)

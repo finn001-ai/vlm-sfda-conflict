@@ -1,0 +1,99 @@
+{
+  "decision": "pass_flow_diagnostics",
+  "num_logs": 1,
+  "active_tasks": 1,
+  "tasks": [
+    {
+      "method": "temporal_precision_head_seed2022_pair_feature_preflight",
+      "task": "AC",
+      "activation_cycle": 2,
+      "final_active_rank": 12,
+      "frozen_pairs": [
+        [
+          12,
+          34
+        ],
+        [
+          19,
+          22
+        ],
+        [
+          18,
+          8
+        ],
+        [
+          34,
+          32
+        ],
+        [
+          15,
+          31
+        ],
+        [
+          63,
+          6
+        ],
+        [
+          56,
+          64
+        ],
+        [
+          23,
+          2
+        ],
+        [
+          55,
+          6
+        ],
+        [
+          11,
+          23
+        ],
+        [
+          48,
+          20
+        ],
+        [
+          43,
+          42
+        ]
+      ],
+      "pair_feature_router_norm": 0.062336,
+      "mechanism_active": true,
+      "cycles": [
+        {
+          "cycle": 1,
+          "fixed_conflicts": 2421,
+          "candidate_mass": 1336.85,
+          "active_rank": 0,
+          "frozen": false,
+          "cumulative_flow_mass": 1336.85
+        },
+        {
+          "cycle": 2,
+          "fixed_conflicts": 2421,
+          "candidate_mass": 1289.98,
+          "active_rank": 12,
+          "frozen": true,
+          "cumulative_flow_mass": 2626.83
+        },
+        {
+          "cycle": 3,
+          "fixed_conflicts": 2421,
+          "candidate_mass": 1410.38,
+          "active_rank": 12,
+          "frozen": true,
+          "cumulative_flow_mass": 2626.83
+        },
+        {
+          "cycle": 4,
+          "fixed_conflicts": 2421,
+          "candidate_mass": 1471.05,
+          "active_rank": 12,
+          "frozen": true,
+          "cumulative_flow_mass": 2626.83
+        }
+      ]
+    }
+  ]
+}

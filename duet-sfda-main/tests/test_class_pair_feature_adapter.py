@@ -51,6 +51,29 @@ class ClassPairFeatureAdapterTest(unittest.TestCase):
 
         self.assertGreater(float(adapter.router.weight.grad.norm()), 0.0)
 
+    def test_undercovered_basis_is_an_exact_identity(self):
+        adapter = ClassPairFeatureAdapter(
+            3, 2, 0.05, -2.0, 1e-6, min_active_rank=2
+        )
+        adapter.set_pairs([(0, 1)], torch.eye(3))
+        adapter.router.weight.data.fill_(10.0)
+        features = torch.tensor([[1.0, -2.0, 0.5]])
+
+        self.assertTrue(torch.equal(adapter(features), features))
+        self.assertFalse(adapter.is_effective())
+        self.assertEqual(float(adapter.effective_gate()), 0.0)
+
+    def test_coverage_threshold_activates_at_minimum_rank(self):
+        adapter = ClassPairFeatureAdapter(
+            3, 2, 0.05, -2.0, 1e-6, min_active_rank=2
+        )
+        adapter.set_pairs([(0, 1), (1, 2)], torch.eye(3))
+        adapter.router.weight.data.fill_(1.0)
+        features = torch.ones(1, 3)
+
+        self.assertTrue(adapter.is_effective())
+        self.assertFalse(torch.equal(adapter(features), features))
+
 
 if __name__ == "__main__":
     unittest.main()

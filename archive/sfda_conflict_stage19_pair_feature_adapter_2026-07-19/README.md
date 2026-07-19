@@ -178,5 +178,109 @@ becomes a new stage only after implementation and an execution gate exist.
 ```text
 implementation complete
 local validation passed (48 tests)
-cloud result pending
+AC mechanism preflight passed
+seed-2022 cloud result observed: fail
 ```
+
+## Seed-2022 Result
+
+The adapter activated and trained on all 12 tasks, so this is a valid test of
+the Stage19 mechanism rather than another inactive control.
+
+| Metric | Stage19 | Required |
+|---|---:|---:|
+| Peak mean | 84.6908 | >84.7225 |
+| Delta vs DUET | -0.0258 | >0 |
+| Delta vs historical Stage14 seed 2022 | +0.0125 | diagnostic |
+| Delta vs matched online Stage14 | -0.0317 | >0 |
+| Wins/ties vs DUET | 6/12 | diagnostic |
+| Active/trained tasks | 12/12 | >=10/12 |
+| Worst task delta vs DUET | -0.53 | >=-1.50 |
+
+Task results:
+
+| Task | Peak | Delta vs DUET | Active rank |
+|---|---:|---:|---:|
+| AC | 73.77 | +0.17 | 12 |
+| AP | 91.01 | +0.61 | 16 |
+| AR | 91.05 | +0.05 | 13 |
+| CA | 83.60 | 0.00 | 2 |
+| CP | 90.92 | +0.22 | 16 |
+| CR | 90.77 | -0.13 | 16 |
+| PA | 82.49 | -0.21 | 2 |
+| PC | 73.65 | -0.05 | 9 |
+| PR | 90.73 | -0.47 | 14 |
+| RA | 83.07 | -0.53 | 1 |
+| RC | 73.97 | -0.03 | 11 |
+| RP | 91.26 | +0.06 | 9 |
+
+Peak selection recovers only 0.1175 mean points over the final checkpoints and
+still misses DUET, so checkpoint timing is not the remaining explanation.
+
+## Stage19-C: Subspace-Coverage Protection
+
+The valid run exposes one architectural defect rather than a gate/gain
+hyperparameter issue. The feature residual is norm-bounded after the active
+directions are combined. Consequently, a one-direction basis on RA can receive
+the same maximum relative displacement as a complete 16-direction basis on
+AP. `CA`, `PA`, and `RA` are exactly the target-Art tasks and activate only
+`2`, `2`, and `1` directions; relative to the matched online Stage14 control,
+Stage19 changes them by `-0.08`, `-0.62`, and `-0.45` points.
+
+Stage19-C adds one data-independent identifiability condition:
+
+```text
+PAIR_FEATURE_MIN_ACTIVE_RANK = PAIR_FLOW_RANK / 2 = 8
+```
+
+If fewer than eight independent directions exist, the representation adapter
+is an exact identity, its effective gate is zero, and its router receives no
+gradient. The complete Stage14 path remains active. At rank eight or above,
+the Stage19 implementation is unchanged. This is not a rank sweep, graph
+rule, per-sample selector, or loss change. Local validation passes all 54
+tests; the standalone configuration also passes YAML/schema-value checks.
+
+A historical replacement diagnostic uses the archived Stage19 results on the
+nine rank-sufficient tasks and the matched online Stage14 values on the three
+under-covered target-Art tasks:
+
+```text
+projected peak mean = 84.7867
+delta vs DUET = +0.0700
+```
+
+This projection uses target accuracies and is not a result. It only justifies
+the following three-task preflight.
+
+### Target-Art Preflight
+
+```bash
+cd /openbayes/home/vlm-sfda-conflict
+git pull
+cd duet-sfda-main
+bash tools/run_office_home_temporal_precision_head_pair_feature_coverage_preflight.sh
+```
+
+Bring back:
+
+```text
+output/uda/office-home/temporal_precision_head_pair_feature_coverage_preflight_accuracy.csv
+output/uda/office-home/temporal_precision_head_pair_feature_coverage_preflight_summary.json
+output/uda/office-home/temporal_precision_head_pair_feature_coverage_preflight_flow.json
+```
+
+Run the complete gate only if the summary says `pass_coverage_preflight`. It
+must verify exact fallback on `CA/PA/RA`, recover at least 0.20 target-Art mean
+points over Stage19, and project above 84.7225.
+
+### Complete Seed-2022 Gate
+
+```bash
+bash tools/run_office_home_temporal_precision_head_pair_feature_coverage_seed2022.sh
+```
+
+Bring back the four `pair_feature_coverage_seed2022` CSV/JSON files. A valid
+pass requires peak mean above 84.7225 and exact agreement between active rank
+and the coverage policy on all tasks. If either gate fails, close learned
+pair routing and implement the already specified agreement-anchor
+class-conditional covariance transport as Stage20.

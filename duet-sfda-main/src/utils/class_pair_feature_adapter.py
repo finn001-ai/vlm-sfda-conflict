@@ -1,4 +1,4 @@
-"""Bounded feature adaptation in persistent class-pair directions."""
+"""Bounded feature adaptation in sufficiently covered class-pair directions."""
 
 from __future__ import annotations
 
@@ -15,12 +15,16 @@ class ClassPairFeatureAdapter(nn.Module):
         max_gate: float,
         gate_init: float,
         epsilon: float,
+        min_active_rank: int = 1,
     ):
         super().__init__()
         if feature_dim <= 0 or rank <= 0:
             raise ValueError("Feature dimension and pair-feature rank must be positive")
+        if min_active_rank <= 0 or min_active_rank > rank:
+            raise ValueError("Minimum active rank must be in [1, rank]")
         if not 0.0 < max_gate <= 1.0:
             raise ValueError("Pair-feature max gate must be in (0, 1]")
+        self.min_active_rank = int(min_active_rank)
         self.max_gate = float(max_gate)
         self.epsilon = float(epsilon)
         self.router = nn.Linear(feature_dim, rank, bias=False)
@@ -53,10 +57,17 @@ class ClassPairFeatureAdapter(nn.Module):
         self.directions.copy_(directions)
         self.active_rank.fill_(len(pairs))
 
+    def is_effective(self):
+        return int(self.active_rank.item()) >= self.min_active_rank
+
     def effective_gate(self):
+        if not self.is_effective():
+            return self.gate_logit.detach().new_zeros(())
         return self.max_gate * torch.sigmoid(self.gate_logit.detach())
 
     def forward(self, features):
+        if not self.is_effective():
+            return features
         coefficient = torch.tanh(self.router(features).float())
         raw_delta = coefficient @ self.directions.float()
         raw_norm = raw_delta.norm(dim=1, keepdim=True)

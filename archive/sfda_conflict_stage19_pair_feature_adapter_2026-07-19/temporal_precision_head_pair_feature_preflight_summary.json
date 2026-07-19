@@ -1,0 +1,13 @@
+{
+  "decision": "pass_mechanism_preflight",
+  "task": "AC",
+  "accuracy_diagnostic_only": 73.68,
+  "pair_flow_active_rank": 12,
+  "pair_feature_gate_final": 0.00596,
+  "pair_feature_router_norm": 0.062336,
+  "checks": {
+    "config_valid": true,
+    "mechanism_active": true
+  },
+  "next": "run the 12-task seed-2022 gate"
+}

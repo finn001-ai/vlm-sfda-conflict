@@ -118,6 +118,7 @@ def main() -> None:
         "pair_feature_adapt": re.compile(r"^\s*PAIR_FEATURE_ADAPT:\s*([^\s]+)", re.MULTILINE),
         "pair_feature_start_cycle": re.compile(r"^\s*PAIR_FEATURE_START_CYCLE:\s*([^\s]+)", re.MULTILINE),
         "pair_feature_lr_mult": re.compile(r"^\s*PAIR_FEATURE_LR_MULT:\s*([^\s]+)", re.MULTILINE),
+        "pair_feature_min_active_rank": re.compile(r"^\s*PAIR_FEATURE_MIN_ACTIVE_RANK:\s*([^\s]+)", re.MULTILINE),
         "pair_feature_max_gate": re.compile(r"^\s*PAIR_FEATURE_MAX_GATE:\s*([^\s]+)", re.MULTILINE),
         "pair_feature_gate_init": re.compile(r"^\s*PAIR_FEATURE_GATE_INIT:\s*([^\s]+)", re.MULTILINE),
         "tau_low": re.compile(r"^\s*TAU_LOW:\s*([^\s]+)", re.MULTILINE),
@@ -133,7 +134,7 @@ def main() -> None:
         "accd_resolution_target": re.compile(r"^\s*RESOLUTION_TARGET:\s*([^\s]+)", re.MULTILINE),
         "accd_resolution_action": re.compile(r"^\s*RESOLUTION_ACTION:\s*([^\s]+)", re.MULTILINE),
     }
-    print("method,task,record_type,selection,cycle,iter,accuracy,final_accuracy,final_cycle,final_iter,peak_accuracy,peak_cycle,peak_iter,peak_minus_final,cand_par,cand_start_cycle,cand_tau,cand_weight,kl_mode,kl_candidate,calib_mode,calib_power,calib_auto_lambda,topo_graph_k,topo_alpha,topo_steps,topo_anchor_ratio,topo_target_mix,graph_teacher_fusion,gtf_apply_to,gtf_strength,gtr_par,gtr_stable_cycles,gtr_memory,gtr_min_graph_conf,gtr_min_disagreement,temporal_diag,pl_expand,pl_topk_per_class,pl_min_conf,pl_memory,pl_stable_cycles,pl_stable_memory,pl_memory_warmup_cycles,pl_memory_min_conf,pl_class_balance,pl_balance_coverage,pl_balance_min_per_class,proto_adapt,proto_mix,proto_temperature,proto_min_per_class,proto_momentum,target_head_adapt,target_head_variant,target_head_mix,target_head_start_cycle,target_head_lr_mult,target_head_ema,target_head_ema_momentum,target_residual_max_gate,target_residual_gate_init,residual_gate_final,trajectory_ensemble,trajectory_snapshot_intervals,pair_flow_rank,pair_flow_min_count,pair_flow_min_cycles,pair_flow_max_gate,pair_flow_gate_init,pair_flow_gate_final,pair_flow_active_rank,pair_feature_adapt,pair_feature_start_cycle,pair_feature_lr_mult,pair_feature_max_gate,pair_feature_gate_init,pair_feature_gate_final,pair_feature_router_norm,tau_low,promote_k,accd_enabled,accd_graph_k,accd_anchor_ratio,accd_anchor_memory,accd_candidate_mass,accd_candidate_margin,accd_stable_cycles,accd_resolution_memory,accd_resolution_target,accd_resolution_action,log")
+    print("method,task,record_type,selection,cycle,iter,accuracy,final_accuracy,final_cycle,final_iter,peak_accuracy,peak_cycle,peak_iter,peak_minus_final,cand_par,cand_start_cycle,cand_tau,cand_weight,kl_mode,kl_candidate,calib_mode,calib_power,calib_auto_lambda,topo_graph_k,topo_alpha,topo_steps,topo_anchor_ratio,topo_target_mix,graph_teacher_fusion,gtf_apply_to,gtf_strength,gtr_par,gtr_stable_cycles,gtr_memory,gtr_min_graph_conf,gtr_min_disagreement,temporal_diag,pl_expand,pl_topk_per_class,pl_min_conf,pl_memory,pl_stable_cycles,pl_stable_memory,pl_memory_warmup_cycles,pl_memory_min_conf,pl_class_balance,pl_balance_coverage,pl_balance_min_per_class,proto_adapt,proto_mix,proto_temperature,proto_min_per_class,proto_momentum,target_head_adapt,target_head_variant,target_head_mix,target_head_start_cycle,target_head_lr_mult,target_head_ema,target_head_ema_momentum,target_residual_max_gate,target_residual_gate_init,residual_gate_final,trajectory_ensemble,trajectory_snapshot_intervals,pair_flow_rank,pair_flow_min_count,pair_flow_min_cycles,pair_flow_max_gate,pair_flow_gate_init,pair_flow_gate_final,pair_flow_active_rank,pair_feature_adapt,pair_feature_start_cycle,pair_feature_lr_mult,pair_feature_min_active_rank,pair_feature_max_gate,pair_feature_gate_init,pair_feature_gate_final,pair_feature_router_norm,pair_feature_effective,tau_low,promote_k,accd_enabled,accd_graph_k,accd_anchor_ratio,accd_anchor_memory,accd_candidate_mass,accd_candidate_margin,accd_stable_cycles,accd_resolution_memory,accd_resolution_target,accd_resolution_action,log")
     accuracy_pattern = (
         TRAJECTORY_ACCURACY_PATTERN
         if args.record_type == "trajectory"
@@ -177,6 +178,14 @@ def main() -> None:
         )
         pair_feature_router_norm = (
             pair_feature_norm_matches[-1] if pair_feature_norm_matches else ""
+        )
+        pair_feature_effective_matches = re.findall(
+            r"pair_feature_effective=(True|False)", text
+        )
+        pair_feature_effective = (
+            pair_feature_effective_matches[-1]
+            if pair_feature_effective_matches
+            else ""
         )
         trajectory_snapshot_intervals = cfg_values[
             'trajectory_snapshot_intervals'
@@ -225,9 +234,10 @@ def main() -> None:
             f"{cfg_values['pair_feature_adapt']},"
             f"{cfg_values['pair_feature_start_cycle']},"
             f"{cfg_values['pair_feature_lr_mult']},"
+            f"{cfg_values['pair_feature_min_active_rank']},"
             f"{cfg_values['pair_feature_max_gate']},"
             f"{cfg_values['pair_feature_gate_init']},{pair_feature_gate_final},"
-            f"{pair_feature_router_norm},"
+            f"{pair_feature_router_norm},{pair_feature_effective},"
             f"{cfg_values['tau_low']},{cfg_values['promote_k']},"
             f"{cfg_values['accd_enabled']},{cfg_values['accd_graph_k']},{cfg_values['accd_anchor_ratio']},"
             f"{cfg_values['accd_anchor_memory']},"
