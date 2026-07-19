@@ -284,3 +284,31 @@ pass requires peak mean above 84.7225 and exact agreement between active rank
 and the coverage policy on all tasks. If either gate fails, close learned
 pair routing and implement the already specified agreement-anchor
 class-conditional covariance transport as Stage20.
+
+## Stage19-C Preflight Result
+
+The target-Art preflight failed while the coverage mechanism behaved exactly
+as specified:
+
+| Task | Stage19-C peak | Stage19 peak | Matched online Stage14 | Rank | Adapter |
+|---|---:|---:|---:|---:|---|
+| CA | 83.60 | 83.60 | 83.68 | 2 | fallback |
+| PA | 82.61 | 82.49 | 83.11 | 2 | fallback |
+| RA | 82.98 | 83.07 | 83.52 | 1 | fallback |
+| Mean | 83.0633 | 83.0533 | 83.4367 | - | - |
+
+Diagnostics confirm `router_norm=0`, `pair_feature_effective=False`, and the
+correct fallback decision on all three tasks. Nevertheless, the target-Art
+mean recovers only `+0.01`, and replacing these three archived Stage19 rows
+projects a full mean of only `84.6933`, still `-0.0292` below the required
+`84.7225`.
+
+Conclusion:
+
+```text
+decision = fail_coverage_preflight
+do not run the 12-task Stage19-C script
+the low active rank correlation was not the main causal explanation
+close rank thresholds, gate scaling, and all learned pair-router variants
+move to Stage20 agreement-anchor covariance transport
+```

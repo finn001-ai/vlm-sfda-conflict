@@ -126,6 +126,41 @@ Task: AC, Iter:40/40; Cycle: 4/4; Accuracy = 74.20%; pair_feature_gate=0.0000; p
         self.assertEqual(rows[0]["pair_flow_active_rank"], "7")
         self.assertEqual(rows[0]["pair_feature_effective"], "False")
 
+    def test_covariance_transport_metrics_are_extracted(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            method_dir = Path(tmpdir) / "AC" / "covariance_method"
+            method_dir.mkdir(parents=True)
+            log_path = method_dir / "log.txt"
+            log_path.write_text(
+                """
+TARGET_HEAD_VARIANT: blend
+COV_TRANSPORT_ADAPT: True
+COV_TRANSPORT_START_CYCLE: 1
+COV_TRANSPORT_MIN_ANCHORS: 8
+COV_TRANSPORT_RANK: 4
+COV_TRANSPORT_MAX_GATE: 0.05
+Task: AC, Iter:40/40; Cycle: 4/4; Accuracy = 74.20%; cov_transport_active_classes=42; cov_transport_coverage=0.71; cov_transport_mean_shift=0.04
+"""
+            )
+            stdout = io.StringIO()
+            argv = [
+                "extract_final_accuracy.py",
+                "--glob",
+                str(Path(tmpdir) / "*" / "*" / "*.txt"),
+                "--selection",
+                "peak",
+            ]
+            with patch.object(sys, "argv", argv), redirect_stdout(stdout):
+                main()
+
+        rows = list(csv.DictReader(io.StringIO(stdout.getvalue())))
+        self.assertIsNone(rows[0].get(None))
+        self.assertEqual(rows[0]["cov_transport_adapt"], "True")
+        self.assertEqual(rows[0]["cov_transport_rank"], "4")
+        self.assertEqual(rows[0]["cov_transport_active_classes"], "42")
+        self.assertEqual(rows[0]["cov_transport_coverage"], "0.71")
+        self.assertEqual(rows[0]["cov_transport_mean_shift"], "0.04")
+
 
 if __name__ == "__main__":
     unittest.main()

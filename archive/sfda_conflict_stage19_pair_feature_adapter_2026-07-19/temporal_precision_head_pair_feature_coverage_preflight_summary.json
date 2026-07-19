@@ -1,0 +1,57 @@
+{
+  "decision": "fail_coverage_preflight",
+  "selection": "peak",
+  "stage19_target_art_mean": 83.0533,
+  "coverage_target_art_mean": 83.0633,
+  "target_art_recovery": 0.01,
+  "projected_full_mean_diagnostic": 84.6933,
+  "projected_delta_vs_required": -0.0292,
+  "warning": "projected_full_mean reuses nine archived Stage19 task results and is not a final 12-task result",
+  "checks": {
+    "coverage_policy_valid": true,
+    "target_art_recovery": false,
+    "projected_full_mean_passes": false
+  },
+  "tasks": [
+    {
+      "task": "CA",
+      "accuracy": 83.6,
+      "stage19": 83.6,
+      "delta_vs_stage19": 0.0,
+      "matched_online": 83.68,
+      "delta_vs_matched_online": -0.08,
+      "active_rank": 2,
+      "min_active_rank": 8,
+      "coverage_fallback": true,
+      "router_norm": 0.0,
+      "policy_valid": true
+    },
+    {
+      "task": "PA",
+      "accuracy": 82.61,
+      "stage19": 82.49,
+      "delta_vs_stage19": 0.12,
+      "matched_online": 83.11,
+      "delta_vs_matched_online": -0.5,
+      "active_rank": 2,
+      "min_active_rank": 8,
+      "coverage_fallback": true,
+      "router_norm": 0.0,
+      "policy_valid": true
+    },
+    {
+      "task": "RA",
+      "accuracy": 82.98,
+      "stage19": 83.07,
+      "delta_vs_stage19": -0.09,
+      "matched_online": 83.52,
+      "delta_vs_matched_online": -0.54,
+      "active_rank": 1,
+      "min_active_rank": 8,
+      "coverage_fallback": true,
+      "router_norm": 0.0,
+      "policy_valid": true
+    }
+  ],
+  "next": "stop learned pair routing and implement agreement-anchor covariance transport"
+}

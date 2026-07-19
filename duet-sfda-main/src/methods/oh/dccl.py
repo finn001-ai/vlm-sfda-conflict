@@ -47,6 +47,7 @@ from src.utils.class_pair_flow import (
     update_soft_class_pair_flow,
 )
 from src.utils.class_pair_feature_adapter import ClassPairFeatureAdapter
+from src.utils.agreement_covariance_transport import AgreementCovarianceTransport
 # from src.utils import loss, active_prompt, IID_losses
 # from proposed_method import *
 from torch.nn.functional import normalize
@@ -348,6 +349,20 @@ def apply_pair_feature_adapter(cfg, features, adapter, curr_cycle):
     return adapter(features)
 
 
+def apply_agreement_covariance_transport(
+    cfg, features, transport, curr_cycle, sample_indices
+):
+    if (
+        not cfg.DCCL.COV_TRANSPORT_ADAPT
+        or transport is None
+        or curr_cycle < cfg.DCCL.COV_TRANSPORT_START_CYCLE
+    ):
+        return features
+    if sample_indices is None:
+        raise ValueError("Agreement covariance transport requires sample indices")
+    return transport(features, sample_indices)
+
+
 def build_target_classifier_head(cfg, source_head):
     if cfg.DCCL.TARGET_HEAD_VARIANT == "residual":
         return SourceAnchoredResidualClassifier(cfg, source_head)
@@ -442,6 +457,7 @@ def cal_acc(
     target_head=None,
     curr_cycle=0,
     pair_feature_adapter=None,
+    covariance_transport=None,
     flag=False,
 ):
     start_test = True
@@ -456,6 +472,14 @@ def cal_acc(
             adapted_feas = apply_pair_feature_adapter(
                 cfg, feas, pair_feature_adapter, curr_cycle
             ) if cfg is not None else feas
+            if cfg is not None:
+                adapted_feas = apply_agreement_covariance_transport(
+                    cfg,
+                    adapted_feas,
+                    covariance_transport,
+                    curr_cycle,
+                    data[2],
+                )
             outputs = netC(adapted_feas)
             if cfg is not None:
                 outputs = apply_target_head_logits(
@@ -862,6 +886,7 @@ def train_target(cfg):
     target_head = None
     target_head_ema = None
     pair_feature_adapter = None
+    covariance_transport = None
 
     for k, v in netF.named_parameters():
         if cfg.OPTIM.LR_DECAY1 > 0:
@@ -943,6 +968,33 @@ def train_target(cfg):
             )
         )
 
+    if cfg.DCCL.COV_TRANSPORT_ADAPT:
+        if not cfg.DCCL.TARGET_HEAD_ADAPT or cfg.DCCL.TARGET_HEAD_VARIANT != "blend":
+            raise ValueError(
+                "Agreement covariance transport requires the Stage14 blend head"
+            )
+        if pair_feature_adapter is not None:
+            raise ValueError(
+                "Agreement covariance transport cannot use the learned pair adapter"
+            )
+        covariance_transport = AgreementCovarianceTransport(
+            num_classes=cfg.class_num,
+            feature_dim=cfg.bottleneck,
+            rank=int(cfg.DCCL.COV_TRANSPORT_RANK),
+            min_anchors=int(cfg.DCCL.COV_TRANSPORT_MIN_ANCHORS),
+            max_gate=float(cfg.DCCL.COV_TRANSPORT_MAX_GATE),
+            epsilon=float(cfg.DCCL.EPSILON),
+        ).cuda()
+        logging.info(
+            "DCCL agreement covariance transport enabled: rank={}; "
+            "min_anchors={}; max_gate={:.4f}; start_cycle={}".format(
+                int(cfg.DCCL.COV_TRANSPORT_RANK),
+                int(cfg.DCCL.COV_TRANSPORT_MIN_ANCHORS),
+                float(cfg.DCCL.COV_TRANSPORT_MAX_GATE),
+                int(cfg.DCCL.COV_TRANSPORT_START_CYCLE),
+            )
+        )
+
     optimizer = optim.SGD(param_group)
     optimizer = op_copy(optimizer)
 
@@ -975,6 +1027,8 @@ def train_target(cfg):
             raise ValueError("Trajectory ensemble cannot be combined with target-head EMA")
         if pair_feature_adapter is not None:
             raise ValueError("Trajectory ensemble cannot be combined with pair-feature adaptation")
+        if covariance_transport is not None:
+            raise ValueError("Trajectory ensemble cannot use covariance transport")
         if len(trajectory_intervals) < 2:
             raise ValueError("Trajectory ensemble requires at least two intervals")
         if trajectory_intervals != sorted(set(trajectory_intervals)):
@@ -1027,9 +1081,31 @@ def train_target(cfg):
             cfg,
             dset_loaders['test_aug'], netF, netB, netC, inference_head,
             pair_feature_adapter,
+            covariance_transport,
             text_inputs, text_features, clip_model, prev_label_mask,
             proto_state, pl_state, curr_cycle,
         )
+        if covariance_transport is not None and not bool(
+            covariance_transport.fitted.item()
+        ):
+            transport_diagnostics = covariance_transport.fit(
+                task_features,
+                source_label,
+                clip_label,
+                confi_dis,
+            )
+            logging.info(
+                "DCCL agreement covariance geometry frozen: anchors={}; "
+                "active_classes={}; fixed_conflicts={}; eligible_conflicts={}; "
+                "eligible_coverage={:.6f}; mean_relative_shift={:.6f}".format(
+                    transport_diagnostics["anchors"],
+                    transport_diagnostics["active_classes"],
+                    transport_diagnostics["fixed_conflicts"],
+                    transport_diagnostics["eligible_conflicts"],
+                    transport_diagnostics["eligible_coverage"],
+                    transport_diagnostics["mean_relative_shift"],
+                )
+            )
         if isinstance(target_head, ClassPairFlowAdapter):
             was_frozen = bool(pair_flow_state and pair_flow_state["frozen"])
             pair_flow_state = update_class_pair_flow(
@@ -1407,6 +1483,12 @@ def train_target(cfg):
             strong_feas = apply_pair_feature_adapter(
                 cfg, strong_feas, pair_feature_adapter, curr_cycle
             )
+            weak_feas = apply_agreement_covariance_transport(
+                cfg, weak_feas, covariance_transport, curr_cycle, tar_idx
+            )
+            strong_feas = apply_agreement_covariance_transport(
+                cfg, strong_feas, covariance_transport, curr_cycle, tar_idx
+            )
 
             weak_logits = netC(weak_feas)
             strong_logits = netC(strong_feas)
@@ -1512,7 +1594,7 @@ def train_target(cfg):
                     acc_s_te, acc_list = cal_acc(
                         dset_loaders['test'], netF, netB, netC, cfg,
                         proto_state, inference_head, curr_cycle,
-                        pair_feature_adapter, True
+                        pair_feature_adapter, covariance_transport, True
                     )
                     log_str = ('Task: {}, Iter:{}/{}; Cycle: {}/{}; '
                                'Accuracy = {:.2f}%; classifier_loss = {}').format(cfg.name, iter_num, max_iter,
@@ -1523,7 +1605,7 @@ def train_target(cfg):
                     acc_s_te, _ = cal_acc(
                         dset_loaders['test'], netF, netB, netC, cfg,
                         proto_state, inference_head, curr_cycle,
-                        pair_feature_adapter, False
+                        pair_feature_adapter, covariance_transport, False
                     )
                     log_str = ('Task: {}, Iter:{}/{}; Cycle: {}/{}; '
                                'Accuracy = {:.2f}%; classifier_loss = {}').format(cfg.name, iter_num, max_iter,
@@ -1559,6 +1641,17 @@ def train_target(cfg):
                         float(pair_feature_adapter.router.weight.detach().norm().item()),
                         active_rank,
                         bool(pair_feature_adapter.is_effective()),
+                    )
+                if covariance_transport is not None:
+                    transport_diagnostics = covariance_transport.diagnostics()
+                    log_str += (
+                        "; cov_transport_active_classes={}; "
+                        "cov_transport_coverage={:.6f}; "
+                        "cov_transport_mean_shift={:.6f}"
+                    ).format(
+                        transport_diagnostics["active_classes"],
+                        transport_diagnostics["eligible_coverage"],
+                        transport_diagnostics["mean_relative_shift"],
                     )
 
                 # cfg.out_file.write(log_str + '\n')
@@ -1961,6 +2054,7 @@ def obtain_label(
     netC,
     target_head,
     pair_feature_adapter,
+    covariance_transport,
     text_inputs,
     text_features,
     clip_model,
@@ -1980,7 +2074,7 @@ def obtain_label(
         clip_logit_scale = clip_model.logit_scale.exp()
         iter_test = iter(loader)
         for _ in range(len(loader)):
-            inputs_test, labels, _ = next(iter_test)
+            inputs_test, labels, sample_indices = next(iter_test)
             weak_x = inputs_test[1].cuda()
             # strong_x = inputs_test[2].cuda()
 
@@ -1989,6 +2083,13 @@ def obtain_label(
 
             adapted_weak_feas = apply_pair_feature_adapter(
                 cfg, weak_feas, pair_feature_adapter, curr_cycle
+            )
+            adapted_weak_feas = apply_agreement_covariance_transport(
+                cfg,
+                adapted_weak_feas,
+                covariance_transport,
+                curr_cycle,
+                sample_indices,
             )
             weak_outputs = netC(adapted_weak_feas)
             weak_outputs = apply_target_head_logits(

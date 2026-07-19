@@ -1,0 +1,169 @@
+{
+  "decision": "pass_flow_diagnostics",
+  "num_logs": 3,
+  "active_tasks": 0,
+  "fallback_tasks": 3,
+  "tasks": [
+    {
+      "method": "temporal_precision_head_seed2022_pair_feature_coverage_preflight",
+      "task": "CA",
+      "activation_cycle": 2,
+      "final_active_rank": 2,
+      "frozen_pairs": [
+        [
+          58,
+          47
+        ],
+        [
+          15,
+          31
+        ]
+      ],
+      "pair_feature_router_norm": 0.0,
+      "min_active_rank": 8,
+      "pair_feature_effective": false,
+      "mechanism_active": false,
+      "mechanism_valid": true,
+      "cycles": [
+        {
+          "cycle": 1,
+          "fixed_conflicts": 1212,
+          "candidate_mass": 733.04,
+          "active_rank": 0,
+          "frozen": false,
+          "cumulative_flow_mass": 733.04
+        },
+        {
+          "cycle": 2,
+          "fixed_conflicts": 1212,
+          "candidate_mass": 762.98,
+          "active_rank": 2,
+          "frozen": true,
+          "cumulative_flow_mass": 1496.03
+        },
+        {
+          "cycle": 3,
+          "fixed_conflicts": 1212,
+          "candidate_mass": 811.57,
+          "active_rank": 2,
+          "frozen": true,
+          "cumulative_flow_mass": 1496.03
+        },
+        {
+          "cycle": 4,
+          "fixed_conflicts": 1212,
+          "candidate_mass": 855.41,
+          "active_rank": 2,
+          "frozen": true,
+          "cumulative_flow_mass": 1496.03
+        }
+      ]
+    },
+    {
+      "method": "temporal_precision_head_seed2022_pair_feature_coverage_preflight",
+      "task": "PA",
+      "activation_cycle": 2,
+      "final_active_rank": 2,
+      "frozen_pairs": [
+        [
+          13,
+          10
+        ],
+        [
+          5,
+          55
+        ]
+      ],
+      "pair_feature_router_norm": 0.0,
+      "min_active_rank": 8,
+      "pair_feature_effective": false,
+      "mechanism_active": false,
+      "mechanism_valid": true,
+      "cycles": [
+        {
+          "cycle": 1,
+          "fixed_conflicts": 1224,
+          "candidate_mass": 738.82,
+          "active_rank": 0,
+          "frozen": false,
+          "cumulative_flow_mass": 738.82
+        },
+        {
+          "cycle": 2,
+          "fixed_conflicts": 1224,
+          "candidate_mass": 754.96,
+          "active_rank": 2,
+          "frozen": true,
+          "cumulative_flow_mass": 1493.78
+        },
+        {
+          "cycle": 3,
+          "fixed_conflicts": 1224,
+          "candidate_mass": 807.75,
+          "active_rank": 2,
+          "frozen": true,
+          "cumulative_flow_mass": 1493.78
+        },
+        {
+          "cycle": 4,
+          "fixed_conflicts": 1224,
+          "candidate_mass": 855.8,
+          "active_rank": 2,
+          "frozen": true,
+          "cumulative_flow_mass": 1493.78
+        }
+      ]
+    },
+    {
+      "method": "temporal_precision_head_seed2022_pair_feature_coverage_preflight",
+      "task": "RA",
+      "activation_cycle": 2,
+      "final_active_rank": 1,
+      "frozen_pairs": [
+        [
+          13,
+          10
+        ]
+      ],
+      "pair_feature_router_norm": 0.0,
+      "min_active_rank": 8,
+      "pair_feature_effective": false,
+      "mechanism_active": false,
+      "mechanism_valid": true,
+      "cycles": [
+        {
+          "cycle": 1,
+          "fixed_conflicts": 962,
+          "candidate_mass": 603.61,
+          "active_rank": 0,
+          "frozen": false,
+          "cumulative_flow_mass": 603.61
+        },
+        {
+          "cycle": 2,
+          "fixed_conflicts": 962,
+          "candidate_mass": 592.34,
+          "active_rank": 1,
+          "frozen": true,
+          "cumulative_flow_mass": 1195.95
+        },
+        {
+          "cycle": 3,
+          "fixed_conflicts": 962,
+          "candidate_mass": 630.42,
+          "active_rank": 1,
+          "frozen": true,
+          "cumulative_flow_mass": 1195.95
+        },
+        {
+          "cycle": 4,
+          "fixed_conflicts": 962,
+          "candidate_mass": 659.31,
+          "active_rank": 1,
+          "frozen": true,
+          "cumulative_flow_mass": 1195.95
+        }
+      ]
+    }
+  ]
+}
