@@ -5,6 +5,7 @@ import torch
 from src.utils.class_pair_flow import (
     ClassPairFlowAdapter,
     update_class_pair_flow,
+    update_soft_class_pair_flow,
 )
 
 
@@ -104,6 +105,82 @@ class ClassPairFlowTest(unittest.TestCase):
         active_basis = state["basis"][: state["active_rank"]]
         self.assertEqual(state["active_rank"], 2)
         self.assertEqual(int(torch.linalg.matrix_rank(active_basis)), 2)
+
+    def test_fixed_initial_candidates_survive_later_model_agreement(self):
+        initial_source = torch.tensor([0, 0, 0])
+        initial_clip = torch.tensor([1, 1, 1])
+        resolved = initial_clip.clone()
+        mask = torch.ones(3, dtype=torch.bool)
+        state = update_class_pair_flow(
+            initial_source,
+            initial_clip,
+            resolved,
+            mask,
+            None,
+            num_classes=3,
+            rank=2,
+            min_count=3,
+            min_cycles=2,
+            fixed_candidates=True,
+        )
+        state = update_class_pair_flow(
+            torch.ones(3, dtype=torch.long),
+            torch.ones(3, dtype=torch.long),
+            resolved,
+            mask,
+            state,
+            num_classes=3,
+            rank=2,
+            min_count=3,
+            min_cycles=2,
+            fixed_candidates=True,
+        )
+
+        self.assertEqual(state["pairs"], [(0, 1)])
+        self.assertEqual(state["last_valid_count"], 3)
+
+    def test_soft_candidate_mass_builds_persistent_direction(self):
+        source = torch.zeros(10, dtype=torch.long)
+        clip = torch.ones(10, dtype=torch.long)
+        resolved_prob = torch.tensor([[0.2, 0.8, 0.0]]).repeat(10, 1)
+        state = None
+        for _ in range(2):
+            state = update_soft_class_pair_flow(
+                source,
+                clip,
+                resolved_prob,
+                state,
+                num_classes=3,
+                rank=2,
+                min_count=5.0,
+                min_cycles=2,
+                fixed_candidates=True,
+            )
+
+        self.assertEqual(state["pairs"], [(0, 1)])
+        self.assertEqual(state["last_valid_count"], 10)
+        self.assertAlmostEqual(state["last_candidate_mass"], 10.0, places=5)
+
+    def test_soft_flow_freezes_basis_but_refreshes_diagnostics(self):
+        source = torch.zeros(10, dtype=torch.long)
+        clip = torch.ones(10, dtype=torch.long)
+        forward_prob = torch.tensor([[0.2, 0.8, 0.0]]).repeat(10, 1)
+        state = None
+        for _ in range(2):
+            state = update_soft_class_pair_flow(
+                source, clip, forward_prob, state, 3, 2, 5.0, 2, True
+            )
+        frozen_basis = state["basis"].clone()
+        frozen_counts = state["counts"].clone()
+
+        reverse_prob = torch.tensor([[0.9, 0.05, 0.05]]).repeat(10, 1)
+        state = update_soft_class_pair_flow(
+            source, clip, reverse_prob, state, 3, 2, 5.0, 2, True
+        )
+
+        self.assertTrue(torch.equal(state["basis"], frozen_basis))
+        self.assertTrue(torch.equal(state["counts"], frozen_counts))
+        self.assertAlmostEqual(state["last_candidate_mass"], 9.5, places=5)
 
     def test_zero_initialized_adapter_preserves_source_logits(self):
         adapter = ClassPairFlowAdapter(2, 3, 2, 0.3, -2.0, 1e-6)

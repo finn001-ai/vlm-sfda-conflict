@@ -64,6 +64,11 @@ PAIR_FLOW_MIN_COUNT: 5
 PAIR_FLOW_MIN_CYCLES: 2
 PAIR_FLOW_MAX_GATE: 0.3
 PAIR_FLOW_GATE_INIT: -2.0
+PAIR_FEATURE_ADAPT: True
+PAIR_FEATURE_START_CYCLE: 1
+PAIR_FEATURE_LR_MULT: 1.0
+PAIR_FEATURE_MAX_GATE: 0.05
+PAIR_FEATURE_GATE_INIT: -2.0
 Task: AC, Iter:40/40; Cycle: 4/4; Accuracy = 74.10%; pair_flow_gate=0.041; pair_flow_active_rank=8
 """
             )
@@ -84,6 +89,39 @@ Task: AC, Iter:40/40; Cycle: 4/4; Accuracy = 74.10%; pair_flow_gate=0.041; pair_
         self.assertEqual(rows[0]["target_head_variant"], "pair_flow")
         self.assertEqual(rows[0]["pair_flow_active_rank"], "8")
         self.assertEqual(rows[0]["pair_flow_gate_final"], "0.041")
+
+    def test_pair_feature_metrics_are_extracted(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            method_dir = Path(tmpdir) / "AC" / "pair_feature_method"
+            method_dir.mkdir(parents=True)
+            log_path = method_dir / "log.txt"
+            log_path.write_text(
+                """
+TARGET_HEAD_VARIANT: blend
+PAIR_FEATURE_ADAPT: True
+PAIR_FEATURE_START_CYCLE: 1
+PAIR_FEATURE_LR_MULT: 1.0
+PAIR_FEATURE_MAX_GATE: 0.05
+PAIR_FEATURE_GATE_INIT: -2.0
+Task: AC, Iter:40/40; Cycle: 4/4; Accuracy = 74.20%; pair_feature_gate=0.0061; pair_feature_router_norm=0.42; pair_flow_active_rank=7
+"""
+            )
+            stdout = io.StringIO()
+            argv = [
+                "extract_final_accuracy.py",
+                "--glob",
+                str(Path(tmpdir) / "*" / "*" / "*.txt"),
+                "--selection",
+                "peak",
+            ]
+            with patch.object(sys, "argv", argv), redirect_stdout(stdout):
+                main()
+
+        rows = list(csv.DictReader(io.StringIO(stdout.getvalue())))
+        self.assertEqual(rows[0]["pair_feature_adapt"], "True")
+        self.assertEqual(rows[0]["pair_feature_gate_final"], "0.0061")
+        self.assertEqual(rows[0]["pair_feature_router_norm"], "0.42")
+        self.assertEqual(rows[0]["pair_flow_active_rank"], "7")
 
 
 if __name__ == "__main__":

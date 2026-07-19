@@ -135,5 +135,48 @@ only after the implementation and execution plan exist.
 ```text
 implementation complete
 local validation passed (35 tests)
-cloud result pending
+seed-2022 cloud run observed
+decision = invalid_mechanism_run
+do not run the Stage18 seed sweep
 ```
+
+## Seed-2022 Result And Root Cause
+
+| Metric | Stage18 | Required |
+|---|---:|---:|
+| Peak mean | 84.6075 | >84.7225 |
+| Delta vs DUET | -0.1092 | >0 |
+| Delta vs historical Stage14 seed 2022 | -0.0708 | >0 |
+| Active pair-flow tasks | 0/12 | >=10/12 |
+| Worst task delta vs DUET | -0.94 | >=-1.50 |
+| Peak minus final | +0.0250 | diagnostic only |
+
+The classifier correction was exactly inactive on every task: active rank was
+zero and the gate stayed at its initialization value `0.035761`.
+
+Root cause:
+
+```text
+label_mask = temporally stable source/CLIP agreement samples
+flow validity = label_mask AND (source_label != clip_label)
+```
+
+The two conditions are mutually exclusive at the point where the mask is
+constructed. Therefore the flow counter received zero valid conflicts, no
+class-pair basis was created, and the low-rank head never received a gradient.
+The reported accuracy is an inactive source-anchored control, not evidence
+against aggregate class-pair flow.
+
+Conclusion:
+
+```text
+do not lower PAIR_FLOW_MIN_COUNT or PAIR_FLOW_MIN_CYCLES
+do not rerun the classifier-only Stage18 implementation
+retain the result as an implementation-invalidation record
+move to the already specified representation-space route
+```
+
+The next implementation must preserve the complete Stage14 blend target head,
+freeze each sample's initial source/CLIP conflict pair, aggregate the current
+mix probability mass on those two fixed candidates, and use persistent net
+class-pair directions to constrain a bounded low-rank feature adapter.

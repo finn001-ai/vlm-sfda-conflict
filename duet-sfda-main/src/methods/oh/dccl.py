@@ -44,7 +44,9 @@ from src.utils.trajectory_ensemble import (
 from src.utils.class_pair_flow import (
     ClassPairFlowAdapter,
     update_class_pair_flow,
+    update_soft_class_pair_flow,
 )
+from src.utils.class_pair_feature_adapter import ClassPairFeatureAdapter
 # from src.utils import loss, active_prompt, IID_losses
 # from proposed_method import *
 from torch.nn.functional import normalize
@@ -336,6 +338,16 @@ def apply_target_head_logits(cfg, features, source_logits, target_head, curr_cyc
     return (1.0 - mix) * source_logits + mix * target_logits
 
 
+def apply_pair_feature_adapter(cfg, features, adapter, curr_cycle):
+    if (
+        not cfg.DCCL.PAIR_FEATURE_ADAPT
+        or adapter is None
+        or curr_cycle < cfg.DCCL.PAIR_FEATURE_START_CYCLE
+    ):
+        return features
+    return adapter(features)
+
+
 def build_target_classifier_head(cfg, source_head):
     if cfg.DCCL.TARGET_HEAD_VARIANT == "residual":
         return SourceAnchoredResidualClassifier(cfg, source_head)
@@ -429,6 +441,7 @@ def cal_acc(
     proto_state=None,
     target_head=None,
     curr_cycle=0,
+    pair_feature_adapter=None,
     flag=False,
 ):
     start_test = True
@@ -440,12 +453,17 @@ def cal_acc(
             labels = data[1]
             inputs = inputs.cuda()
             feas = netB(netF(inputs))
-            outputs = netC(feas)
+            adapted_feas = apply_pair_feature_adapter(
+                cfg, feas, pair_feature_adapter, curr_cycle
+            ) if cfg is not None else feas
+            outputs = netC(adapted_feas)
             if cfg is not None:
                 outputs = apply_target_head_logits(
-                    cfg, feas, outputs, target_head, curr_cycle
+                    cfg, adapted_feas, outputs, target_head, curr_cycle
                 )
-                outputs = apply_target_prototype_logits(cfg, feas, outputs, proto_state)
+                outputs = apply_target_prototype_logits(
+                    cfg, adapted_feas, outputs, proto_state
+                )
             if start_test:
                 all_output = outputs.float().cpu()
                 all_label = labels.float()
@@ -843,6 +861,7 @@ def train_target(cfg):
     param_group = []
     target_head = None
     target_head_ema = None
+    pair_feature_adapter = None
 
     for k, v in netF.named_parameters():
         if cfg.OPTIM.LR_DECAY1 > 0:
@@ -888,6 +907,40 @@ def train_target(cfg):
                 )
             )
 
+    if cfg.DCCL.PAIR_FEATURE_ADAPT:
+        if not cfg.DCCL.TARGET_HEAD_ADAPT or cfg.DCCL.TARGET_HEAD_VARIANT != "blend":
+            raise ValueError(
+                "Pair-feature adaptation requires the Stage14 blend target head"
+            )
+        if cfg.DCCL.PAIR_FEATURE_LR_MULT <= 0:
+            raise ValueError("DCCL.PAIR_FEATURE_LR_MULT must be positive")
+        pair_feature_adapter = ClassPairFeatureAdapter(
+            feature_dim=cfg.bottleneck,
+            rank=int(cfg.DCCL.PAIR_FLOW_RANK),
+            max_gate=float(cfg.DCCL.PAIR_FEATURE_MAX_GATE),
+            gate_init=float(cfg.DCCL.PAIR_FEATURE_GATE_INIT),
+            epsilon=float(cfg.DCCL.EPSILON),
+        ).cuda()
+        pair_feature_adapter.train()
+        for name, parameter in pair_feature_adapter.named_parameters():
+            parameter.requires_grad = True
+            group = {
+                "params": parameter,
+                "lr": cfg.OPTIM.LR * cfg.DCCL.PAIR_FEATURE_LR_MULT,
+            }
+            if name == "gate_logit":
+                group["weight_decay_scale"] = 0.0
+            param_group.append(group)
+        logging.info(
+            "DCCL pair-feature adapter enabled: rank={}; max_gate={:.4f}; "
+            "start_cycle={}; lr_mult={:.3f}".format(
+                int(cfg.DCCL.PAIR_FLOW_RANK),
+                float(cfg.DCCL.PAIR_FEATURE_MAX_GATE),
+                int(cfg.DCCL.PAIR_FEATURE_START_CYCLE),
+                float(cfg.DCCL.PAIR_FEATURE_LR_MULT),
+            )
+        )
+
     optimizer = optim.SGD(param_group)
     optimizer = op_copy(optimizer)
 
@@ -918,6 +971,8 @@ def train_target(cfg):
             raise ValueError("Trajectory ensemble requires target-head adaptation")
         if target_head_ema is not None:
             raise ValueError("Trajectory ensemble cannot be combined with target-head EMA")
+        if pair_feature_adapter is not None:
+            raise ValueError("Trajectory ensemble cannot be combined with pair-feature adaptation")
         if len(trajectory_intervals) < 2:
             raise ValueError("Trajectory ensemble requires at least two intervals")
         if trajectory_intervals != sorted(set(trajectory_intervals)):
@@ -949,6 +1004,8 @@ def train_target(cfg):
         netB.eval()
         if target_head is not None:
             target_head.eval()
+        if pair_feature_adapter is not None:
+            pair_feature_adapter.eval()
         inference_head = target_head_ema if target_head_ema is not None else target_head
         # netC.eval()
         (
@@ -967,6 +1024,7 @@ def train_target(cfg):
         ) = obtain_label(
             cfg,
             dset_loaders['test_aug'], netF, netB, netC, inference_head,
+            pair_feature_adapter,
             text_inputs, text_features, clip_model, prev_label_mask,
             proto_state, pl_state, curr_cycle,
         )
@@ -996,6 +1054,41 @@ def train_target(cfg):
             if pair_flow_state["frozen"] and not was_frozen:
                 logging.info(
                     "DCCL class-pair basis frozen: pairs={}".format(
+                        pair_flow_state["pairs"]
+                    )
+                )
+        if pair_feature_adapter is not None:
+            was_frozen = bool(pair_flow_state and pair_flow_state["frozen"])
+            pair_flow_state = update_soft_class_pair_flow(
+                source_label,
+                clip_label,
+                confi_dis,
+                pair_flow_state,
+                num_classes=cfg.class_num,
+                rank=int(cfg.DCCL.PAIR_FLOW_RANK),
+                min_count=int(cfg.DCCL.PAIR_FLOW_MIN_COUNT),
+                min_cycles=int(cfg.DCCL.PAIR_FLOW_MIN_CYCLES),
+                fixed_candidates=True,
+            )
+            if pair_flow_state["frozen"]:
+                pair_feature_adapter.set_pairs(
+                    pair_flow_state["pairs"], netC.fc.weight
+                )
+            logging.info(
+                "DCCL fixed-candidate pair flow: cycle={}; valid={}; "
+                "candidate_mass={:.2f}; active_rank={}; frozen={}; "
+                "resolved_flow_mass={:.2f}".format(
+                    curr_cycle + 1,
+                    int(pair_flow_state["last_valid_count"]),
+                    float(pair_flow_state["last_candidate_mass"]),
+                    int(pair_flow_state["active_rank"]),
+                    bool(pair_flow_state["frozen"]),
+                    float(pair_flow_state["counts"].sum().item()),
+                )
+            )
+            if pair_flow_state["frozen"] and not was_frozen:
+                logging.info(
+                    "DCCL pair-feature directions frozen: pairs={}".format(
                         pair_flow_state["pairs"]
                     )
                 )
@@ -1285,6 +1378,8 @@ def train_target(cfg):
         netB.train()
         if target_head is not None:
             target_head.train()
+        if pair_feature_adapter is not None:
+            pair_feature_adapter.train()
         # netC.train()
         while iter_num < max_iter:
             try:
@@ -1304,6 +1399,12 @@ def train_target(cfg):
 
             weak_feas = netB(netF(weak_x))
             strong_feas = netB(netF(strong_x))
+            weak_feas = apply_pair_feature_adapter(
+                cfg, weak_feas, pair_feature_adapter, curr_cycle
+            )
+            strong_feas = apply_pair_feature_adapter(
+                cfg, strong_feas, pair_feature_adapter, curr_cycle
+            )
 
             weak_logits = netC(weak_feas)
             strong_logits = netC(strong_feas)
@@ -1381,6 +1482,8 @@ def train_target(cfg):
                 netB.eval()
                 if target_head is not None:
                     target_head.eval()
+                if pair_feature_adapter is not None:
+                    pair_feature_adapter.eval()
                 captured_trajectory_snapshot = False
                 if cfg.DCCL.TRAJECTORY_ENSEMBLE and (
                     curr_cycle == cfg.ACTIVE.CYCLE - 1
@@ -1406,7 +1509,8 @@ def train_target(cfg):
                 if cfg.SETTING.DATASET == 'VISDA-C':
                     acc_s_te, acc_list = cal_acc(
                         dset_loaders['test'], netF, netB, netC, cfg,
-                        proto_state, inference_head, curr_cycle, True
+                        proto_state, inference_head, curr_cycle,
+                        pair_feature_adapter, True
                     )
                     log_str = ('Task: {}, Iter:{}/{}; Cycle: {}/{}; '
                                'Accuracy = {:.2f}%; classifier_loss = {}').format(cfg.name, iter_num, max_iter,
@@ -1416,7 +1520,8 @@ def train_target(cfg):
                 else:
                     acc_s_te, _ = cal_acc(
                         dset_loaders['test'], netF, netB, netC, cfg,
-                        proto_state, inference_head, curr_cycle, False
+                        proto_state, inference_head, curr_cycle,
+                        pair_feature_adapter, False
                     )
                     log_str = ('Task: {}, Iter:{}/{}; Cycle: {}/{}; '
                                'Accuracy = {:.2f}%; classifier_loss = {}').format(cfg.name, iter_num, max_iter,
@@ -1437,6 +1542,20 @@ def train_target(cfg):
                         "; pair_flow_gate={:.6f}; pair_flow_active_rank={}"
                     ).format(
                         float(target_head.effective_gate().item()), active_rank
+                    )
+                if pair_feature_adapter is not None:
+                    active_rank = (
+                        int(pair_flow_state["active_rank"])
+                        if pair_flow_state is not None
+                        else 0
+                    )
+                    log_str += (
+                        "; pair_feature_gate={:.6f}; pair_feature_router_norm={:.6f}; "
+                        "pair_flow_active_rank={}"
+                    ).format(
+                        float(pair_feature_adapter.effective_gate().item()),
+                        float(pair_feature_adapter.router.weight.detach().norm().item()),
+                        active_rank,
                     )
 
                 # cfg.out_file.write(log_str + '\n')
@@ -1471,6 +1590,8 @@ def train_target(cfg):
                 netB.train()
                 if target_head is not None:
                     target_head.train()
+                if pair_feature_adapter is not None:
+                    pair_feature_adapter.train()
                 # netC.train()
         curr_cycle += 1
 
@@ -1836,6 +1957,7 @@ def obtain_label(
     netB,
     netC,
     target_head,
+    pair_feature_adapter,
     text_inputs,
     text_features,
     clip_model,
@@ -1862,12 +1984,15 @@ def obtain_label(
             weak_feas = netB(netF(weak_x))
             # strong_feas = netB(netF(strong_x))
 
-            weak_outputs = netC(weak_feas)
+            adapted_weak_feas = apply_pair_feature_adapter(
+                cfg, weak_feas, pair_feature_adapter, curr_cycle
+            )
+            weak_outputs = netC(adapted_weak_feas)
             weak_outputs = apply_target_head_logits(
-                cfg, weak_feas, weak_outputs, target_head, curr_cycle
+                cfg, adapted_weak_feas, weak_outputs, target_head, curr_cycle
             )
             weak_outputs = apply_target_prototype_logits(
-                cfg, weak_feas, weak_outputs, proto_state
+                cfg, adapted_weak_feas, weak_outputs, proto_state
             )
             # strong_outputs = netC(strong_feas)
 

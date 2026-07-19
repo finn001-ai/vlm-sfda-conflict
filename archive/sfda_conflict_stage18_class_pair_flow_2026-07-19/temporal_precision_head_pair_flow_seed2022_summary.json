@@ -1,0 +1,120 @@
+{
+  "decision": "fail_seed2022_gate",
+  "gate": "peak mean > 84.7225; active pair-flow basis on at least 10/12 tasks; worst task delta vs DUET >= -1.50",
+  "method": "temporal_precision_head_seed2022_pair_flow_probe",
+  "selection": "peak",
+  "duet_mean": 84.7167,
+  "historical_stage14_seed2022_mean": 84.6783,
+  "matched_stage17_online_seed2022_mean": 84.7225,
+  "mean_accuracy": 84.6075,
+  "delta_vs_duet": -0.1092,
+  "delta_vs_historical_stage14": -0.0708,
+  "delta_vs_matched_online": -0.115,
+  "task_wins_vs_duet": 4,
+  "active_pair_flow_tasks": 0,
+  "worst_task_delta_vs_duet": -0.94,
+  "checks": {
+    "mean_passes": false,
+    "mechanism_passes": false,
+    "collapse_passes": true
+  },
+  "next_if_fail": "replace classifier-only adaptation with class-pair-specific low-rank feature adapters softly routed by the aggregate conflict-flow posterior",
+  "tasks": [
+    {
+      "task": "AC",
+      "accuracy": 73.24,
+      "duet": 73.6,
+      "delta_vs_duet": -0.36,
+      "pair_flow_active_rank": 0,
+      "pair_flow_gate_final": 0.035761
+    },
+    {
+      "task": "AP",
+      "accuracy": 91.15,
+      "duet": 90.4,
+      "delta_vs_duet": 0.75,
+      "pair_flow_active_rank": 0,
+      "pair_flow_gate_final": 0.035761
+    },
+    {
+      "task": "AR",
+      "accuracy": 90.98,
+      "duet": 91.0,
+      "delta_vs_duet": -0.02,
+      "pair_flow_active_rank": 0,
+      "pair_flow_gate_final": 0.035761
+    },
+    {
+      "task": "CA",
+      "accuracy": 83.4,
+      "duet": 83.6,
+      "delta_vs_duet": -0.2,
+      "pair_flow_active_rank": 0,
+      "pair_flow_gate_final": 0.035761
+    },
+    {
+      "task": "CP",
+      "accuracy": 91.42,
+      "duet": 90.7,
+      "delta_vs_duet": 0.72,
+      "pair_flow_active_rank": 0,
+      "pair_flow_gate_final": 0.035761
+    },
+    {
+      "task": "CR",
+      "accuracy": 90.61,
+      "duet": 90.9,
+      "delta_vs_duet": -0.29,
+      "pair_flow_active_rank": 0,
+      "pair_flow_gate_final": 0.035761
+    },
+    {
+      "task": "PA",
+      "accuracy": 82.78,
+      "duet": 82.7,
+      "delta_vs_duet": 0.08,
+      "pair_flow_active_rank": 0,
+      "pair_flow_gate_final": 0.035761
+    },
+    {
+      "task": "PC",
+      "accuracy": 72.76,
+      "duet": 73.7,
+      "delta_vs_duet": -0.94,
+      "pair_flow_active_rank": 0,
+      "pair_flow_gate_final": 0.035761
+    },
+    {
+      "task": "PR",
+      "accuracy": 90.77,
+      "duet": 91.2,
+      "delta_vs_duet": -0.43,
+      "pair_flow_active_rank": 0,
+      "pair_flow_gate_final": 0.035761
+    },
+    {
+      "task": "RA",
+      "accuracy": 83.27,
+      "duet": 83.6,
+      "delta_vs_duet": -0.33,
+      "pair_flow_active_rank": 0,
+      "pair_flow_gate_final": 0.035761
+    },
+    {
+      "task": "RC",
+      "accuracy": 73.61,
+      "duet": 74.0,
+      "delta_vs_duet": -0.39,
+      "pair_flow_active_rank": 0,
+      "pair_flow_gate_final": 0.035761
+    },
+    {
+      "task": "RP",
+      "accuracy": 91.3,
+      "duet": 91.2,
+      "delta_vs_duet": 0.1,
+      "pair_flow_active_rank": 0,
+      "pair_flow_gate_final": 0.035761
+    }
+  ]
+}
