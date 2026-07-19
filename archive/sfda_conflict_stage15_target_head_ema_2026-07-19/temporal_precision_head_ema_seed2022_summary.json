@@ -1,0 +1,33 @@
+{
+  "decision": "fail_stability_gate",
+  "gate": "all adaptation seeds must beat DUET mean",
+  "duet_mean": 84.7167,
+  "num_seeds": 1,
+  "mean_over_seed_means": 84.5033,
+  "std_over_seed_means": 0.0,
+  "min_seed_mean": 84.5033,
+  "max_seed_mean": 84.5033,
+  "seeds": [
+    {
+      "seed": "2022",
+      "mean": 84.5033,
+      "delta_vs_duet": -0.2133,
+      "beats_duet_mean": false,
+      "task_wins_vs_duet": 3
+    }
+  ],
+  "tasks": [
+    {"task": "AC", "mean": 73.97, "std": 0.0, "min": 73.97, "max": 73.97, "duet": 73.6, "delta_mean_vs_duet": 0.37},
+    {"task": "AP", "mean": 90.65, "std": 0.0, "min": 90.65, "max": 90.65, "duet": 90.4, "delta_mean_vs_duet": 0.25},
+    {"task": "AR", "mean": 90.89, "std": 0.0, "min": 90.89, "max": 90.89, "duet": 91.0, "delta_mean_vs_duet": -0.11},
+    {"task": "CA", "mean": 82.98, "std": 0.0, "min": 82.98, "max": 82.98, "duet": 83.6, "delta_mean_vs_duet": -0.62},
+    {"task": "CP", "mean": 90.67, "std": 0.0, "min": 90.67, "max": 90.67, "duet": 90.7, "delta_mean_vs_duet": -0.03},
+    {"task": "CR", "mean": 90.77, "std": 0.0, "min": 90.77, "max": 90.77, "duet": 90.9, "delta_mean_vs_duet": -0.13},
+    {"task": "PA", "mean": 82.24, "std": 0.0, "min": 82.24, "max": 82.24, "duet": 82.7, "delta_mean_vs_duet": -0.46},
+    {"task": "PC", "mean": 74.04, "std": 0.0, "min": 74.04, "max": 74.04, "duet": 73.7, "delta_mean_vs_duet": 0.34},
+    {"task": "PR", "mean": 90.84, "std": 0.0, "min": 90.84, "max": 90.84, "duet": 91.2, "delta_mean_vs_duet": -0.36},
+    {"task": "RA", "mean": 82.69, "std": 0.0, "min": 82.69, "max": 82.69, "duet": 83.6, "delta_mean_vs_duet": -0.91},
+    {"task": "RC", "mean": 73.56, "std": 0.0, "min": 73.56, "max": 73.56, "duet": 74.0, "delta_mean_vs_duet": -0.44},
+    {"task": "RP", "mean": 90.74, "std": 0.0, "min": 90.74, "max": 90.74, "duet": 91.2, "delta_mean_vs_duet": -0.46}
+  ]
+}

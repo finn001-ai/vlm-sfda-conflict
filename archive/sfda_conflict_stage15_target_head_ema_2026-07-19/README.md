@@ -121,5 +121,48 @@ EMA inference teacher.
 ```text
 implementation complete
 local tests passed
-cloud result pending
+seed-2022 cloud result observed: fail
+```
+
+## Seed-2022 Result
+
+| Metric | EMA head | Stage14 online head | Public DUET |
+|---|---:|---:|---:|
+| seed 2022 mean | 84.5033 | 84.5267 | 84.7167 |
+| delta vs DUET | -0.2133 | -0.1900 | - |
+| task wins vs DUET | 3/12 | 3/12 | - |
+
+EMA reduces the seed-2022 mean by 0.0234 relative to the online target head.
+The Step 1 gate fails, so the three-seed EMA sweep must not be run and EMA
+momentum must not be tuned.
+
+The original extractor reports the final logged checkpoint. A newly identified
+question is whether earlier checkpoints have meaningful unused headroom. The
+maximum target accuracy is not a valid SFDA checkpoint selector because it
+uses target labels, but it is useful as an oracle diagnostic.
+
+Run without retraining:
+
+```bash
+cd /openbayes/home/vlm-sfda-conflict/duet-sfda-main
+git pull
+bash tools/run_office_home_temporal_precision_head_ema_peak_diagnostic.sh
+```
+
+Bring back:
+
+```text
+output/uda/office-home/temporal_precision_head_ema_seed2022_final_peak.csv
+output/uda/office-home/temporal_precision_head_ema_seed2022_final_peak_summary.json
+```
+
+Decision after the diagnostic:
+
+```text
+oracle peak mean <= 84.7167:
+    proceed to the source-anchored zero-initialized residual classifier
+
+oracle peak mean > 84.7167 while final mean fails:
+    develop a label-free cycle selector using prediction stability and entropy
+    do not report oracle peak as the main paper result
 ```
