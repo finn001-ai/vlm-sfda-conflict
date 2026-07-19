@@ -35,6 +35,7 @@ from src.utils.conflict_diffusion import (
     transport_candidate_mass,
     update_temporal_resolution,
 )
+from src.utils.model_ema import update_model_ema
 # from src.utils import loss, active_prompt, IID_losses
 # from proposed_method import *
 from torch.nn.functional import normalize
@@ -286,6 +287,14 @@ def build_target_classifier_head(cfg, source_head):
     ).cuda()
     target_head.load_state_dict(source_head.state_dict())
     return target_head
+
+
+def build_target_head_ema(cfg, target_head):
+    ema_head = build_target_classifier_head(cfg, target_head)
+    ema_head.eval()
+    for parameter in ema_head.parameters():
+        parameter.requires_grad = False
+    return ema_head
 
 
 @torch.no_grad()
@@ -703,6 +712,7 @@ def train_target(cfg):
 
     param_group = []
     target_head = None
+    target_head_ema = None
 
     for k, v in netF.named_parameters():
         if cfg.OPTIM.LR_DECAY1 > 0:
@@ -731,6 +741,16 @@ def train_target(cfg):
                 float(cfg.DCCL.TARGET_HEAD_LR_MULT),
             )
         )
+        if cfg.DCCL.TARGET_HEAD_EMA:
+            if not 0.0 <= cfg.DCCL.TARGET_HEAD_EMA_MOMENTUM < 1.0:
+                raise ValueError("DCCL.TARGET_HEAD_EMA_MOMENTUM must be in [0, 1)")
+            target_head_ema = build_target_head_ema(cfg, target_head)
+            logging.info(
+                "DCCL target-head EMA enabled: momentum={:.4f}; "
+                "teacher used for pseudo labels and evaluation".format(
+                    float(cfg.DCCL.TARGET_HEAD_EMA_MOMENTUM)
+                )
+            )
 
     optimizer = optim.SGD(param_group)
     optimizer = op_copy(optimizer)
@@ -769,6 +789,7 @@ def train_target(cfg):
         netB.eval()
         if target_head is not None:
             target_head.eval()
+        inference_head = target_head_ema if target_head_ema is not None else target_head
         # netC.eval()
         (
             mem_label,
@@ -785,7 +806,7 @@ def train_target(cfg):
             pl_state,
         ) = obtain_label(
             cfg,
-            dset_loaders['test_aug'], netF, netB, netC, target_head,
+            dset_loaders['test_aug'], netF, netB, netC, inference_head,
             text_inputs, text_features, clip_model, prev_label_mask,
             proto_state, pl_state, curr_cycle,
         )
@@ -1159,6 +1180,12 @@ def train_target(cfg):
             optimizer.zero_grad()
             classifier_loss.backward()
             optimizer.step()
+            if target_head_ema is not None:
+                update_model_ema(
+                    target_head_ema,
+                    target_head,
+                    float(cfg.DCCL.TARGET_HEAD_EMA_MOMENTUM),
+                )
 
             if iter_num % interval_iter == 0 or iter_num == max_iter:
                 netF.eval()
@@ -1169,7 +1196,7 @@ def train_target(cfg):
                 if cfg.SETTING.DATASET == 'VISDA-C':
                     acc_s_te, acc_list = cal_acc(
                         dset_loaders['test'], netF, netB, netC, cfg,
-                        proto_state, target_head, curr_cycle, True
+                        proto_state, inference_head, curr_cycle, True
                     )
                     log_str = ('Task: {}, Iter:{}/{}; Cycle: {}/{}; '
                                'Accuracy = {:.2f}%; classifier_loss = {}').format(cfg.name, iter_num, max_iter,
@@ -1179,7 +1206,7 @@ def train_target(cfg):
                 else:
                     acc_s_te, _ = cal_acc(
                         dset_loaders['test'], netF, netB, netC, cfg,
-                        proto_state, target_head, curr_cycle, False
+                        proto_state, inference_head, curr_cycle, False
                     )
                     log_str = ('Task: {}, Iter:{}/{}; Cycle: {}/{}; '
                                'Accuracy = {:.2f}%; classifier_loss = {}').format(cfg.name, iter_num, max_iter,

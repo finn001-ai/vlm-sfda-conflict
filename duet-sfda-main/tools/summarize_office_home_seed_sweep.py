@@ -31,6 +31,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--csv", required=True, help="Accuracy CSV from extract_final_accuracy.py")
     parser.add_argument("--out", required=True, help="Output JSON summary path")
+    parser.add_argument(
+        "--max-seed-std",
+        type=float,
+        default=None,
+        help="Optional maximum sample std across seed means",
+    )
     return parser.parse_args()
 
 
@@ -98,15 +104,25 @@ def main() -> None:
             }
         )
 
+    seed_std = sample_std(seed_means)
+    all_beat_duet = bool(seed_means) and min(seed_means) > duet_mean
+    std_passes = args.max_seed_std is None or seed_std <= args.max_seed_std
     summary = {
         "decision": "pass_stability_gate"
-        if seed_means and min(seed_means) > duet_mean
+        if all_beat_duet and std_passes
         else "fail_stability_gate",
-        "gate": "all adaptation seeds must beat DUET mean",
+        "gate": (
+            "all adaptation seeds must beat DUET mean"
+            + (
+                f" and seed-mean std must be <= {args.max_seed_std:.4f}"
+                if args.max_seed_std is not None
+                else ""
+            )
+        ),
         "duet_mean": round(duet_mean, 4),
         "num_seeds": len(seed_summaries),
         "mean_over_seed_means": round(mean(seed_means), 4),
-        "std_over_seed_means": round(sample_std(seed_means), 4),
+        "std_over_seed_means": round(seed_std, 4),
         "min_seed_mean": round(min(seed_means), 4) if seed_means else 0.0,
         "max_seed_mean": round(max(seed_means), 4) if seed_means else 0.0,
         "seeds": seed_summaries,
