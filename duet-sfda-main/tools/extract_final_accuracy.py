@@ -22,12 +22,26 @@ def select_final_and_peak(text: str):
     return matches[-1], max(matches, key=lambda item: float(item[5]))
 
 
+def select_primary(final, peak, selection: str):
+    if selection == "peak":
+        return peak
+    if selection == "final":
+        return final
+    raise ValueError("selection must be final or peak")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--glob",
         default="output/uda/office-home/*/*/*.txt",
         help="Glob for log txt files.",
+    )
+    parser.add_argument(
+        "--selection",
+        choices=("final", "peak"),
+        default="final",
+        help="Which logged checkpoint populates the primary accuracy column.",
     )
     return parser.parse_args()
 
@@ -97,7 +111,7 @@ def main() -> None:
         "accd_resolution_target": re.compile(r"^\s*RESOLUTION_TARGET:\s*([^\s]+)", re.MULTILINE),
         "accd_resolution_action": re.compile(r"^\s*RESOLUTION_ACTION:\s*([^\s]+)", re.MULTILINE),
     }
-    print("method,task,cycle,iter,accuracy,peak_accuracy,peak_cycle,peak_iter,peak_minus_final,cand_par,cand_start_cycle,cand_tau,cand_weight,kl_mode,kl_candidate,calib_mode,calib_power,calib_auto_lambda,topo_graph_k,topo_alpha,topo_steps,topo_anchor_ratio,topo_target_mix,graph_teacher_fusion,gtf_apply_to,gtf_strength,gtr_par,gtr_stable_cycles,gtr_memory,gtr_min_graph_conf,gtr_min_disagreement,temporal_diag,pl_expand,pl_topk_per_class,pl_min_conf,pl_memory,pl_stable_cycles,pl_stable_memory,pl_memory_warmup_cycles,pl_memory_min_conf,pl_class_balance,pl_balance_coverage,pl_balance_min_per_class,proto_adapt,proto_mix,proto_temperature,proto_min_per_class,proto_momentum,target_head_adapt,target_head_variant,target_head_mix,target_head_start_cycle,target_head_lr_mult,target_head_ema,target_head_ema_momentum,target_residual_max_gate,target_residual_gate_init,residual_gate_final,tau_low,promote_k,accd_enabled,accd_graph_k,accd_anchor_ratio,accd_anchor_memory,accd_candidate_mass,accd_candidate_margin,accd_stable_cycles,accd_resolution_memory,accd_resolution_target,accd_resolution_action,log")
+    print("method,task,selection,cycle,iter,accuracy,final_accuracy,final_cycle,final_iter,peak_accuracy,peak_cycle,peak_iter,peak_minus_final,cand_par,cand_start_cycle,cand_tau,cand_weight,kl_mode,kl_candidate,calib_mode,calib_power,calib_auto_lambda,topo_graph_k,topo_alpha,topo_steps,topo_anchor_ratio,topo_target_mix,graph_teacher_fusion,gtf_apply_to,gtf_strength,gtr_par,gtr_stable_cycles,gtr_memory,gtr_min_graph_conf,gtr_min_disagreement,temporal_diag,pl_expand,pl_topk_per_class,pl_min_conf,pl_memory,pl_stable_cycles,pl_stable_memory,pl_memory_warmup_cycles,pl_memory_min_conf,pl_class_balance,pl_balance_coverage,pl_balance_min_per_class,proto_adapt,proto_mix,proto_temperature,proto_min_per_class,proto_momentum,target_head_adapt,target_head_variant,target_head_mix,target_head_start_cycle,target_head_lr_mult,target_head_ema,target_head_ema_momentum,target_residual_max_gate,target_residual_gate_init,residual_gate_final,tau_low,promote_k,accd_enabled,accd_graph_k,accd_anchor_ratio,accd_anchor_memory,accd_candidate_mass,accd_candidate_margin,accd_stable_cycles,accd_resolution_memory,accd_resolution_target,accd_resolution_action,log")
     for path in paths:
         text = path.read_text(errors="ignore")
         final, peak = select_final_and_peak(text)
@@ -106,6 +120,15 @@ def main() -> None:
         task, iter_num, max_iter, cycle, max_cycle, acc = final
         _, peak_iter_num, peak_max_iter, peak_cycle, peak_max_cycle, peak_acc = peak
         peak_gap = float(peak_acc) - float(acc)
+        selected = select_primary(final, peak, args.selection)
+        (
+            _,
+            selected_iter,
+            selected_max_iter,
+            selected_cycle,
+            selected_max_cycle,
+            selected_acc,
+        ) = selected
         parts = path.parts
         method = parts[-2] if len(parts) >= 2 else "unknown"
         cfg_values = {}
@@ -115,7 +138,10 @@ def main() -> None:
         residual_gate_matches = re.findall(r"residual_gate=([0-9.]+)", text)
         residual_gate_final = residual_gate_matches[-1] if residual_gate_matches else ""
         print(
-            f"{method},{task},{cycle}/{max_cycle},{iter_num}/{max_iter},{acc},"
+            f"{method},{task},{args.selection},"
+            f"{selected_cycle}/{selected_max_cycle},"
+            f"{selected_iter}/{selected_max_iter},{selected_acc},"
+            f"{acc},{cycle}/{max_cycle},{iter_num}/{max_iter},"
             f"{peak_acc},{peak_cycle}/{peak_max_cycle},"
             f"{peak_iter_num}/{peak_max_iter},{peak_gap:.2f},"
             f"{cfg_values['cand_par']},{cfg_values['cand_start_cycle']},"

@@ -1,6 +1,6 @@
 import unittest
 
-from tools.extract_final_accuracy import select_final_and_peak
+from tools.extract_final_accuracy import select_final_and_peak, select_primary
 
 
 class AccuracyExtractionTest(unittest.TestCase):
@@ -17,6 +17,13 @@ Task: AC, Iter:40/40; Cycle: 4/4; Accuracy = 73.00%
 
     def test_returns_empty_pair_without_task_accuracy(self):
         self.assertEqual(select_final_and_peak("no accuracy here"), (None, None))
+
+    def test_peak_selection_populates_primary_accuracy(self):
+        final = ("AC", "40", "40", "4", "4", "73.00")
+        peak = ("AC", "20", "40", "2", "4", "74.20")
+
+        self.assertEqual(select_primary(final, peak, "peak"), peak)
+        self.assertEqual(select_primary(final, peak, "final"), final)
 
 
 if __name__ == "__main__":

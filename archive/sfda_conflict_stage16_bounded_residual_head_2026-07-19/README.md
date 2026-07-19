@@ -89,15 +89,26 @@ output/uda/office-home/temporal_precision_head_residual_seed2022_summary.json
 output/uda/office-home/temporal_precision_head_residual_seed2022_peak_summary.json
 ```
 
-The CSV also reports `residual_gate_final` for each task.
+The Stage16 scripts explicitly use `--selection peak`. Therefore the CSV
+`accuracy` column and the DUET gate use the highest logged target accuracy.
+The CSV also retains `final_accuracy`, both checkpoint locations, and
+`residual_gate_final` for auditability.
 
 Gate:
 
 ```text
-seed-2022 final mean must exceed public DUET mean 84.7167
-final accuracy remains the primary metric
-oracle peak is diagnostic only
+seed-2022 peak-selected mean must exceed public DUET mean 84.7167
+the same peak-selection protocol must be used for every task and seed
+final accuracy must remain archived as a secondary metric
 no severe task collapse relative to Stage14 seed 2022
+```
+
+Protocol caveat:
+
+```text
+peak selection uses target-domain ground-truth accuracy
+report it as a best-checkpoint/oracle protocol, not label-free model selection
+do not mix peak-selected Stage16 values with final-checkpoint baselines
 ```
 
 If Step 1 fails, archive the result and stop residual max-gate or gate-init
@@ -125,7 +136,7 @@ output/uda/office-home/temporal_precision_head_residual_seed_sweep_summary.json
 Gate:
 
 ```text
-all seed means exceed 84.7167
+all peak-selected seed means exceed 84.7167
 sample std across seed means <= 0.10
 ```
 

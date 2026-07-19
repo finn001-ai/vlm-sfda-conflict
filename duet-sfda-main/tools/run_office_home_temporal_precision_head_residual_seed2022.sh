@@ -22,6 +22,7 @@ done
 
 python tools/extract_final_accuracy.py \
   --glob 'output/uda/office-home/*/temporal_precision_head_seed2022_residual_probe/*.txt' \
+  --selection peak \
   > output/uda/office-home/temporal_precision_head_residual_seed2022_accuracy.csv
 
 python tools/summarize_office_home_seed_sweep.py \

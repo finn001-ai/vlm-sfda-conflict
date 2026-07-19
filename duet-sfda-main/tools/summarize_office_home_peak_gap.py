@@ -28,7 +28,10 @@ def main() -> None:
     if missing:
         raise ValueError(f"Missing tasks: {missing}")
 
-    final_values = [float(by_task[task]["accuracy"]) for task in TASKS]
+    final_values = [
+        float(by_task[task].get("final_accuracy") or by_task[task]["accuracy"])
+        for task in TASKS
+    ]
     peak_values = [float(by_task[task]["peak_accuracy"]) for task in TASKS]
     final_mean = sum(final_values) / len(final_values)
     peak_mean = sum(peak_values) / len(peak_values)
@@ -54,13 +57,18 @@ def main() -> None:
         "tasks": [
             {
                 "task": task,
-                "final_accuracy": float(by_task[task]["accuracy"]),
+                "final_accuracy": float(
+                    by_task[task].get("final_accuracy") or by_task[task]["accuracy"]
+                ),
                 "oracle_peak_accuracy": float(by_task[task]["peak_accuracy"]),
                 "peak_cycle": by_task[task]["peak_cycle"],
                 "peak_iter": by_task[task]["peak_iter"],
                 "peak_minus_final": round(
                     float(by_task[task]["peak_accuracy"])
-                    - float(by_task[task]["accuracy"]),
+                    - float(
+                        by_task[task].get("final_accuracy")
+                        or by_task[task]["accuracy"]
+                    ),
                     4,
                 ),
             }
