@@ -1,0 +1,143 @@
+{
+  "decision": "fail_stability_gate",
+  "gate": "all adaptation seeds must beat DUET mean",
+  "duet_mean": 84.7167,
+  "num_seeds": 3,
+  "mean_over_seed_means": 84.6881,
+  "std_over_seed_means": 0.1457,
+  "min_seed_mean": 84.5267,
+  "max_seed_mean": 84.81,
+  "seeds": [
+    {
+      "seed": "2020",
+      "mean": 84.81,
+      "delta_vs_duet": 0.0933,
+      "beats_duet_mean": true,
+      "task_wins_vs_duet": 5
+    },
+    {
+      "seed": "2021",
+      "mean": 84.7275,
+      "delta_vs_duet": 0.0108,
+      "beats_duet_mean": true,
+      "task_wins_vs_duet": 5
+    },
+    {
+      "seed": "2022",
+      "mean": 84.5267,
+      "delta_vs_duet": -0.19,
+      "beats_duet_mean": false,
+      "task_wins_vs_duet": 3
+    }
+  ],
+  "tasks": [
+    {
+      "task": "AC",
+      "mean": 73.4167,
+      "std": 0.3109,
+      "min": 73.06,
+      "max": 73.63,
+      "duet": 73.6,
+      "delta_mean_vs_duet": -0.1833
+    },
+    {
+      "task": "AP",
+      "mean": 90.99,
+      "std": 0.1758,
+      "min": 90.79,
+      "max": 91.12,
+      "duet": 90.4,
+      "delta_mean_vs_duet": 0.59
+    },
+    {
+      "task": "AR",
+      "mean": 90.8433,
+      "std": 0.3669,
+      "min": 90.5,
+      "max": 91.23,
+      "duet": 91.0,
+      "delta_mean_vs_duet": -0.1567
+    },
+    {
+      "task": "CA",
+      "mean": 83.7,
+      "std": 0.3516,
+      "min": 83.44,
+      "max": 84.1,
+      "duet": 83.6,
+      "delta_mean_vs_duet": 0.1
+    },
+    {
+      "task": "CP",
+      "mean": 91.17,
+      "std": 0.02,
+      "min": 91.15,
+      "max": 91.19,
+      "duet": 90.7,
+      "delta_mean_vs_duet": 0.47
+    },
+    {
+      "task": "CR",
+      "mean": 90.5533,
+      "std": 0.1358,
+      "min": 90.41,
+      "max": 90.68,
+      "duet": 90.9,
+      "delta_mean_vs_duet": -0.3467
+    },
+    {
+      "task": "PA",
+      "mean": 83.0767,
+      "std": 0.37,
+      "min": 82.65,
+      "max": 83.31,
+      "duet": 82.7,
+      "delta_mean_vs_duet": 0.3767
+    },
+    {
+      "task": "PC",
+      "mean": 73.3767,
+      "std": 0.0808,
+      "min": 73.33,
+      "max": 73.47,
+      "duet": 73.7,
+      "delta_mean_vs_duet": -0.3233
+    },
+    {
+      "task": "PR",
+      "mean": 90.7633,
+      "std": 0.3868,
+      "min": 90.54,
+      "max": 91.21,
+      "duet": 91.2,
+      "delta_mean_vs_duet": -0.4367
+    },
+    {
+      "task": "RA",
+      "mean": 83.4233,
+      "std": 0.1343,
+      "min": 83.27,
+      "max": 83.52,
+      "duet": 83.6,
+      "delta_mean_vs_duet": -0.1767
+    },
+    {
+      "task": "RC",
+      "mean": 73.79,
+      "std": 0.2234,
+      "min": 73.54,
+      "max": 73.97,
+      "duet": 74.0,
+      "delta_mean_vs_duet": -0.21
+    },
+    {
+      "task": "RP",
+      "mean": 91.1533,
+      "std": 0.157,
+      "min": 91.03,
+      "max": 91.33,
+      "duet": 91.2,
+      "delta_mean_vs_duet": -0.0467
+    }
+  ]
+}

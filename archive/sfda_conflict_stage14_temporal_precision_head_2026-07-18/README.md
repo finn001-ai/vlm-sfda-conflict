@@ -230,3 +230,52 @@ If this gate fails, the honest paper framing is that target-head adaptation is
 a promising single-run result, not yet a stable state-of-the-art improvement.
 If it passes, the next validation should use independent source checkpoints,
 which requires matching source weights for each source seed.
+
+## Adaptation-Seed Stability Result
+
+Cloud adaptation-seed sweep has been observed for seeds 2020, 2021, and 2022
+using the same source checkpoint.
+
+| Seed | Mean | Delta vs DUET | Beats DUET mean | Task wins vs DUET |
+|---|---:|---:|---:|---:|
+| 2020 | 84.8100 | +0.0933 | true | 5/12 |
+| 2021 | 84.7275 | +0.0108 | true | 5/12 |
+| 2022 | 84.5267 | -0.1900 | false | 3/12 |
+
+Aggregate:
+
+```text
+decision = fail_stability_gate
+mean over seed means = 84.6881
+std over seed means = 0.1457
+min seed mean = 84.5267
+max seed mean = 84.8100
+DUET mean = 84.7167
+delta aggregate vs DUET = -0.0286
+```
+
+Highest task-level seed variance:
+
+| Task | mean | std | min | max | Delta mean vs DUET |
+|---|---:|---:|---:|---:|---:|
+| PR | 90.7633 | 0.3868 | 90.54 | 91.21 | -0.4367 |
+| PA | 83.0767 | 0.3700 | 82.65 | 83.31 | +0.3767 |
+| AR | 90.8433 | 0.3669 | 90.50 | 91.23 | -0.1567 |
+| CA | 83.7000 | 0.3516 | 83.44 | 84.10 | +0.1000 |
+| AC | 73.4167 | 0.3109 | 73.06 | 73.63 | -0.1833 |
+
+Conclusion:
+
+```text
+target-head adaptation is a strong and useful method candidate, but the
+DUET-level gain is not stable across adaptation seeds
+do not claim stable state-of-the-art over DUET from the current evidence
+the method remains substantially stronger than the same-environment both_prior
+baseline, but the public-paper comparison needs a larger margin or a robustness
+mechanism
+```
+
+Next direction should not be another simple loss or fixed graph-rule variant.
+The stability failure suggests sensitivity in target-head adaptation itself:
+future work should diagnose and regularize the target head's update path rather
+than changing the conflict sample selector.
