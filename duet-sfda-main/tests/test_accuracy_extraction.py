@@ -1,6 +1,10 @@
 import unittest
 
-from tools.extract_final_accuracy import select_final_and_peak, select_primary
+from tools.extract_final_accuracy import (
+    TRAJECTORY_ACCURACY_PATTERN,
+    select_final_and_peak,
+    select_primary,
+)
 
 
 class AccuracyExtractionTest(unittest.TestCase):
@@ -24,6 +28,20 @@ Task: AC, Iter:40/40; Cycle: 4/4; Accuracy = 73.00%
 
         self.assertEqual(select_primary(final, peak, "peak"), peak)
         self.assertEqual(select_primary(final, peak, "final"), final)
+
+    def test_trajectory_records_are_extracted_separately(self):
+        log = """
+Task: AC, Iter:40/40; Cycle: 4/4; Accuracy = 73.00%
+Trajectory Ensemble Task: AC, Iter:30/40; Cycle: 4/4; Accuracy = 74.10%; Members=2
+Trajectory Ensemble Task: AC, Iter:40/40; Cycle: 4/4; Accuracy = 73.90%; Members=3
+"""
+        final, peak = select_final_and_peak(log, TRAJECTORY_ACCURACY_PATTERN)
+        standard_final, standard_peak = select_final_and_peak(log)
+
+        self.assertEqual(final[5], "73.90")
+        self.assertEqual(peak[5], "74.10")
+        self.assertEqual(standard_final[5], "73.00")
+        self.assertEqual(standard_peak[5], "73.00")
 
 
 if __name__ == "__main__":

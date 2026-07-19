@@ -37,6 +37,10 @@ from src.utils.conflict_diffusion import (
 )
 from src.utils.model_ema import update_model_ema
 from src.utils.target_head import bounded_residual_logits
+from src.utils.trajectory_ensemble import (
+    capture_trajectory_snapshot,
+    load_trajectory_snapshot,
+)
 # from src.utils import loss, active_prompt, IID_losses
 # from proposed_method import *
 from torch.nn.functional import normalize
@@ -445,6 +449,60 @@ def cal_acc(
         return accuracy * 100, mean_ent
 
 
+def cal_acc_trajectory_ensemble(
+    loader,
+    netF,
+    netB,
+    netC,
+    cfg,
+    proto_state,
+    target_head,
+    curr_cycle,
+    snapshots,
+):
+    if len(snapshots) < 2:
+        raise ValueError("Trajectory ensemble requires at least two snapshots")
+
+    ensemble_output = None
+    all_label = None
+    for snapshot in snapshots:
+        load_trajectory_snapshot(snapshot, netF, netB, target_head)
+        member_outputs = []
+        member_labels = []
+        with torch.no_grad():
+            for data in loader:
+                inputs = data[0].cuda()
+                labels = data[1]
+                features = netB(netF(inputs))
+                outputs = netC(features)
+                outputs = apply_target_head_logits(
+                    cfg, features, outputs, target_head, curr_cycle
+                )
+                outputs = apply_target_prototype_logits(
+                    cfg, features, outputs, proto_state
+                )
+                member_outputs.append(outputs.float().cpu())
+                member_labels.append(labels.float())
+        member_output = torch.cat(member_outputs, dim=0)
+        member_label = torch.cat(member_labels, dim=0)
+        if ensemble_output is None:
+            ensemble_output = member_output
+            all_label = member_label
+        else:
+            if not torch.equal(all_label, member_label):
+                raise ValueError("Trajectory ensemble loader order changed")
+            ensemble_output += member_output
+
+    ensemble_output /= float(len(snapshots))
+    load_trajectory_snapshot(snapshots[-1], netF, netB, target_head)
+    predict = ensemble_output.argmax(dim=1)
+    accuracy = (predict.float() == all_label).float().mean().item() * 100.0
+    mean_ent = torch.mean(
+        loss.Entropy(nn.Softmax(dim=1)(ensemble_output))
+    ).cpu().item()
+    return accuracy, mean_ent
+
+
 def consistency_loss(weak_output, strong_output):
     # Apply softmax to both outputs to get probabilities
     # weak_probs = F.softmax(weak_output, dim=1)
@@ -831,6 +889,29 @@ def train_target(cfg):
     max_iter = cfg.TEST.MAX_EPOCH * len(dset_loaders["target"])
     # max_iter = cfg.TEST.MAX_EPOCH * len(dset_loaders["target"]) * cfg.ACTIVE.CYCLE
     interval_iter = max_iter // cfg.TEST.INTERVAL
+
+    trajectory_snapshots = []
+    trajectory_intervals = [
+        int(value) for value in cfg.DCCL.TRAJECTORY_SNAPSHOT_INTERVALS
+    ]
+    if cfg.DCCL.TRAJECTORY_ENSEMBLE:
+        if target_head is None:
+            raise ValueError("Trajectory ensemble requires target-head adaptation")
+        if target_head_ema is not None:
+            raise ValueError("Trajectory ensemble cannot be combined with target-head EMA")
+        if len(trajectory_intervals) < 2:
+            raise ValueError("Trajectory ensemble requires at least two intervals")
+        if trajectory_intervals != sorted(set(trajectory_intervals)):
+            raise ValueError("Trajectory snapshot intervals must be sorted and unique")
+        if trajectory_intervals[0] < 1 or trajectory_intervals[-1] > cfg.TEST.INTERVAL:
+            raise ValueError("Trajectory snapshot interval is outside TEST.INTERVAL")
+        if trajectory_intervals[-1] != cfg.TEST.INTERVAL:
+            raise ValueError("Trajectory snapshots must include the final interval")
+        logging.info(
+            "DCCL trajectory ensemble enabled: final_cycle={}; intervals={}".format(
+                int(cfg.ACTIVE.CYCLE), trajectory_intervals
+            )
+        )
 
     prev_label_mask = None
     pl_state = None
@@ -1251,6 +1332,27 @@ def train_target(cfg):
                 netB.eval()
                 if target_head is not None:
                     target_head.eval()
+                captured_trajectory_snapshot = False
+                if cfg.DCCL.TRAJECTORY_ENSEMBLE and (
+                    curr_cycle == cfg.ACTIVE.CYCLE - 1
+                ):
+                    checkpoint_index = (
+                        cfg.TEST.INTERVAL
+                        if iter_num == max_iter
+                        else iter_num // interval_iter
+                    )
+                    if checkpoint_index in trajectory_intervals:
+                        trajectory_snapshots.append(
+                            capture_trajectory_snapshot(
+                                netF, netB, target_head, checkpoint_index
+                            )
+                        )
+                        captured_trajectory_snapshot = True
+                        logging.info(
+                            "DCCL trajectory snapshot captured: interval={}; members={}".format(
+                                int(checkpoint_index), len(trajectory_snapshots)
+                            )
+                        )
                 # netC.eval()
                 if cfg.SETTING.DATASET == 'VISDA-C':
                     acc_s_te, acc_list = cal_acc(
@@ -1281,6 +1383,30 @@ def train_target(cfg):
                 # cfg.out_file.flush()
                 # print(log_str+'\n')
                 logging.info(log_str)
+                if captured_trajectory_snapshot and len(trajectory_snapshots) >= 2:
+                    trajectory_acc, _ = cal_acc_trajectory_ensemble(
+                        dset_loaders['test'],
+                        netF,
+                        netB,
+                        netC,
+                        cfg,
+                        proto_state,
+                        target_head,
+                        curr_cycle,
+                        trajectory_snapshots,
+                    )
+                    logging.info(
+                        "Trajectory Ensemble Task: {}, Iter:{}/{}; Cycle: {}/{}; "
+                        "Accuracy = {:.2f}%; Members={}".format(
+                            cfg.name,
+                            iter_num,
+                            max_iter,
+                            curr_cycle + 1,
+                            cfg.ACTIVE.CYCLE,
+                            trajectory_acc,
+                            len(trajectory_snapshots),
+                        )
+                    )
                 netF.train()
                 netB.train()
                 if target_head is not None:

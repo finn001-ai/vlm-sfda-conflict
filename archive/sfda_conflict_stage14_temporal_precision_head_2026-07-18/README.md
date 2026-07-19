@@ -326,3 +326,26 @@ oracle peak still fails to exceed DUET:
 Protocol caveat: peak selection uses target-domain labels and must be described
 as a best-checkpoint/oracle evaluation protocol rather than label-free model
 selection.
+
+Peak-selection result:
+
+| Seed | Peak mean | Delta vs DUET | Task wins vs DUET |
+|---|---:|---:|---:|
+| 2020 | 84.9000 | +0.1833 | 9/12 |
+| 2021 | 84.7692 | +0.0525 | 5/12 |
+| 2022 | 84.6783 | -0.0383 | 5/12 |
+
+```text
+mean over seed means = 84.7825
+delta vs DUET = +0.0658
+seed-mean std = 0.1114
+decision = fail_stability_gate
+```
+
+The aggregate peak mean exceeds DUET, but seed 2022 and the standard-deviation
+gate still fail narrowly. In 23/36 runs the final checkpoint is below an
+earlier peak; most peaks occur at 50% or 75% of cycle 4.
+
+The peak re-evaluation selects Stage14 as the base for Stage17. Stage17 keeps
+the method unchanged and adds fixed cycle-4 full-model trajectory ensembling
+to address the remaining seed-2022 gap and late-checkpoint oscillation.
