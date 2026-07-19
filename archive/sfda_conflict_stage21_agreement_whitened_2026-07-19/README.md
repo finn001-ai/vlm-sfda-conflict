@@ -157,11 +157,53 @@ without per-sample hard source-vs-CLIP selection.
 ```text
 implementation complete
 local validation passed (80 tests)
-cloud preflight run reported as lower accuracy
-standard CSV/JSON artifacts not yet archived
+cloud preflight complete: valid mechanism failure
 ```
 
-The current conclusion is qualitative only: the user stopped/rejected the
-route after observing lower accuracy. Exact task values, selected strengths,
-and held-out transport diagnostics are not available in the local workspace,
-so no quantitative Stage21 claim is made yet.
+## Cloud Preflight Result
+
+The label-free transport selector activated validly on every task:
+
+| Task | Peak | Matched Stage14 | Delta | Strength | Held-out CE gain | Held-out acc. delta | Mean shift |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| AC | 73.24 | 73.59 | -0.35 | 0.025 | 0.029360 | +0.004427 | 0.025 |
+| PA | 83.11 | 83.11 | 0.00 | 0.005 | 0.004557 | 0.000000 | 0.005 |
+| RA | 83.40 | 83.52 | -0.12 | 0.005 | 0.002029 | 0.000000 | 0.005 |
+
+All three tasks had sufficient anchors and class support, selected a nonzero
+strength, improved held-out agreement CE, preserved held-out consensus
+accuracy, and produced a nonzero bounded global shift. The mechanism gate
+therefore passes 3/3.
+
+The performance gate fails:
+
+```text
+decision = fail_whitened_preflight
+peak mean = 79.9167
+matched Stage14 mean = 80.0733
+delta vs matched Stage14 = -0.1567
+DUET subset mean = 79.9667
+delta vs DUET subset = -0.0500
+```
+
+The global map avoids Stage20's forced 5% shift on PA and RA, but the
+label-free held-out objective still selects a harmful 2.5% map on AC and does
+not produce an aggregate accuracy gain. This falsifies the current global
+agreement-whitened transport objective rather than its implementation.
+
+Conclusion:
+
+```text
+do not run the complete 12-task Stage21 script
+do not sweep shrinkage, holdout ratio, or candidate strengths
+close the current geometric feature-transport family
+next specified route: three-view class-conditional noise EM consensus
+```
+
+Raw artifacts:
+
+```text
+temporal_precision_head_agreement_whitened_preflight_accuracy.csv
+temporal_precision_head_agreement_whitened_preflight_flow.json
+temporal_precision_head_agreement_whitened_preflight_summary.json
+```

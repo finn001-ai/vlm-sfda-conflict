@@ -19,8 +19,7 @@ stage.
 - A mean over one or three tasks is a local preflight mean and must not be
   compared with the 12-task DUET mean.
 - Stage18 is retained as an invalid-mechanism control because its adapter was
-  inactive. Stage21 currently has only the qualitative report that accuracy
-  became lower; no standard CSV/JSON result has been received.
+  inactive. Stage21 has a valid three-task preflight but no full 12-task run.
 
 ## Main 12-Task Accuracy Table
 
@@ -76,7 +75,7 @@ Their means are over the reported tasks, not all 12 Office-Home tasks.
 | Stage19-C coverage fallback | CA/PA/RA | 83.60 / 82.61 / 82.98 | 83.0633 | Fail; projected full mean 84.6933 |
 | Stage19-G GTR-only router | AC/PA/RA | 73.61 / 82.53 / 82.94 | 79.6933 | Valid route, fail; projected full mean 84.6700 |
 | Stage20 conditional covariance | AC/PA/RA | 73.45 / 82.82 / 83.35 | 79.8733 | Valid transport, all regress vs matched Stage14 |
-| Stage21 global whitened transport | AC/PA/RA planned | exact values not archived | - | User reports lower accuracy; quantitative archive pending |
+| Stage21 global whitened transport | AC/PA/RA | 73.24 / 83.11 / 83.40 | 79.9167 | Valid mechanism; -0.1567 vs matched Stage14 and -0.0500 vs DUET subset |
 
 ## Stage3 And Stage4 Fine-Grained Ablations
 
@@ -247,9 +246,10 @@ from. This lineage is deliberately outside the accuracy table.
 
 21. **Stage21: global agreement-whitened transport.** It is the global,
     label-free-strength-selection variation of Stage20, removing pair
-    conditioning and fixed nonzero strength. The user reports lower cloud
-    accuracy, but exact standard outputs are not yet archived; therefore only
-    the qualitative failure is currently defensible.
+    conditioning and fixed nonzero strength. The mechanism passed on AC/PA/RA,
+    but its peak mean was `79.9167`, below matched Stage14 by `0.1567` and the
+    DUET subset by `0.0500`. This valid preflight failure closes the current
+    geometric feature-transport family before a 12-task run.
 
 ## Current Overall Conclusion
 
@@ -265,6 +265,9 @@ The evidence supports four claims:
 4. Stage14 is still the correct base. Its best seed reaches `84.9000`, and its
    three-seed peak mean reaches `84.7825`, but the result is not yet stable
    because seed 2022 is `84.6783` and seed-mean standard deviation is `0.1114`.
+
+Stage21 does not change this ranking: its valid AC/PA/RA preflight remained
+below both the matched Stage14 subset and the corresponding DUET subset.
 
 Therefore the project has crossed DUET in selected runs and in the aggregate
 oracle-peak mean, but it has not yet established a stable improvement over

@@ -1,0 +1,97 @@
+{
+  "decision": "pass_whitened_diagnostics",
+  "num_logs": 3,
+  "valid_tasks": 3,
+  "tasks": [
+    {
+      "method": "temporal_precision_head_seed2022_agreement_whitened_preflight",
+      "task": "AC",
+      "anchors": 1909,
+      "train_anchors": 1528,
+      "heldout_anchors": 381,
+      "active_classes": 64,
+      "selected_strength": 0.025,
+      "heldout_loss_improvement": 0.02936,
+      "heldout_accuracy_delta": 0.004427,
+      "mean_relative_shift": 0.025,
+      "config": {
+        "min_anchors": 512,
+        "shrinkage": 0.1,
+        "holdout_ratio": 0.2,
+        "max_gate": 0.05,
+        "min_improvement": 0.001,
+        "start_cycle": 1
+      },
+      "checks": {
+        "anchor_support": true,
+        "heldout_support": true,
+        "class_support": true,
+        "label_free_selection_active": true,
+        "heldout_objective_improves": true,
+        "heldout_consensus_preserved": true,
+        "global_shift_nonzero_and_bounded": true
+      },
+      "mechanism_valid": true
+    },
+    {
+      "method": "temporal_precision_head_seed2022_agreement_whitened_preflight",
+      "task": "PA",
+      "anchors": 1204,
+      "train_anchors": 969,
+      "heldout_anchors": 235,
+      "active_classes": 64,
+      "selected_strength": 0.005,
+      "heldout_loss_improvement": 0.004557,
+      "heldout_accuracy_delta": 0.0,
+      "mean_relative_shift": 0.005,
+      "config": {
+        "min_anchors": 512,
+        "shrinkage": 0.1,
+        "holdout_ratio": 0.2,
+        "max_gate": 0.05,
+        "min_improvement": 0.001,
+        "start_cycle": 1
+      },
+      "checks": {
+        "anchor_support": true,
+        "heldout_support": true,
+        "class_support": true,
+        "label_free_selection_active": true,
+        "heldout_objective_improves": true,
+        "heldout_consensus_preserved": true,
+        "global_shift_nonzero_and_bounded": true
+      },
+      "mechanism_valid": true
+    },
+    {
+      "method": "temporal_precision_head_seed2022_agreement_whitened_preflight",
+      "task": "RA",
+      "anchors": 1478,
+      "train_anchors": 1186,
+      "heldout_anchors": 292,
+      "active_classes": 64,
+      "selected_strength": 0.005,
+      "heldout_loss_improvement": 0.002029,
+      "heldout_accuracy_delta": 0.0,
+      "mean_relative_shift": 0.005,
+      "config": {
+        "min_anchors": 512,
+        "shrinkage": 0.1,
+        "holdout_ratio": 0.2,
+        "max_gate": 0.05,
+        "min_improvement": 0.001,
+        "start_cycle": 1
+      },
+      "checks": {
+        "anchor_support": true,
+        "heldout_support": true,
+        "class_support": true,
+        "label_free_selection_active": true,
+        "heldout_objective_improves": true,
+        "heldout_consensus_preserved": true,
+        "global_shift_nonzero_and_bounded": true
+      },
+      "mechanism_valid": true
+    }
+  ]
+}

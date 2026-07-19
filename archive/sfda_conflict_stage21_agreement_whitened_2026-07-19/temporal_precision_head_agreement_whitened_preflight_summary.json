@@ -1,0 +1,58 @@
+{
+  "decision": "fail_whitened_preflight",
+  "selection": "peak",
+  "mean_accuracy": 79.9167,
+  "matched_base_mean": 80.0733,
+  "delta_vs_matched_base": -0.1567,
+  "duet_subset_mean": 79.9667,
+  "delta_vs_duet_subset": -0.05,
+  "checks": {
+    "config_valid": true,
+    "mechanism_valid": true,
+    "mean_beats_matched_base": false,
+    "mean_beats_duet_subset": false,
+    "no_task_collapse": true
+  },
+  "tasks": [
+    {
+      "task": "AC",
+      "accuracy": 73.24,
+      "matched_base": 73.59,
+      "delta_vs_matched_base": -0.35,
+      "duet": 73.6,
+      "delta_vs_duet": -0.36,
+      "selected_strength": 0.025,
+      "heldout_loss_improvement": 0.02936,
+      "mean_relative_shift": 0.025,
+      "mechanism_valid": true,
+      "config_valid": true
+    },
+    {
+      "task": "PA",
+      "accuracy": 83.11,
+      "matched_base": 83.11,
+      "delta_vs_matched_base": 0.0,
+      "duet": 82.7,
+      "delta_vs_duet": 0.41,
+      "selected_strength": 0.005,
+      "heldout_loss_improvement": 0.004557,
+      "mean_relative_shift": 0.005,
+      "mechanism_valid": true,
+      "config_valid": true
+    },
+    {
+      "task": "RA",
+      "accuracy": 83.4,
+      "matched_base": 83.52,
+      "delta_vs_matched_base": -0.12,
+      "duet": 83.6,
+      "delta_vs_duet": -0.2,
+      "selected_strength": 0.005,
+      "heldout_loss_improvement": 0.002029,
+      "mean_relative_shift": 0.005,
+      "mechanism_valid": true,
+      "config_valid": true
+    }
+  ],
+  "next": "replace geometric transport with three-view class-conditional noise EM consensus"
+}
