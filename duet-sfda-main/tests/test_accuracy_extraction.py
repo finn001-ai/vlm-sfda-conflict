@@ -1,7 +1,15 @@
 import unittest
+import csv
+import io
+import sys
+import tempfile
+from contextlib import redirect_stdout
+from pathlib import Path
+from unittest.mock import patch
 
 from tools.extract_final_accuracy import (
     TRAJECTORY_ACCURACY_PATTERN,
+    main,
     select_final_and_peak,
     select_primary,
 )
@@ -42,6 +50,40 @@ Trajectory Ensemble Task: AC, Iter:40/40; Cycle: 4/4; Accuracy = 73.90%; Members
         self.assertEqual(peak[5], "74.10")
         self.assertEqual(standard_final[5], "73.00")
         self.assertEqual(standard_peak[5], "73.00")
+
+    def test_pair_flow_csv_columns_stay_aligned(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            method_dir = Path(tmpdir) / "AC" / "pair_flow_method"
+            method_dir.mkdir(parents=True)
+            log_path = method_dir / "log.txt"
+            log_path.write_text(
+                """
+TARGET_HEAD_VARIANT: pair_flow
+PAIR_FLOW_RANK: 16
+PAIR_FLOW_MIN_COUNT: 5
+PAIR_FLOW_MIN_CYCLES: 2
+PAIR_FLOW_MAX_GATE: 0.3
+PAIR_FLOW_GATE_INIT: -2.0
+Task: AC, Iter:40/40; Cycle: 4/4; Accuracy = 74.10%; pair_flow_gate=0.041; pair_flow_active_rank=8
+"""
+            )
+            stdout = io.StringIO()
+            argv = [
+                "extract_final_accuracy.py",
+                "--glob",
+                str(Path(tmpdir) / "*" / "*" / "*.txt"),
+                "--selection",
+                "peak",
+            ]
+            with patch.object(sys, "argv", argv), redirect_stdout(stdout):
+                main()
+
+        rows = list(csv.DictReader(io.StringIO(stdout.getvalue())))
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0].get(None))
+        self.assertEqual(rows[0]["target_head_variant"], "pair_flow")
+        self.assertEqual(rows[0]["pair_flow_active_rank"], "8")
+        self.assertEqual(rows[0]["pair_flow_gate_final"], "0.041")
 
 
 if __name__ == "__main__":

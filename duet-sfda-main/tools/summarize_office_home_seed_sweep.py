@@ -37,6 +37,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional maximum sample std across seed means",
     )
+    parser.add_argument(
+        "--min-overall-mean",
+        type=float,
+        default=None,
+        help="Optional strict lower bound for the mean over seed means",
+    )
     return parser.parse_args()
 
 
@@ -107,9 +113,13 @@ def main() -> None:
     seed_std = sample_std(seed_means)
     all_beat_duet = bool(seed_means) and min(seed_means) > duet_mean
     std_passes = args.max_seed_std is None or seed_std <= args.max_seed_std
+    overall_mean = mean(seed_means)
+    overall_mean_passes = (
+        args.min_overall_mean is None or overall_mean > args.min_overall_mean
+    )
     summary = {
         "decision": "pass_stability_gate"
-        if all_beat_duet and std_passes
+        if all_beat_duet and std_passes and overall_mean_passes
         else "fail_stability_gate",
         "gate": (
             "all adaptation seeds must beat DUET mean"
@@ -118,13 +128,23 @@ def main() -> None:
                 if args.max_seed_std is not None
                 else ""
             )
+            + (
+                f" and mean over seed means must exceed {args.min_overall_mean:.4f}"
+                if args.min_overall_mean is not None
+                else ""
+            )
         ),
         "duet_mean": round(duet_mean, 4),
         "num_seeds": len(seed_summaries),
-        "mean_over_seed_means": round(mean(seed_means), 4),
+        "mean_over_seed_means": round(overall_mean, 4),
         "std_over_seed_means": round(seed_std, 4),
         "min_seed_mean": round(min(seed_means), 4) if seed_means else 0.0,
         "max_seed_mean": round(max(seed_means), 4) if seed_means else 0.0,
+        "checks": {
+            "all_seeds_beat_duet": all_beat_duet,
+            "seed_std_passes": std_passes,
+            "overall_mean_passes": overall_mean_passes,
+        },
         "seeds": seed_summaries,
         "tasks": task_summaries,
     }

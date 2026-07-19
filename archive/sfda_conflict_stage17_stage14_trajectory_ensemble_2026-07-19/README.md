@@ -142,5 +142,45 @@ itself does not use per-task labels.
 ```text
 implementation complete
 local validation passed (26 tests)
-cloud result pending
+seed-2022 cloud result observed: fail
+```
+
+## Seed-2022 Result
+
+| Metric | Trajectory ensemble | Matched online Stage14 | Historical Stage14 |
+|---|---:|---:|---:|
+| Peak mean | 84.6542 | 84.7225 | 84.6783 |
+| Delta vs DUET | -0.0625 | +0.0058 | -0.0383 |
+| Task wins vs DUET | 5/12 | 5/12 | 5/12 |
+
+Trajectory minus matched online by task:
+
+| Task | Delta |
+|---|---:|
+| AC | -0.23 |
+| AP | +0.11 |
+| AR | -0.12 |
+| CA | -0.04 |
+| CP | -0.04 |
+| CR | 0.00 |
+| PA | -0.17 |
+| PC | -0.05 |
+| PR | 0.00 |
+| RA | -0.12 |
+| RC | -0.02 |
+| RP | -0.14 |
+
+The mean trajectory delta relative to the matched online run is -0.0683. The
+trajectory peak exceeds its final ensemble by only 0.0192. Fixed late-cycle
+logit averaging therefore suppresses useful task-specific movement more than
+it removes harmful oscillation.
+
+Conclusion:
+
+```text
+decision = fail_seed2022_gate
+do not run the three-seed trajectory sweep
+do not try other fixed snapshot combinations
+retain Stage14 as the strongest base
+move to dataset-level stable class-pair conflict flow
 ```

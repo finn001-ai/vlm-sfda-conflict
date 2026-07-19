@@ -41,6 +41,10 @@ from src.utils.trajectory_ensemble import (
     capture_trajectory_snapshot,
     load_trajectory_snapshot,
 )
+from src.utils.class_pair_flow import (
+    ClassPairFlowAdapter,
+    update_class_pair_flow,
+)
 # from src.utils import loss, active_prompt, IID_losses
 # from proposed_method import *
 from torch.nn.functional import normalize
@@ -319,10 +323,12 @@ def apply_target_head_logits(cfg, features, source_logits, target_head, curr_cyc
         or curr_cycle < cfg.DCCL.TARGET_HEAD_START_CYCLE
     ):
         return source_logits
-    if cfg.DCCL.TARGET_HEAD_VARIANT == "residual":
+    if cfg.DCCL.TARGET_HEAD_VARIANT in {"residual", "pair_flow"}:
         return target_head(features, source_logits)
     if cfg.DCCL.TARGET_HEAD_VARIANT != "blend":
-        raise ValueError("DCCL.TARGET_HEAD_VARIANT must be blend or residual")
+        raise ValueError(
+            "DCCL.TARGET_HEAD_VARIANT must be blend, residual, or pair_flow"
+        )
     if not 0.0 <= cfg.DCCL.TARGET_HEAD_MIX <= 1.0:
         raise ValueError("DCCL.TARGET_HEAD_MIX must be in [0, 1]")
     target_logits = target_head(features)
@@ -333,8 +339,21 @@ def apply_target_head_logits(cfg, features, source_logits, target_head, curr_cyc
 def build_target_classifier_head(cfg, source_head):
     if cfg.DCCL.TARGET_HEAD_VARIANT == "residual":
         return SourceAnchoredResidualClassifier(cfg, source_head)
+    if cfg.DCCL.TARGET_HEAD_VARIANT == "pair_flow":
+        adapter = ClassPairFlowAdapter(
+            feature_dim=cfg.bottleneck,
+            num_classes=cfg.class_num,
+            rank=int(cfg.DCCL.PAIR_FLOW_RANK),
+            max_gate=float(cfg.DCCL.PAIR_FLOW_MAX_GATE),
+            gate_init=float(cfg.DCCL.PAIR_FLOW_GATE_INIT),
+            epsilon=float(cfg.DCCL.EPSILON),
+        ).cuda()
+        adapter.type = source_head.type
+        return adapter
     if cfg.DCCL.TARGET_HEAD_VARIANT != "blend":
-        raise ValueError("DCCL.TARGET_HEAD_VARIANT must be blend or residual")
+        raise ValueError(
+            "DCCL.TARGET_HEAD_VARIANT must be blend, residual, or pair_flow"
+        )
     target_head = network.feat_classifier(
         type=source_head.type,
         class_num=cfg.class_num,
@@ -917,6 +936,7 @@ def train_target(cfg):
     pl_state = None
     proto_state = None
     conflict_state = None
+    pair_flow_state = None
     text_features = None
     curr_cycle = 0
     # office-home : 1.0 / VisDA-C : 1.05
@@ -950,6 +970,35 @@ def train_target(cfg):
             text_inputs, text_features, clip_model, prev_label_mask,
             proto_state, pl_state, curr_cycle,
         )
+        if isinstance(target_head, ClassPairFlowAdapter):
+            was_frozen = bool(pair_flow_state and pair_flow_state["frozen"])
+            pair_flow_state = update_class_pair_flow(
+                source_label,
+                clip_label,
+                mem_label,
+                label_mask,
+                pair_flow_state,
+                num_classes=cfg.class_num,
+                rank=int(cfg.DCCL.PAIR_FLOW_RANK),
+                min_count=int(cfg.DCCL.PAIR_FLOW_MIN_COUNT),
+                min_cycles=int(cfg.DCCL.PAIR_FLOW_MIN_CYCLES),
+            )
+            target_head.set_basis(pair_flow_state["basis"])
+            logging.info(
+                "DCCL class-pair flow: cycle={}; active_rank={}; frozen={}; "
+                "resolved_flow_count={:.0f}".format(
+                    curr_cycle + 1,
+                    int(pair_flow_state["active_rank"]),
+                    bool(pair_flow_state["frozen"]),
+                    float(pair_flow_state["counts"].sum().item()),
+                )
+            )
+            if pair_flow_state["frozen"] and not was_frozen:
+                logging.info(
+                    "DCCL class-pair basis frozen: pairs={}".format(
+                        pair_flow_state["pairs"]
+                    )
+                )
         proto_state = update_target_prototype_state(
             cfg, task_features, mem_label, label_mask, proto_state
         )
@@ -1377,6 +1426,17 @@ def train_target(cfg):
                 if isinstance(target_head, SourceAnchoredResidualClassifier):
                     log_str += "; residual_gate={:.6f}".format(
                         float(target_head.effective_gate().item())
+                    )
+                elif isinstance(target_head, ClassPairFlowAdapter):
+                    active_rank = (
+                        int(pair_flow_state["active_rank"])
+                        if pair_flow_state is not None
+                        else 0
+                    )
+                    log_str += (
+                        "; pair_flow_gate={:.6f}; pair_flow_active_rank={}"
+                    ).format(
+                        float(target_head.effective_gate().item()), active_rank
                     )
 
                 # cfg.out_file.write(log_str + '\n')

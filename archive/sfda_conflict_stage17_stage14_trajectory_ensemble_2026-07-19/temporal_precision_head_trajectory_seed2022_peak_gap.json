@@ -1,0 +1,127 @@
+{
+  "decision": "no_oracle_headroom",
+  "warning": "peak_accuracy uses target labels and is diagnostic only",
+  "primary_protocol": "peak",
+  "duet_mean": 84.7167,
+  "final_mean": 84.635,
+  "oracle_peak_mean": 84.6542,
+  "oracle_peak_minus_final": 0.0192,
+  "next_method": "move to dataset-level stable class-pair conflict-flow adaptation",
+  "methods": [
+    {
+      "method": "temporal_precision_head_seed2022_trajectory_probe",
+      "final_mean": 84.635,
+      "oracle_peak_mean": 84.6542
+    }
+  ],
+  "tasks": [
+    {
+      "method": "temporal_precision_head_seed2022_trajectory_probe",
+      "task": "AC",
+      "final_accuracy": 73.33,
+      "oracle_peak_accuracy": 73.36,
+      "peak_cycle": "4/4",
+      "peak_iter": "207/276",
+      "peak_minus_final": 0.03
+    },
+    {
+      "method": "temporal_precision_head_seed2022_trajectory_probe",
+      "task": "AP",
+      "final_accuracy": 90.94,
+      "oracle_peak_accuracy": 90.94,
+      "peak_cycle": "4/4",
+      "peak_iter": "280/280",
+      "peak_minus_final": 0.0
+    },
+    {
+      "method": "temporal_precision_head_seed2022_trajectory_probe",
+      "task": "AR",
+      "final_accuracy": 90.77,
+      "oracle_peak_accuracy": 90.84,
+      "peak_cycle": "4/4",
+      "peak_iter": "207/276",
+      "peak_minus_final": 0.07
+    },
+    {
+      "method": "temporal_precision_head_seed2022_trajectory_probe",
+      "task": "CA",
+      "final_accuracy": 83.64,
+      "oracle_peak_accuracy": 83.64,
+      "peak_cycle": "4/4",
+      "peak_iter": "152/152",
+      "peak_minus_final": 0.0
+    },
+    {
+      "method": "temporal_precision_head_seed2022_trajectory_probe",
+      "task": "CP",
+      "final_accuracy": 91.08,
+      "oracle_peak_accuracy": 91.08,
+      "peak_cycle": "4/4",
+      "peak_iter": "280/280",
+      "peak_minus_final": 0.0
+    },
+    {
+      "method": "temporal_precision_head_seed2022_trajectory_probe",
+      "task": "CR",
+      "final_accuracy": 90.66,
+      "oracle_peak_accuracy": 90.75,
+      "peak_cycle": "4/4",
+      "peak_iter": "207/276",
+      "peak_minus_final": 0.09
+    },
+    {
+      "method": "temporal_precision_head_seed2022_trajectory_probe",
+      "task": "PA",
+      "final_accuracy": 82.9,
+      "oracle_peak_accuracy": 82.94,
+      "peak_cycle": "4/4",
+      "peak_iter": "114/152",
+      "peak_minus_final": 0.04
+    },
+    {
+      "method": "temporal_precision_head_seed2022_trajectory_probe",
+      "task": "PC",
+      "final_accuracy": 73.47,
+      "oracle_peak_accuracy": 73.47,
+      "peak_cycle": "4/4",
+      "peak_iter": "276/276",
+      "peak_minus_final": 0.0
+    },
+    {
+      "method": "temporal_precision_head_seed2022_trajectory_probe",
+      "task": "PR",
+      "final_accuracy": 90.52,
+      "oracle_peak_accuracy": 90.52,
+      "peak_cycle": "4/4",
+      "peak_iter": "276/276",
+      "peak_minus_final": 0.0
+    },
+    {
+      "method": "temporal_precision_head_seed2022_trajectory_probe",
+      "task": "RA",
+      "final_accuracy": 83.4,
+      "oracle_peak_accuracy": 83.4,
+      "peak_cycle": "4/4",
+      "peak_iter": "152/152",
+      "peak_minus_final": 0.0
+    },
+    {
+      "method": "temporal_precision_head_seed2022_trajectory_probe",
+      "task": "RC",
+      "final_accuracy": 73.54,
+      "oracle_peak_accuracy": 73.54,
+      "peak_cycle": "4/4",
+      "peak_iter": "276/276",
+      "peak_minus_final": 0.0
+    },
+    {
+      "method": "temporal_precision_head_seed2022_trajectory_probe",
+      "task": "RP",
+      "final_accuracy": 91.37,
+      "oracle_peak_accuracy": 91.37,
+      "peak_cycle": "4/4",
+      "peak_iter": "280/280",
+      "peak_minus_final": 0.0
+    }
+  ]
+}

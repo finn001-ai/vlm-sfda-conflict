@@ -1,0 +1,129 @@
+{
+  "decision": "fail_stability_gate",
+  "gate": "all adaptation seeds must beat DUET mean",
+  "duet_mean": 84.7167,
+  "num_seeds": 1,
+  "mean_over_seed_means": 84.6542,
+  "std_over_seed_means": 0.0,
+  "min_seed_mean": 84.6542,
+  "max_seed_mean": 84.6542,
+  "seeds": [
+    {
+      "seed": "2022",
+      "mean": 84.6542,
+      "delta_vs_duet": -0.0625,
+      "beats_duet_mean": false,
+      "task_wins_vs_duet": 5
+    }
+  ],
+  "tasks": [
+    {
+      "task": "AC",
+      "mean": 73.36,
+      "std": 0.0,
+      "min": 73.36,
+      "max": 73.36,
+      "duet": 73.6,
+      "delta_mean_vs_duet": -0.24
+    },
+    {
+      "task": "AP",
+      "mean": 90.94,
+      "std": 0.0,
+      "min": 90.94,
+      "max": 90.94,
+      "duet": 90.4,
+      "delta_mean_vs_duet": 0.54
+    },
+    {
+      "task": "AR",
+      "mean": 90.84,
+      "std": 0.0,
+      "min": 90.84,
+      "max": 90.84,
+      "duet": 91.0,
+      "delta_mean_vs_duet": -0.16
+    },
+    {
+      "task": "CA",
+      "mean": 83.64,
+      "std": 0.0,
+      "min": 83.64,
+      "max": 83.64,
+      "duet": 83.6,
+      "delta_mean_vs_duet": 0.04
+    },
+    {
+      "task": "CP",
+      "mean": 91.08,
+      "std": 0.0,
+      "min": 91.08,
+      "max": 91.08,
+      "duet": 90.7,
+      "delta_mean_vs_duet": 0.38
+    },
+    {
+      "task": "CR",
+      "mean": 90.75,
+      "std": 0.0,
+      "min": 90.75,
+      "max": 90.75,
+      "duet": 90.9,
+      "delta_mean_vs_duet": -0.15
+    },
+    {
+      "task": "PA",
+      "mean": 82.94,
+      "std": 0.0,
+      "min": 82.94,
+      "max": 82.94,
+      "duet": 82.7,
+      "delta_mean_vs_duet": 0.24
+    },
+    {
+      "task": "PC",
+      "mean": 73.47,
+      "std": 0.0,
+      "min": 73.47,
+      "max": 73.47,
+      "duet": 73.7,
+      "delta_mean_vs_duet": -0.23
+    },
+    {
+      "task": "PR",
+      "mean": 90.52,
+      "std": 0.0,
+      "min": 90.52,
+      "max": 90.52,
+      "duet": 91.2,
+      "delta_mean_vs_duet": -0.68
+    },
+    {
+      "task": "RA",
+      "mean": 83.4,
+      "std": 0.0,
+      "min": 83.4,
+      "max": 83.4,
+      "duet": 83.6,
+      "delta_mean_vs_duet": -0.2
+    },
+    {
+      "task": "RC",
+      "mean": 73.54,
+      "std": 0.0,
+      "min": 73.54,
+      "max": 73.54,
+      "duet": 74.0,
+      "delta_mean_vs_duet": -0.46
+    },
+    {
+      "task": "RP",
+      "mean": 91.37,
+      "std": 0.0,
+      "min": 91.37,
+      "max": 91.37,
+      "duet": 91.2,
+      "delta_mean_vs_duet": 0.17
+    }
+  ]
+}

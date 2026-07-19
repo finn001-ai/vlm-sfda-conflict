@@ -125,6 +125,7 @@ if __name__ == "__main__":
         "temporal_precision_head_ema",
         "temporal_precision_head_residual",
         "temporal_precision_head_trajectory",
+        "temporal_precision_head_pair_flow",
     } or cfg.MODEL.METHOD.startswith("temporal_precision_head_seed"):
         print("using dccl method")
         acc = DCCL.train_target(cfg)
