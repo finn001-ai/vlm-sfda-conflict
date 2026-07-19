@@ -123,6 +123,7 @@ if __name__ == "__main__":
         "temporal_precision_head",
         "temporal_precision_head_all",
         "temporal_precision_head_ema",
+        "temporal_precision_head_residual",
     } or cfg.MODEL.METHOD.startswith("temporal_precision_head_seed"):
         print("using dccl method")
         acc = DCCL.train_target(cfg)

@@ -1,0 +1,107 @@
+{
+  "decision": "no_oracle_headroom",
+  "warning": "peak_accuracy uses target labels and is diagnostic only",
+  "duet_mean": 84.7167,
+  "final_mean": 84.5033,
+  "oracle_peak_mean": 84.5517,
+  "oracle_peak_minus_final": 0.0483,
+  "next_method": "move to the source-anchored zero-initialized residual classifier",
+  "tasks": [
+    {
+      "task": "AC",
+      "final_accuracy": 73.97,
+      "oracle_peak_accuracy": 73.97,
+      "peak_cycle": "4/4",
+      "peak_iter": "276/276",
+      "peak_minus_final": 0.0
+    },
+    {
+      "task": "AP",
+      "final_accuracy": 90.65,
+      "oracle_peak_accuracy": 90.7,
+      "peak_cycle": "4/4",
+      "peak_iter": "140/280",
+      "peak_minus_final": 0.05
+    },
+    {
+      "task": "AR",
+      "final_accuracy": 90.89,
+      "oracle_peak_accuracy": 91.0,
+      "peak_cycle": "4/4",
+      "peak_iter": "207/276",
+      "peak_minus_final": 0.11
+    },
+    {
+      "task": "CA",
+      "final_accuracy": 82.98,
+      "oracle_peak_accuracy": 83.11,
+      "peak_cycle": "4/4",
+      "peak_iter": "76/152",
+      "peak_minus_final": 0.13
+    },
+    {
+      "task": "CP",
+      "final_accuracy": 90.67,
+      "oracle_peak_accuracy": 90.72,
+      "peak_cycle": "4/4",
+      "peak_iter": "210/280",
+      "peak_minus_final": 0.05
+    },
+    {
+      "task": "CR",
+      "final_accuracy": 90.77,
+      "oracle_peak_accuracy": 90.77,
+      "peak_cycle": "4/4",
+      "peak_iter": "276/276",
+      "peak_minus_final": 0.0
+    },
+    {
+      "task": "PA",
+      "final_accuracy": 82.24,
+      "oracle_peak_accuracy": 82.32,
+      "peak_cycle": "4/4",
+      "peak_iter": "38/152",
+      "peak_minus_final": 0.08
+    },
+    {
+      "task": "PC",
+      "final_accuracy": 74.04,
+      "oracle_peak_accuracy": 74.04,
+      "peak_cycle": "4/4",
+      "peak_iter": "276/276",
+      "peak_minus_final": 0.0
+    },
+    {
+      "task": "PR",
+      "final_accuracy": 90.84,
+      "oracle_peak_accuracy": 90.84,
+      "peak_cycle": "4/4",
+      "peak_iter": "276/276",
+      "peak_minus_final": 0.0
+    },
+    {
+      "task": "RA",
+      "final_accuracy": 82.69,
+      "oracle_peak_accuracy": 82.69,
+      "peak_cycle": "4/4",
+      "peak_iter": "152/152",
+      "peak_minus_final": 0.0
+    },
+    {
+      "task": "RC",
+      "final_accuracy": 73.56,
+      "oracle_peak_accuracy": 73.65,
+      "peak_cycle": "4/4",
+      "peak_iter": "138/276",
+      "peak_minus_final": 0.09
+    },
+    {
+      "task": "RP",
+      "final_accuracy": 90.74,
+      "oracle_peak_accuracy": 90.81,
+      "peak_cycle": "4/4",
+      "peak_iter": "210/280",
+      "peak_minus_final": 0.07
+    }
+  ]
+}

@@ -166,3 +166,23 @@ oracle peak mean > 84.7167 while final mean fails:
     develop a label-free cycle selector using prediction stability and entropy
     do not report oracle peak as the main paper result
 ```
+
+## Oracle Peak Diagnostic Result
+
+| Metric | Value | Delta vs DUET |
+|---|---:|---:|
+| final mean | 84.5033 | -0.2133 |
+| oracle peak mean | 84.5517 | -0.1650 |
+| oracle peak minus final | +0.0483 | - |
+
+Only 7/12 tasks have a peak above the final checkpoint, and the largest
+per-task gap is 0.13 on C->A. All oracle peaks occur within cycle 4. The
+available headroom is too small to explain the DUET gap.
+
+Conclusion:
+
+```text
+decision = no_oracle_headroom
+do not develop an unlabeled cycle selector for this EMA path
+move to the source-anchored bounded residual classifier in Stage16
+```

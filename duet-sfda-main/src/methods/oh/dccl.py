@@ -36,6 +36,7 @@ from src.utils.conflict_diffusion import (
     update_temporal_resolution,
 )
 from src.utils.model_ema import update_model_ema
+from src.utils.target_head import bounded_residual_logits
 # from src.utils import loss, active_prompt, IID_losses
 # from proposed_method import *
 from torch.nn.functional import normalize
@@ -57,7 +58,9 @@ def lr_scheduler(cfg, optimizer, iter_num, max_iter, gamma=10, power=0.75):
     decay = (1 + gamma * iter_num / max_iter) ** (-power)
     for param_group in optimizer.param_groups:
         param_group['lr'] = param_group['lr0'] * decay
-        param_group['weight_decay'] = cfg.OPTIM.WD
+        param_group['weight_decay'] = (
+            cfg.OPTIM.WD * param_group.get('weight_decay_scale', 1.0)
+        )
         param_group['momentum'] = cfg.OPTIM.MOMENTUM
         param_group['nesterov'] = cfg.OPTIM.NESTEROV
     return optimizer
@@ -68,7 +71,9 @@ def cosine_scheduler(cfg, optimizer, iter_num, max_iter, lr_min=1e-6):
         lr_max = param_group['lr0']  # Initial learning rate
         lr = lr_min + 0.5 * (lr_max - lr_min) * (1 + np.cos(np.pi * iter_num / max_iter))
         param_group['lr'] = lr
-        param_group['weight_decay'] = cfg.OPTIM.WD
+        param_group['weight_decay'] = (
+            cfg.OPTIM.WD * param_group.get('weight_decay_scale', 1.0)
+        )
         param_group['momentum'] = cfg.OPTIM.MOMENTUM
         param_group['nesterov'] = cfg.OPTIM.NESTEROV
     return optimizer
@@ -265,6 +270,44 @@ def apply_target_prototype_logits(cfg, features, logits, proto_state):
     return logits + float(cfg.DCCL.PROTO_MIX) * proto_delta.to(logits.dtype)
 
 
+class SourceAnchoredResidualClassifier(nn.Module):
+    def __init__(self, cfg, source_head):
+        super().__init__()
+        self.type = source_head.type
+        self.max_gate = float(cfg.DCCL.TARGET_RESIDUAL_MAX_GATE)
+        self.epsilon = float(cfg.DCCL.EPSILON)
+        self.residual = network.feat_classifier(
+            type=source_head.type,
+            class_num=cfg.class_num,
+            bottleneck_dim=cfg.bottleneck,
+        ).cuda()
+        residual_device = next(self.residual.parameters()).device
+        self.gate_logit = nn.Parameter(torch.tensor(
+            float(cfg.DCCL.TARGET_RESIDUAL_GATE_INIT),
+            device=residual_device,
+        ))
+        with torch.no_grad():
+            if hasattr(self.residual.fc, "weight_g"):
+                self.residual.fc.weight_g.zero_()
+            else:
+                self.residual.fc.weight.zero_()
+            if self.residual.fc.bias is not None:
+                self.residual.fc.bias.zero_()
+
+    def effective_gate(self):
+        return self.max_gate * torch.sigmoid(self.gate_logit.detach())
+
+    def forward(self, features, source_logits):
+        residual_logits = self.residual(features)
+        return bounded_residual_logits(
+            source_logits,
+            residual_logits,
+            self.gate_logit,
+            self.max_gate,
+            self.epsilon,
+        )
+
+
 def apply_target_head_logits(cfg, features, source_logits, target_head, curr_cycle):
     if (
         not cfg.DCCL.TARGET_HEAD_ADAPT
@@ -272,6 +315,10 @@ def apply_target_head_logits(cfg, features, source_logits, target_head, curr_cyc
         or curr_cycle < cfg.DCCL.TARGET_HEAD_START_CYCLE
     ):
         return source_logits
+    if cfg.DCCL.TARGET_HEAD_VARIANT == "residual":
+        return target_head(features, source_logits)
+    if cfg.DCCL.TARGET_HEAD_VARIANT != "blend":
+        raise ValueError("DCCL.TARGET_HEAD_VARIANT must be blend or residual")
     if not 0.0 <= cfg.DCCL.TARGET_HEAD_MIX <= 1.0:
         raise ValueError("DCCL.TARGET_HEAD_MIX must be in [0, 1]")
     target_logits = target_head(features)
@@ -280,6 +327,10 @@ def apply_target_head_logits(cfg, features, source_logits, target_head, curr_cyc
 
 
 def build_target_classifier_head(cfg, source_head):
+    if cfg.DCCL.TARGET_HEAD_VARIANT == "residual":
+        return SourceAnchoredResidualClassifier(cfg, source_head)
+    if cfg.DCCL.TARGET_HEAD_VARIANT != "blend":
+        raise ValueError("DCCL.TARGET_HEAD_VARIANT must be blend or residual")
     target_head = network.feat_classifier(
         type=source_head.type,
         class_num=cfg.class_num,
@@ -290,6 +341,8 @@ def build_target_classifier_head(cfg, source_head):
 
 
 def build_target_head_ema(cfg, target_head):
+    if cfg.DCCL.TARGET_HEAD_VARIANT != "blend":
+        raise ValueError("Target-head EMA currently supports only the blend variant")
     ema_head = build_target_classifier_head(cfg, target_head)
     ema_head.eval()
     for parameter in ema_head.parameters():
@@ -731,11 +784,17 @@ def train_target(cfg):
         target_head.train()
         for k, v in target_head.named_parameters():
             v.requires_grad = True
-            param_group += [
-                {'params': v, 'lr': cfg.OPTIM.LR * cfg.DCCL.TARGET_HEAD_LR_MULT}
-            ]
+            group = {
+                'params': v,
+                'lr': cfg.OPTIM.LR * cfg.DCCL.TARGET_HEAD_LR_MULT,
+            }
+            if k == "gate_logit":
+                group['weight_decay_scale'] = 0.0
+            param_group.append(group)
         logging.info(
-            "DCCL target head enabled: mix={:.3f}; start_cycle={}; lr_mult={:.3f}".format(
+            "DCCL target head enabled: variant={}; mix={:.3f}; "
+            "start_cycle={}; lr_mult={:.3f}".format(
+                cfg.DCCL.TARGET_HEAD_VARIANT,
                 float(cfg.DCCL.TARGET_HEAD_MIX),
                 int(cfg.DCCL.TARGET_HEAD_START_CYCLE),
                 float(cfg.DCCL.TARGET_HEAD_LR_MULT),
@@ -1212,6 +1271,11 @@ def train_target(cfg):
                                'Accuracy = {:.2f}%; classifier_loss = {}').format(cfg.name, iter_num, max_iter,
                                                                                   curr_cycle + 1, cfg.ACTIVE.CYCLE,
                                                                                   acc_s_te, classifier_loss)
+
+                if isinstance(target_head, SourceAnchoredResidualClassifier):
+                    log_str += "; residual_gate={:.6f}".format(
+                        float(target_head.effective_gate().item())
+                    )
 
                 # cfg.out_file.write(log_str + '\n')
                 # cfg.out_file.flush()

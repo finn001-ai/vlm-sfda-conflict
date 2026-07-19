@@ -76,11 +76,14 @@ def main() -> None:
         "proto_min_per_class": re.compile(r"^\s*PROTO_MIN_PER_CLASS:\s*([^\s]+)", re.MULTILINE),
         "proto_momentum": re.compile(r"^\s*PROTO_MOMENTUM:\s*([^\s]+)", re.MULTILINE),
         "target_head_adapt": re.compile(r"^\s*TARGET_HEAD_ADAPT:\s*([^\s]+)", re.MULTILINE),
+        "target_head_variant": re.compile(r"^\s*TARGET_HEAD_VARIANT:\s*([^\s]+)", re.MULTILINE),
         "target_head_mix": re.compile(r"^\s*TARGET_HEAD_MIX:\s*([^\s]+)", re.MULTILINE),
         "target_head_start_cycle": re.compile(r"^\s*TARGET_HEAD_START_CYCLE:\s*([^\s]+)", re.MULTILINE),
         "target_head_lr_mult": re.compile(r"^\s*TARGET_HEAD_LR_MULT:\s*([^\s]+)", re.MULTILINE),
         "target_head_ema": re.compile(r"^\s*TARGET_HEAD_EMA:\s*([^\s]+)", re.MULTILINE),
         "target_head_ema_momentum": re.compile(r"^\s*TARGET_HEAD_EMA_MOMENTUM:\s*([^\s]+)", re.MULTILINE),
+        "target_residual_max_gate": re.compile(r"^\s*TARGET_RESIDUAL_MAX_GATE:\s*([^\s]+)", re.MULTILINE),
+        "target_residual_gate_init": re.compile(r"^\s*TARGET_RESIDUAL_GATE_INIT:\s*([^\s]+)", re.MULTILINE),
         "tau_low": re.compile(r"^\s*TAU_LOW:\s*([^\s]+)", re.MULTILINE),
         "promote_k": re.compile(r"^\s*PROMOTE_K:\s*([^\s]+)", re.MULTILINE),
         "accd_enabled": re.compile(r"^\s*ENABLED:\s*([^\s]+)", re.MULTILINE),
@@ -94,7 +97,7 @@ def main() -> None:
         "accd_resolution_target": re.compile(r"^\s*RESOLUTION_TARGET:\s*([^\s]+)", re.MULTILINE),
         "accd_resolution_action": re.compile(r"^\s*RESOLUTION_ACTION:\s*([^\s]+)", re.MULTILINE),
     }
-    print("method,task,cycle,iter,accuracy,peak_accuracy,peak_cycle,peak_iter,peak_minus_final,cand_par,cand_start_cycle,cand_tau,cand_weight,kl_mode,kl_candidate,calib_mode,calib_power,calib_auto_lambda,topo_graph_k,topo_alpha,topo_steps,topo_anchor_ratio,topo_target_mix,graph_teacher_fusion,gtf_apply_to,gtf_strength,gtr_par,gtr_stable_cycles,gtr_memory,gtr_min_graph_conf,gtr_min_disagreement,temporal_diag,pl_expand,pl_topk_per_class,pl_min_conf,pl_memory,pl_stable_cycles,pl_stable_memory,pl_memory_warmup_cycles,pl_memory_min_conf,pl_class_balance,pl_balance_coverage,pl_balance_min_per_class,proto_adapt,proto_mix,proto_temperature,proto_min_per_class,proto_momentum,target_head_adapt,target_head_mix,target_head_start_cycle,target_head_lr_mult,target_head_ema,target_head_ema_momentum,tau_low,promote_k,accd_enabled,accd_graph_k,accd_anchor_ratio,accd_anchor_memory,accd_candidate_mass,accd_candidate_margin,accd_stable_cycles,accd_resolution_memory,accd_resolution_target,accd_resolution_action,log")
+    print("method,task,cycle,iter,accuracy,peak_accuracy,peak_cycle,peak_iter,peak_minus_final,cand_par,cand_start_cycle,cand_tau,cand_weight,kl_mode,kl_candidate,calib_mode,calib_power,calib_auto_lambda,topo_graph_k,topo_alpha,topo_steps,topo_anchor_ratio,topo_target_mix,graph_teacher_fusion,gtf_apply_to,gtf_strength,gtr_par,gtr_stable_cycles,gtr_memory,gtr_min_graph_conf,gtr_min_disagreement,temporal_diag,pl_expand,pl_topk_per_class,pl_min_conf,pl_memory,pl_stable_cycles,pl_stable_memory,pl_memory_warmup_cycles,pl_memory_min_conf,pl_class_balance,pl_balance_coverage,pl_balance_min_per_class,proto_adapt,proto_mix,proto_temperature,proto_min_per_class,proto_momentum,target_head_adapt,target_head_variant,target_head_mix,target_head_start_cycle,target_head_lr_mult,target_head_ema,target_head_ema_momentum,target_residual_max_gate,target_residual_gate_init,residual_gate_final,tau_low,promote_k,accd_enabled,accd_graph_k,accd_anchor_ratio,accd_anchor_memory,accd_candidate_mass,accd_candidate_margin,accd_stable_cycles,accd_resolution_memory,accd_resolution_target,accd_resolution_action,log")
     for path in paths:
         text = path.read_text(errors="ignore")
         final, peak = select_final_and_peak(text)
@@ -109,6 +112,8 @@ def main() -> None:
         for key, cfg_pattern in cfg_patterns.items():
             match = cfg_pattern.search(text)
             cfg_values[key] = match.group(1) if match else ""
+        residual_gate_matches = re.findall(r"residual_gate=([0-9.]+)", text)
+        residual_gate_final = residual_gate_matches[-1] if residual_gate_matches else ""
         print(
             f"{method},{task},{cycle}/{max_cycle},{iter_num}/{max_iter},{acc},"
             f"{peak_acc},{peak_cycle}/{peak_max_cycle},"
@@ -135,9 +140,12 @@ def main() -> None:
             f"{cfg_values['proto_adapt']},{cfg_values['proto_mix']},"
             f"{cfg_values['proto_temperature']},{cfg_values['proto_min_per_class']},"
             f"{cfg_values['proto_momentum']},"
-            f"{cfg_values['target_head_adapt']},{cfg_values['target_head_mix']},"
+            f"{cfg_values['target_head_adapt']},{cfg_values['target_head_variant']},"
+            f"{cfg_values['target_head_mix']},"
             f"{cfg_values['target_head_start_cycle']},{cfg_values['target_head_lr_mult']},"
             f"{cfg_values['target_head_ema']},{cfg_values['target_head_ema_momentum']},"
+            f"{cfg_values['target_residual_max_gate']},"
+            f"{cfg_values['target_residual_gate_init']},{residual_gate_final},"
             f"{cfg_values['tau_low']},{cfg_values['promote_k']},"
             f"{cfg_values['accd_enabled']},{cfg_values['accd_graph_k']},{cfg_values['accd_anchor_ratio']},"
             f"{cfg_values['accd_anchor_memory']},"
