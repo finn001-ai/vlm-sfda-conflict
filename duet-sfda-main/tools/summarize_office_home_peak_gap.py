@@ -17,26 +17,44 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--csv", required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument(
+        "--peak-is-primary",
+        action="store_true",
+        help="Treat target-label-selected peak accuracy as the primary protocol.",
+    )
+    parser.add_argument(
+        "--next-on-no-headroom",
+        default="move to the source-anchored zero-initialized residual classifier",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     rows = list(csv.DictReader(Path(args.csv).open()))
-    by_task = {row["task"]: row for row in rows}
-    missing = [task for task in TASKS if task not in by_task]
-    if missing:
-        raise ValueError(f"Missing tasks: {missing}")
+    by_method = {}
+    for row in rows:
+        by_method.setdefault(row["method"], {})[row["task"]] = row
+    for method, task_rows in by_method.items():
+        missing = [task for task in TASKS if task not in task_rows]
+        if missing:
+            raise ValueError(f"Method {method} is missing tasks: {missing}")
 
     final_values = [
-        float(by_task[task].get("final_accuracy") or by_task[task]["accuracy"])
-        for task in TASKS
+        float(row.get("final_accuracy") or row["accuracy"])
+        for row in rows
     ]
-    peak_values = [float(by_task[task]["peak_accuracy"]) for task in TASKS]
+    peak_values = [float(row["peak_accuracy"]) for row in rows]
     final_mean = sum(final_values) / len(final_values)
     peak_mean = sum(peak_values) / len(peak_values)
 
-    if final_mean > DUET_MEAN:
+    if args.peak_is_primary and peak_mean > DUET_MEAN:
+        decision = "peak_pass"
+        next_method = "validate peak-selected stability across seeds"
+    elif args.peak_is_primary:
+        decision = "no_oracle_headroom"
+        next_method = args.next_on_no_headroom
+    elif final_mean > DUET_MEAN:
         decision = "final_pass"
         next_method = "validate stability without oracle checkpoint selection"
     elif peak_mean > DUET_MEAN:
@@ -49,30 +67,49 @@ def main() -> None:
     summary = {
         "decision": decision,
         "warning": "peak_accuracy uses target labels and is diagnostic only",
+        "primary_protocol": "peak" if args.peak_is_primary else "final",
         "duet_mean": DUET_MEAN,
         "final_mean": round(final_mean, 4),
         "oracle_peak_mean": round(peak_mean, 4),
         "oracle_peak_minus_final": round(peak_mean - final_mean, 4),
         "next_method": next_method,
+        "methods": [
+            {
+                "method": method,
+                "final_mean": round(
+                    sum(
+                        float(task_rows[task].get("final_accuracy") or task_rows[task]["accuracy"])
+                        for task in TASKS
+                    ) / len(TASKS),
+                    4,
+                ),
+                "oracle_peak_mean": round(
+                    sum(float(task_rows[task]["peak_accuracy"]) for task in TASKS)
+                    / len(TASKS),
+                    4,
+                ),
+            }
+            for method, task_rows in sorted(by_method.items())
+        ],
         "tasks": [
             {
-                "task": task,
+                "method": row["method"],
+                "task": row["task"],
                 "final_accuracy": float(
-                    by_task[task].get("final_accuracy") or by_task[task]["accuracy"]
+                    row.get("final_accuracy") or row["accuracy"]
                 ),
-                "oracle_peak_accuracy": float(by_task[task]["peak_accuracy"]),
-                "peak_cycle": by_task[task]["peak_cycle"],
-                "peak_iter": by_task[task]["peak_iter"],
+                "oracle_peak_accuracy": float(row["peak_accuracy"]),
+                "peak_cycle": row["peak_cycle"],
+                "peak_iter": row["peak_iter"],
                 "peak_minus_final": round(
-                    float(by_task[task]["peak_accuracy"])
+                    float(row["peak_accuracy"])
                     - float(
-                        by_task[task].get("final_accuracy")
-                        or by_task[task]["accuracy"]
+                        row.get("final_accuracy") or row["accuracy"]
                     ),
                     4,
                 ),
             }
-            for task in TASKS
+            for row in rows
         ],
     }
     out_path = Path(args.out)

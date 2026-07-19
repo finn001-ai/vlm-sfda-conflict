@@ -31,4 +31,6 @@ python tools/summarize_office_home_seed_sweep.py \
 
 python tools/summarize_office_home_peak_gap.py \
   --csv output/uda/office-home/temporal_precision_head_residual_seed2022_accuracy.csv \
-  --out output/uda/office-home/temporal_precision_head_residual_seed2022_peak_summary.json
+  --out output/uda/office-home/temporal_precision_head_residual_seed2022_peak_summary.json \
+  --peak-is-primary \
+  --next-on-no-headroom 'move to dataset-level stable class-pair conflict-flow adaptation'

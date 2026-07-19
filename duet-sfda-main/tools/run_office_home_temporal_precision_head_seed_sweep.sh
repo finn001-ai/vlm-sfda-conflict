@@ -36,9 +36,11 @@ for seed in "${SEEDS[@]}"; do
 done
 
 python tools/extract_final_accuracy.py \
-  --glob 'output/uda/office-home/*/temporal_precision_head_seed*/*.txt' \
+  --glob 'output/uda/office-home/*/temporal_precision_head_seed[0-9][0-9][0-9][0-9]/*.txt' \
+  --selection peak \
   > output/uda/office-home/temporal_precision_head_seed_sweep_accuracy.csv
 
 python tools/summarize_office_home_seed_sweep.py \
   --csv output/uda/office-home/temporal_precision_head_seed_sweep_accuracy.csv \
-  --out output/uda/office-home/temporal_precision_head_seed_sweep_summary.json
+  --out output/uda/office-home/temporal_precision_head_seed_sweep_summary.json \
+  --max-seed-std 0.10

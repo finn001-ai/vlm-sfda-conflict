@@ -151,3 +151,10 @@ implementation complete
 local validation passed (21 tests)
 cloud result pending
 ```
+
+## Execution Status Update
+
+The cloud run was manually stopped because intermediate accuracy was
+insufficient. No complete 12-task result is available, so Stage16 cannot pass
+its gate and is paused. The project returns to Stage14 for a peak-selection
+re-evaluation before any additional residual-head work.

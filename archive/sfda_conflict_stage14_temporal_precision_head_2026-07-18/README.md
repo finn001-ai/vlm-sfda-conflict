@@ -279,3 +279,50 @@ Next direction should not be another simple loss or fixed graph-rule variant.
 The stability failure suggests sensitivity in target-head adaptation itself:
 future work should diagnose and regularize the target head's update path rather
 than changing the conflict sample selector.
+
+## Peak-Selection Re-evaluation
+
+The original Stage14 table used the final logged accuracy. The evaluation
+protocol was later changed by explicit project decision to use the highest
+logged target accuracy for each task. Stage14 must therefore be re-extracted
+under that same protocol before deciding whether its target head needs another
+architectural change.
+
+No retraining is required if the original 36 log files remain available:
+
+```bash
+cd /openbayes/home/vlm-sfda-conflict
+git pull
+cd duet-sfda-main
+bash tools/reextract_office_home_temporal_precision_head_peak.sh
+```
+
+Bring back:
+
+```text
+output/uda/office-home/temporal_precision_head_stage14_peak_accuracy.csv
+output/uda/office-home/temporal_precision_head_stage14_peak_summary.json
+output/uda/office-home/temporal_precision_head_stage14_final_peak_gap.json
+```
+
+The Stage14 log glob is restricted to exact seed directories and excludes EMA
+and residual-head runs.
+
+Decision:
+
+```text
+all three peak-selected seed means > 84.7167 and std <= 0.10:
+    retain Stage14 as the main method and optimize only paper-ready robustness
+
+peak-selected mean improves but stability still fails:
+    optimize Stage14 with cycle-snapshot weight averaging around its peak region
+    validate using the same peak protocol
+
+oracle peak still fails to exceed DUET:
+    Stage14 lacks sufficient decision-boundary capacity
+    proceed to dataset-level stable class-pair conflict-flow adaptation
+```
+
+Protocol caveat: peak selection uses target-domain labels and must be described
+as a best-checkpoint/oracle evaluation protocol rather than label-free model
+selection.
