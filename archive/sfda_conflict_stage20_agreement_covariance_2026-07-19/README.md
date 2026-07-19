@@ -4,7 +4,7 @@ Date: 2026-07-19
 
 ## Re-evaluated Status
 
-Stage20 is implemented but paused before cloud execution. The earlier decision
+Stage20 was implemented but paused before cloud execution. The earlier decision
 to close every learned pair-router variant was too broad after the project
 scope was clarified: graph information and a loss are allowed when their role
 is mechanistically justified; only prompt-only adjustment is excluded.
@@ -13,8 +13,11 @@ Stages 8-11 show that graph evidence is useful while direct teacher replacement
 is not. Stage19 also never isolated its pair router from generic CE, ordinary
 KL, and consistency gradients. Stage19-G now tests that missing attribution by
 training the bounded pair router only through stable graph-temporal evidence.
-Run this Stage20 preflight only if Stage19-G activates correctly but fails its
-accuracy gate. The covariance implementation and fixed gate remain unchanged.
+Stage19-G subsequently activated correctly on all three preflight tasks but
+failed its accuracy gate: its AC/PA/RA peak mean was `79.6933`, versus the
+matched Stage14 mean `80.0733`, and its projected complete mean was `84.6700`.
+Stage20 is therefore unblocked. The covariance implementation and fixed gate
+remain unchanged.
 
 ## Starting Evidence
 
@@ -170,6 +173,7 @@ assumption.
 
 ```text
 implementation complete
-local validation passed (64 tests)
-cloud execution deferred behind Stage19-G
+local validation passed (71 tests)
+Stage19-G prerequisite failed validly
+cloud covariance preflight is the next experiment
 ```

@@ -433,5 +433,48 @@ Stage19-G local status:
 ```text
 implementation complete
 local validation passed (70 tests)
-cloud preflight pending
+cloud preflight complete: valid mechanism failure
 ```
+
+## Stage19-G Preflight Result
+
+The `gtr_only` mechanism activated correctly on all three tasks. This rules out
+implementation inactivity as the reason for failure:
+
+| Task | Peak | Stage19 | Matched Stage14 | Rank | GTR active | Router norm |
+|---|---:|---:|---:|---:|---:|---:|
+| AC | 73.61 | 73.77 | 73.59 | 12 | 151 | 0.035880 |
+| PA | 82.53 | 82.49 | 83.11 | 2 | 67 | 0.015814 |
+| RA | 82.94 | 83.07 | 83.52 | 1 | 63 | 0.003765 |
+
+Aggregate gate:
+
+```text
+decision = fail_gtr_preflight
+route diagnostics = pass (3/3)
+Stage19 subset mean = 79.7767
+matched online Stage14 subset mean = 80.0733
+Stage19-G subset mean = 79.6933
+delta vs matched Stage14 = -0.3800
+projected complete mean = 84.6700
+projected delta vs required 84.7225 = -0.0525
+```
+
+AC remained essentially at its matched baseline (`+0.02`), while PA and RA
+each lost `0.58`. Isolating the router from generic losses therefore did not
+repair the weak target-Art tasks. The original joint Stage19 subset mean was
+also `0.0834` higher than Stage19-G, so generic-gradient interference was not
+the missing causal explanation.
+
+Conclusion:
+
+```text
+do not run the complete 12-task Stage19-G script
+close gtr_only learned pair-feature routing without parameter sweeps
+retain graph-temporal residual training inside the Stage14 baseline
+run the fixed Stage20 agreement-covariance preflight next
+```
+
+This failure does not imply that graph information or losses are generally
+invalid. It specifically rejects using stable GTR evidence as the sole trainer
+of the current aggregate pair-direction router.

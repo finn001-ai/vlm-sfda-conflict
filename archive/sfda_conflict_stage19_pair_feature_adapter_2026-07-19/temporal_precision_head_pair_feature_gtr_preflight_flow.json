@@ -1,0 +1,209 @@
+{
+  "decision": "pass_flow_diagnostics",
+  "num_logs": 3,
+  "active_tasks": 3,
+  "fallback_tasks": 0,
+  "tasks": [
+    {
+      "method": "temporal_precision_head_seed2022_pair_feature_gtr_preflight",
+      "task": "AC",
+      "activation_cycle": 2,
+      "final_active_rank": 12,
+      "frozen_pairs": [
+        [
+          12,
+          34
+        ],
+        [
+          19,
+          22
+        ],
+        [
+          18,
+          8
+        ],
+        [
+          34,
+          32
+        ],
+        [
+          15,
+          31
+        ],
+        [
+          63,
+          6
+        ],
+        [
+          56,
+          64
+        ],
+        [
+          23,
+          2
+        ],
+        [
+          11,
+          23
+        ],
+        [
+          55,
+          6
+        ],
+        [
+          48,
+          20
+        ],
+        [
+          43,
+          42
+        ]
+      ],
+      "pair_feature_router_norm": 0.03588,
+      "min_active_rank": 1,
+      "pair_feature_effective": true,
+      "mechanism_active": true,
+      "mechanism_valid": true,
+      "cycles": [
+        {
+          "cycle": 1,
+          "fixed_conflicts": 2421,
+          "candidate_mass": 1336.85,
+          "active_rank": 0,
+          "frozen": false,
+          "cumulative_flow_mass": 1336.85
+        },
+        {
+          "cycle": 2,
+          "fixed_conflicts": 2421,
+          "candidate_mass": 1287.65,
+          "active_rank": 12,
+          "frozen": true,
+          "cumulative_flow_mass": 2624.5
+        },
+        {
+          "cycle": 3,
+          "fixed_conflicts": 2421,
+          "candidate_mass": 1409.38,
+          "active_rank": 12,
+          "frozen": true,
+          "cumulative_flow_mass": 2624.5
+        },
+        {
+          "cycle": 4,
+          "fixed_conflicts": 2421,
+          "candidate_mass": 1472.62,
+          "active_rank": 12,
+          "frozen": true,
+          "cumulative_flow_mass": 2624.5
+        }
+      ]
+    },
+    {
+      "method": "temporal_precision_head_seed2022_pair_feature_gtr_preflight",
+      "task": "PA",
+      "activation_cycle": 2,
+      "final_active_rank": 2,
+      "frozen_pairs": [
+        [
+          13,
+          10
+        ],
+        [
+          5,
+          55
+        ]
+      ],
+      "pair_feature_router_norm": 0.015814,
+      "min_active_rank": 1,
+      "pair_feature_effective": true,
+      "mechanism_active": true,
+      "mechanism_valid": true,
+      "cycles": [
+        {
+          "cycle": 1,
+          "fixed_conflicts": 1224,
+          "candidate_mass": 738.82,
+          "active_rank": 0,
+          "frozen": false,
+          "cumulative_flow_mass": 738.82
+        },
+        {
+          "cycle": 2,
+          "fixed_conflicts": 1224,
+          "candidate_mass": 754.87,
+          "active_rank": 2,
+          "frozen": true,
+          "cumulative_flow_mass": 1493.69
+        },
+        {
+          "cycle": 3,
+          "fixed_conflicts": 1224,
+          "candidate_mass": 807.55,
+          "active_rank": 2,
+          "frozen": true,
+          "cumulative_flow_mass": 1493.69
+        },
+        {
+          "cycle": 4,
+          "fixed_conflicts": 1224,
+          "candidate_mass": 855.42,
+          "active_rank": 2,
+          "frozen": true,
+          "cumulative_flow_mass": 1493.69
+        }
+      ]
+    },
+    {
+      "method": "temporal_precision_head_seed2022_pair_feature_gtr_preflight",
+      "task": "RA",
+      "activation_cycle": 2,
+      "final_active_rank": 1,
+      "frozen_pairs": [
+        [
+          13,
+          10
+        ]
+      ],
+      "pair_feature_router_norm": 0.003765,
+      "min_active_rank": 1,
+      "pair_feature_effective": true,
+      "mechanism_active": true,
+      "mechanism_valid": true,
+      "cycles": [
+        {
+          "cycle": 1,
+          "fixed_conflicts": 962,
+          "candidate_mass": 603.61,
+          "active_rank": 0,
+          "frozen": false,
+          "cumulative_flow_mass": 603.61
+        },
+        {
+          "cycle": 2,
+          "fixed_conflicts": 962,
+          "candidate_mass": 592.5,
+          "active_rank": 1,
+          "frozen": true,
+          "cumulative_flow_mass": 1196.11
+        },
+        {
+          "cycle": 3,
+          "fixed_conflicts": 962,
+          "candidate_mass": 630.44,
+          "active_rank": 1,
+          "frozen": true,
+          "cumulative_flow_mass": 1196.11
+        },
+        {
+          "cycle": 4,
+          "fixed_conflicts": 962,
+          "candidate_mass": 659.01,
+          "active_rank": 1,
+          "frozen": true,
+          "cumulative_flow_mass": 1196.11
+        }
+      ]
+    }
+  ]
+}

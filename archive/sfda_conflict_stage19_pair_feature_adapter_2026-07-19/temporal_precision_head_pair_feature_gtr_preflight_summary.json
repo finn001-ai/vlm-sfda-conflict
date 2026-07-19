@@ -1,0 +1,87 @@
+{
+  "decision": "fail_gtr_preflight",
+  "selection": "peak",
+  "gate": "valid gtr_only route on AC/PA/RA; subset mean > matched online; projected full mean > 84.7225; no task loses >0.30",
+  "stage19_subset_mean": 79.7767,
+  "matched_online_subset_mean": 80.0733,
+  "gtr_subset_mean": 79.6933,
+  "projected_full_mean_diagnostic": 84.67,
+  "projected_delta_vs_required": -0.0525,
+  "warning": "projected_full_mean reuses nine archived Stage19 rows and is not a final 12-task result",
+  "checks": {
+    "gtr_route_passes": true,
+    "beats_matched_subset": false,
+    "projected_full_mean_passes": false,
+    "task_regression_passes": false
+  },
+  "route": {
+    "decision": "pass_gtr_route",
+    "num_rows": 3,
+    "valid_rows": 3,
+    "tasks": [
+      {
+        "method": "temporal_precision_head_seed2022_pair_feature_gtr_preflight",
+        "task": "AC",
+        "gradient_mode": "gtr_only",
+        "active_rank": 12,
+        "router_norm": 0.03588,
+        "gtr_active": 151,
+        "gtr_loss": 0.326125,
+        "gtr_batches": 62,
+        "route_valid": true
+      },
+      {
+        "method": "temporal_precision_head_seed2022_pair_feature_gtr_preflight",
+        "task": "PA",
+        "gradient_mode": "gtr_only",
+        "active_rank": 2,
+        "router_norm": 0.015814,
+        "gtr_active": 67,
+        "gtr_loss": 0.293416,
+        "gtr_batches": 33,
+        "route_valid": true
+      },
+      {
+        "method": "temporal_precision_head_seed2022_pair_feature_gtr_preflight",
+        "task": "RA",
+        "gradient_mode": "gtr_only",
+        "active_rank": 1,
+        "router_norm": 0.003765,
+        "gtr_active": 63,
+        "gtr_loss": 0.294414,
+        "gtr_batches": 33,
+        "route_valid": true
+      }
+    ]
+  },
+  "next": "archive the valid failure and run the deferred Stage20 covariance preflight",
+  "tasks": [
+    {
+      "task": "AC",
+      "accuracy": 73.61,
+      "stage19": 73.77,
+      "delta_vs_stage19": -0.16,
+      "matched_online": 73.59,
+      "delta_vs_matched_online": 0.02,
+      "route_valid": true
+    },
+    {
+      "task": "PA",
+      "accuracy": 82.53,
+      "stage19": 82.49,
+      "delta_vs_stage19": 0.04,
+      "matched_online": 83.11,
+      "delta_vs_matched_online": -0.58,
+      "route_valid": true
+    },
+    {
+      "task": "RA",
+      "accuracy": 82.94,
+      "stage19": 83.07,
+      "delta_vs_stage19": -0.13,
+      "matched_online": 83.52,
+      "delta_vs_matched_online": -0.58,
+      "route_valid": true
+    }
+  ]
+}
