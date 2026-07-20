@@ -52,6 +52,10 @@ from src.utils.class_pair_feature_adapter import (
 )
 from src.utils.agreement_covariance_transport import AgreementCovarianceTransport
 from src.utils.agreement_whitened_transport import AgreementWhitenedTransport
+from src.utils.three_view_noise_em import (
+    three_view_class_conditional_em,
+    weighted_soft_kl as weighted_three_view_em_kl,
+)
 # from src.utils import loss, active_prompt, IID_losses
 # from proposed_method import *
 from torch.nn.functional import normalize
@@ -1050,6 +1054,33 @@ def train_target(cfg):
                 "DCCL.COV_TRANSPORT_MODE must be conditional or global_whitened"
             )
 
+    if cfg.DCCL.THREE_VIEW_EM:
+        if not cfg.DCCL.TARGET_HEAD_ADAPT or cfg.DCCL.TARGET_HEAD_VARIANT != "blend":
+            raise ValueError("Three-view EM requires the Stage14 blend target head")
+        if not cfg.DCCL.GRAPH_TEACHER_FUSION:
+            raise ValueError("Three-view EM requires graph teacher fusion diagnostics")
+        if cfg.DCCL.THREE_VIEW_EM_PAR <= 0:
+            raise ValueError("DCCL.THREE_VIEW_EM_PAR must be positive")
+        if cfg.DCCL.THREE_VIEW_EM_STEPS <= 0:
+            raise ValueError("DCCL.THREE_VIEW_EM_STEPS must be positive")
+        if cfg.DCCL.THREE_VIEW_EM_DIRICHLET <= 0:
+            raise ValueError("DCCL.THREE_VIEW_EM_DIRICHLET must be positive")
+        if cfg.DCCL.THREE_VIEW_EM_MIN_CLASS_ANCHORS <= 0:
+            raise ValueError(
+                "DCCL.THREE_VIEW_EM_MIN_CLASS_ANCHORS must be positive"
+            )
+        logging.info(
+            "DCCL three-view EM enabled: start_cycle={}; steps={}; "
+            "dirichlet={:.3f}; min_class_anchors={}; par={:.3f}; "
+            "gradient_scope=target_head_only".format(
+                int(cfg.DCCL.THREE_VIEW_EM_START_CYCLE),
+                int(cfg.DCCL.THREE_VIEW_EM_STEPS),
+                float(cfg.DCCL.THREE_VIEW_EM_DIRICHLET),
+                int(cfg.DCCL.THREE_VIEW_EM_MIN_CLASS_ANCHORS),
+                float(cfg.DCCL.THREE_VIEW_EM_PAR),
+            )
+        )
+
     optimizer = optim.SGD(param_group)
     optimizer = op_copy(optimizer)
 
@@ -1265,6 +1296,53 @@ def train_target(cfg):
             source_label,
             clip_label,
         )
+        three_view_em_target = torch.zeros_like(model_soft)
+        three_view_em_weight = torch.zeros(source_label.size(0), dtype=torch.float)
+        three_view_em_diagnostics = None
+        if (
+            cfg.DCCL.THREE_VIEW_EM
+            and curr_cycle >= cfg.DCCL.THREE_VIEW_EM_START_CYCLE
+        ):
+            if graph_teacher is None:
+                raise ValueError("Three-view EM requires a graph posterior")
+            em_anchor_mask = label_mask & (source_label == clip_label)
+            em_base_probability = (model_soft + clip_soft) / 2
+            (
+                three_view_em_target,
+                three_view_em_weight,
+                three_view_em_diagnostics,
+            ) = three_view_class_conditional_em(
+                model_soft,
+                clip_soft,
+                graph_teacher,
+                em_base_probability,
+                em_anchor_mask,
+                mem_label,
+                source_label != clip_label,
+                steps=int(cfg.DCCL.THREE_VIEW_EM_STEPS),
+                dirichlet=float(cfg.DCCL.THREE_VIEW_EM_DIRICHLET),
+                min_class_anchors=int(
+                    cfg.DCCL.THREE_VIEW_EM_MIN_CLASS_ANCHORS
+                ),
+                eps=float(cfg.DCCL.EPSILON),
+            )
+            logging.info(
+                "DCCL three-view EM consensus: cycle={}; anchors={}; "
+                "active_classes={}; conflicts={}; weighted_conflicts={}; "
+                "mean_conflict_weight={:.6f}; changed_top1={}; "
+                "source_diag={:.6f}; clip_diag={:.6f}; graph_diag={:.6f}".format(
+                    curr_cycle + 1,
+                    three_view_em_diagnostics["anchors"],
+                    three_view_em_diagnostics["active_classes"],
+                    three_view_em_diagnostics["conflicts"],
+                    three_view_em_diagnostics["weighted_conflicts"],
+                    three_view_em_diagnostics["mean_conflict_weight"],
+                    three_view_em_diagnostics["changed_top1"],
+                    three_view_em_diagnostics["source_transition_diagonal"],
+                    three_view_em_diagnostics["clip_transition_diagonal"],
+                    three_view_em_diagnostics["graph_transition_diagonal"],
+                )
+            )
         if cfg.DCCL.GRAPH_TEACHER_FUSION and cfg.DCCL.GTF_APPLY_TO in {"both", "clip"}:
             confi_dis = teacher_soft.detach()
         save_temporal_diagnostics(
@@ -1519,6 +1597,8 @@ def train_target(cfg):
         kl_weight = kl_weight.cuda()
         gtr_target = gtr_target.cuda()
         gtr_weight = gtr_weight.cuda()
+        three_view_em_target = three_view_em_target.cuda()
+        three_view_em_weight = three_view_em_weight.cuda()
         mem_label = hard_label.cuda()
         source_label = source_label.cuda()
         clip_label = clip_label.cuda()
@@ -1539,6 +1619,8 @@ def train_target(cfg):
             pair_feature_adapter.train()
         pair_feature_gtr_loss_sum = 0.0
         pair_feature_gtr_loss_batches = 0
+        three_view_em_loss_sum = 0.0
+        three_view_em_loss_batches = 0
         # netC.train()
         while iter_num < max_iter:
             try:
@@ -1652,6 +1734,30 @@ def train_target(cfg):
                             pair_gtr_loss.detach().item()
                         )
                         pair_feature_gtr_loss_batches += 1
+            if (
+                cfg.DCCL.THREE_VIEW_EM
+                and curr_cycle >= cfg.DCCL.THREE_VIEW_EM_START_CYCLE
+            ):
+                em_weight_batch = three_view_em_weight[tar_idx]
+                if em_weight_batch.sum() > 0:
+                    em_features = weak_feas.detach()
+                    em_source_logits = netC(em_features)
+                    em_logits = apply_target_head_logits(
+                        cfg,
+                        em_features,
+                        em_source_logits,
+                        target_head,
+                        curr_cycle,
+                    )
+                    em_loss = weighted_three_view_em_kl(
+                        em_logits,
+                        three_view_em_target[tar_idx],
+                        em_weight_batch,
+                        float(cfg.DCCL.EPSILON),
+                    )
+                    classifier_loss += em_loss * cfg.DCCL.THREE_VIEW_EM_PAR
+                    three_view_em_loss_sum += float(em_loss.detach().item())
+                    three_view_em_loss_batches += 1
 
             optimizer.zero_grad()
             classifier_loss.backward()
@@ -1791,6 +1897,28 @@ def train_target(cfg):
                             transport_diagnostics["eligible_coverage"],
                             transport_diagnostics["mean_relative_shift"],
                         )
+                if three_view_em_diagnostics is not None:
+                    log_str += (
+                        "; three_view_em_anchors={}; "
+                        "three_view_em_active_classes={}; "
+                        "three_view_em_weighted_conflicts={}; "
+                        "three_view_em_mean_weight={:.6f}; "
+                        "three_view_em_changed_top1={}; "
+                        "three_view_em_loss={:.6f}; "
+                        "three_view_em_batches={}"
+                    ).format(
+                        three_view_em_diagnostics["anchors"],
+                        three_view_em_diagnostics["active_classes"],
+                        three_view_em_diagnostics["weighted_conflicts"],
+                        three_view_em_diagnostics["mean_conflict_weight"],
+                        three_view_em_diagnostics["changed_top1"],
+                        (
+                            three_view_em_loss_sum / three_view_em_loss_batches
+                            if three_view_em_loss_batches > 0
+                            else 0.0
+                        ),
+                        three_view_em_loss_batches,
+                    )
 
                 # cfg.out_file.write(log_str + '\n')
                 # cfg.out_file.flush()
@@ -1798,6 +1926,8 @@ def train_target(cfg):
                 logging.info(log_str)
                 pair_feature_gtr_loss_sum = 0.0
                 pair_feature_gtr_loss_batches = 0
+                three_view_em_loss_sum = 0.0
+                three_view_em_loss_batches = 0
                 if captured_trajectory_snapshot and len(trajectory_snapshots) >= 2:
                     trajectory_acc, _ = cal_acc_trajectory_ensemble(
                         dset_loaders['test'],
