@@ -1,0 +1,53 @@
+{
+  "decision": "fail_three_view_em_preflight",
+  "selection": "peak",
+  "mean_accuracy": 80.01,
+  "matched_base_mean": 80.0733,
+  "delta_vs_matched_base": -0.0633,
+  "duet_subset_mean": 79.9667,
+  "delta_vs_duet_subset": 0.0433,
+  "checks": {
+    "peak_selection": true,
+    "mechanism_valid": true,
+    "config_valid": true,
+    "mean_beats_matched_base": false,
+    "mean_beats_duet_subset": true,
+    "no_task_collapse": true
+  },
+  "tasks": [
+    {
+      "task": "AC",
+      "accuracy": 73.61,
+      "matched_base": 73.59,
+      "delta_vs_matched_base": 0.02,
+      "duet": 73.6,
+      "delta_vs_duet": 0.01,
+      "mechanism_valid": true,
+      "config_valid": true,
+      "final_head_loss": 0.888955
+    },
+    {
+      "task": "PA",
+      "accuracy": 82.98,
+      "matched_base": 83.11,
+      "delta_vs_matched_base": -0.13,
+      "duet": 82.7,
+      "delta_vs_duet": 0.28,
+      "mechanism_valid": true,
+      "config_valid": true,
+      "final_head_loss": 0.940871
+    },
+    {
+      "task": "RA",
+      "accuracy": 83.44,
+      "matched_base": 83.52,
+      "delta_vs_matched_base": -0.08,
+      "duet": 83.6,
+      "delta_vs_duet": -0.16,
+      "mechanism_valid": true,
+      "config_valid": true,
+      "final_head_loss": 1.004171
+    }
+  ],
+  "next": "archive the valid failure and retain Stage14"
+}

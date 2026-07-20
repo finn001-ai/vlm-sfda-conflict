@@ -1,0 +1,4 @@
+"task","accuracy","matched_base","delta_vs_matched_base","duet","delta_vs_duet"
+"AC",73.61,73.59,0.02,73.6,0.01
+"PA",82.98,83.11,-0.13,82.7,0.28
+"RA",83.44,83.52,-0.08,83.6,-0.16

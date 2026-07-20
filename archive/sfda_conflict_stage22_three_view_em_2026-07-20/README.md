@@ -140,9 +140,42 @@ over seed means above Stage14's `84.7825`.
 ```text
 implementation complete
 local validation passed (91 tests)
-cloud preflight pending
+cloud preflight complete: fail
+do not run the 12-task seed-2022 gate
 ```
 
 No EM step, prior, anchor threshold, or loss-weight sweep is approved before
 the fixed preflight. If the mechanism is active but accuracy fails, archive it
 and retain Stage14 as the final method rather than starting another loss grid.
+
+## Cloud Preflight Result
+
+| Task | Stage22 peak | Matched Stage14 | Delta | DUET | Delta vs DUET |
+|---|---:|---:|---:|---:|---:|
+| AC | 73.61 | 73.59 | +0.02 | 73.60 | +0.01 |
+| PA | 82.98 | 83.11 | -0.13 | 82.70 | +0.28 |
+| RA | 83.44 | 83.52 | -0.08 | 83.60 | -0.16 |
+| **Mean** | **80.0100** | **80.0733** | **-0.0633** | **79.9667** | **+0.0433** |
+
+The implementation passed all mechanism checks on all three tasks, but failed
+the matched-performance gate. In cycle 2 the EM posterior changed `759`,
+`353`, and `315` top-1 predictions for AC, PA, and RA, respectively, while
+mean conflict weights were only `0.1091`, `0.0948`, and `0.1114`. Every
+source/CLIP conflict received nonzero weight. The branch therefore applied a
+broad correction to many uncertain conflicts rather than identifying a small
+reliable residual.
+
+Conclusion:
+
+```text
+decision = fail_three_view_em_preflight
+mechanism = valid but not beneficial
+do not run all 12 tasks
+do not tune THREE_VIEW_EM_PAR, steps, or Dirichlet strength
+retain Stage14
+```
+
+The next direction is label-free checkpoint risk estimation on the unchanged
+Stage14 trajectory. Stage14 already has an oracle peak above DUET; the missing
+piece is a defensible target-label-free rule that ranks its checkpoints. This
+is a model-selection problem, not another conflict-loss problem.
