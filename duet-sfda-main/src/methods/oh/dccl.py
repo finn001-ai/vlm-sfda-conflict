@@ -1296,8 +1296,8 @@ def train_target(cfg):
             source_label,
             clip_label,
         )
-        three_view_em_target = torch.zeros_like(model_soft)
-        three_view_em_weight = torch.zeros(source_label.size(0), dtype=torch.float)
+        three_view_em_target = None
+        three_view_em_weight = None
         three_view_em_diagnostics = None
         if (
             cfg.DCCL.THREE_VIEW_EM
@@ -1597,8 +1597,9 @@ def train_target(cfg):
         kl_weight = kl_weight.cuda()
         gtr_target = gtr_target.cuda()
         gtr_weight = gtr_weight.cuda()
-        three_view_em_target = three_view_em_target.cuda()
-        three_view_em_weight = three_view_em_weight.cuda()
+        if three_view_em_target is not None:
+            three_view_em_target = three_view_em_target.cuda()
+            three_view_em_weight = three_view_em_weight.cuda()
         mem_label = hard_label.cuda()
         source_label = source_label.cuda()
         clip_label = clip_label.cuda()
