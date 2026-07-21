@@ -2,7 +2,7 @@
 set -euo pipefail
 
 baseline_method="temporal_precision_head_seed2020_visda"
-method="temporal_precision_head_mix040_preflight_visda"
+method="temporal_precision_head_seed2020_visda_mix040_preflight"
 result_dir="output/uda/VISDA-C"
 
 for path in \
@@ -36,6 +36,12 @@ python image_target_of_oh_vs.py \
   MODEL.METHOD "$method" \
   SETTING.SEED 2020 SETTING.S 0 SETTING.T 1 \
   ACTIVE.CYCLE 4 DCCL.TARGET_HEAD_MIX 0.4
+
+candidate_logs=(output/uda/VISDA-C/TV/${method}/*.txt)
+if [ "${#candidate_logs[@]}" -ne 1 ] || ! grep -q "Task: TV" "${candidate_logs[0]}"; then
+  echo "Preflight training produced no VisDA-C accuracy records; refusing to summarize" >&2
+  exit 1
+fi
 
 python tools/extract_final_accuracy.py \
   --glob "output/uda/VISDA-C/TV/${method}/*.txt" \

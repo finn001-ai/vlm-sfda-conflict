@@ -135,3 +135,12 @@ If the preflight fails, do not run the full mix-0.4 job. The next distinct
 proposal is a temporal-precision variant with `PL_STABLE_CYCLES=3` and
 `GTR_STABLE_CYCLES=3`, evaluated with a later-cycle gate because its effect is
 not observable reliably in the first two cycles.
+
+### Dispatch fix
+
+The first preflight launcher used a method identifier outside the entrypoint's
+accepted DCCL prefix. It exited in zero seconds and produced an empty log; no
+training was performed and this is not an experimental result. The launcher
+now uses a `temporal_precision_head_seed...` identifier, the common dispatcher
+accepts all `temporal_precision_head_...` variants, and both launchers refuse
+to summarize a log without a `Task: TV` accuracy record.

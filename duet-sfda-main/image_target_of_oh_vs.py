@@ -129,7 +129,7 @@ if __name__ == "__main__":
         "temporal_precision_head_pair_feature",
         "temporal_precision_head_pair_feature_coverage",
         "temporal_precision_head_covariance_transport",
-    } or cfg.MODEL.METHOD.startswith("temporal_precision_head_seed"):
+    } or cfg.MODEL.METHOD.startswith("temporal_precision_head_"):
         print("using dccl method")
         acc = DCCL.train_target(cfg)
 
@@ -140,6 +140,9 @@ if __name__ == "__main__":
     elif cfg.MODEL.METHOD == "plum":
         print("using plum method")
         acc = PLUM.train_target(cfg)
+
+    else:
+        raise ValueError(f"Unknown adaptation method: {cfg.MODEL.METHOD}")
 
 
     end = time.time()
