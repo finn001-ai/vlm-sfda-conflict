@@ -7,6 +7,7 @@ from src.utils.conflict_diffusion import (
     align_probability_to_target_prior,
     calibrate_probability_prior,
     class_balanced_mask_by_prior,
+    class_intervention_route_multipliers,
     conflict_diffusion_evidence,
     dual_space_diffusion,
     graph_temporal_residual_weights,
@@ -194,6 +195,39 @@ class ConflictDiffusionTest(unittest.TestCase):
         self.assertEqual(float(weight[3]), 0.0)
         self.assertGreater(float(graph_conf[0]), 0.0)
         self.assertGreater(float(disagreement[0]), 0.0)
+
+    def test_class_intervention_routing_preserves_total_gtr_weight(self):
+        teacher = torch.tensor([0, 0, 1, 1])
+        base = torch.tensor([1, 1, 1, 1])
+        weight = torch.tensor([1.0, 3.0, 2.0, 2.0])
+
+        multipliers, rates, counts = class_intervention_route_multipliers(
+            teacher,
+            base,
+            weight,
+            num_classes=2,
+            min_count=2,
+            floor=0.25,
+            max_ratio=4.0,
+        )
+
+        routed = weight * multipliers[teacher]
+        self.assertTrue(torch.allclose(routed.sum(), weight.sum(), atol=1e-6))
+        self.assertGreater(float(multipliers[0]), float(multipliers[1]))
+        self.assertEqual(rates.tolist(), [1.0, 0.0])
+        self.assertEqual(counts.tolist(), [2, 2])
+
+    def test_class_intervention_routing_is_identity_without_active_gtr(self):
+        multipliers, rates, counts = class_intervention_route_multipliers(
+            torch.tensor([0, 1]),
+            torch.tensor([1, 0]),
+            torch.zeros(2),
+            num_classes=2,
+        )
+
+        self.assertEqual(multipliers.tolist(), [1.0, 1.0])
+        self.assertEqual(rates.tolist(), [0.0, 0.0])
+        self.assertEqual(counts.tolist(), [0, 0])
 
     def test_class_balanced_mask_by_prior_caps_overrepresented_classes(self):
         labels = torch.tensor([0, 0, 0, 0, 1, 1, 2, 2])

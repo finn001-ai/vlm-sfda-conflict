@@ -27,6 +27,7 @@ from src.utils import loss, prompt_tuning, IID_losses
 from src.utils.conflict_diffusion import (
     adaptive_graph_teacher_fusion,
     class_balanced_mask_by_prior,
+    class_intervention_route_multipliers,
     conflict_diffusion_evidence,
     dual_space_diffusion,
     graph_temporal_residual_weights,
@@ -1404,6 +1405,36 @@ def train_target(cfg):
                 cfg.DCCL.GTR_MIN_DISAGREEMENT,
                 eps=cfg.DCCL.EPSILON,
             )
+            if cfg.DCCL.GTR_CLASS_ROUTING:
+                base_teacher_label = ((model_soft + clip_soft) / 2).argmax(dim=1)
+                gtr_weight_sum_before_routing = gtr_weight.sum().detach()
+                class_multipliers, class_intervention_rates, class_counts = (
+                    class_intervention_route_multipliers(
+                        teacher_label,
+                        base_teacher_label,
+                        gtr_weight,
+                        cfg.class_num,
+                        min_count=int(cfg.DCCL.GTR_CLASS_ROUTE_MIN_COUNT),
+                        floor=float(cfg.DCCL.GTR_CLASS_ROUTE_FLOOR),
+                        max_ratio=float(cfg.DCCL.GTR_CLASS_ROUTE_MAX_RATIO),
+                        eps=float(cfg.DCCL.EPSILON),
+                    )
+                )
+                gtr_weight = gtr_weight * class_multipliers[teacher_label]
+                logging.info(
+                    "DCCL class intervention routing: active_classes={}; "
+                    "weight_sum_ratio={:.6f}; rates={}; multipliers={}".format(
+                        int((class_counts >= int(cfg.DCCL.GTR_CLASS_ROUTE_MIN_COUNT)).sum().item()),
+                        float(
+                            (
+                                gtr_weight.sum()
+                                / gtr_weight_sum_before_routing.clamp_min(cfg.DCCL.EPSILON)
+                            ).item()
+                        ) if (gtr_weight > 0).any() else 0.0,
+                        "|".join(f"{value:.6f}" for value in class_intervention_rates.tolist()),
+                        "|".join(f"{value:.6f}" for value in class_multipliers.tolist()),
+                    )
+                )
             active_gtr = gtr_weight > 0
             logging.info(
                 "DCCL graph-temporal residual: eligible={}; newly_stable={}; "

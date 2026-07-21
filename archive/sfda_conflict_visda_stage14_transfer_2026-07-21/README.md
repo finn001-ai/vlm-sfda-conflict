@@ -216,3 +216,41 @@ correlation at least `0.5` with oracle class gain and top-4 overlap at least
 `3/4`. A failed gate rejects class routing and sends the project to the
 `PL/GTR_STABLE_CYCLES=3` proposal instead of fitting a proxy combination to
 the twelve validation classes.
+
+## Unlabeled route proxy result
+
+Only `graph_intervention_rate` passes the predeclared proxy gate:
+
+```text
+Spearman versus oracle class gain = 0.580420
+top-4 proxy classes = car, plant, motorcycle, horse
+oracle top-4 overlap = 3/4
+```
+
+The signal is dominated by car (`12.39%` graph intervention versus roughly
+`0.6%-1.6%` for the remaining classes), which is also the largest source of
+oracle net corrections. The proxy misses truck and includes horse, so this is
+evidence for a compute-gated preflight, not evidence for a full run.
+
+The proposed class router is disabled by default and does not alter existing
+Office-Home or VisDA configs. When explicitly enabled, it redistributes the
+existing GTR sample weights according to per-predicted-class graph
+intervention rates and renormalizes them so the total active GTR weight is
+unchanged. It does not hard-code class identities or increase the global GTR
+loss coefficient.
+
+Run the four-cycle preflight:
+
+```bash
+bash tools/run_visda_temporal_precision_head_class_route_preflight.sh
+```
+
+Only after its gate reports `pass_full_training_gate` may the eight-cycle
+script be launched:
+
+```bash
+bash tools/run_visda_temporal_precision_head_class_route_seed2020.sh
+```
+
+This remains a VisDA mechanism preflight under the Stage14 transfer archive.
+It becomes a new project stage only if the preflight succeeds.

@@ -1,0 +1,408 @@
+{
+  "decision": "supports_unlabeled_class_router",
+  "criteria": {
+    "min_spearman": 0.5,
+    "min_top_k_overlap": 3,
+    "oracle_top_k": 4
+  },
+  "oracle_supported_classes": [
+    "car",
+    "motorcycle",
+    "plant",
+    "truck"
+  ],
+  "best_proxy": {
+    "proxy": "graph_intervention_rate",
+    "spearman_vs_oracle_gain": 0.58042,
+    "top_k": 4,
+    "top_classes": [
+      "car",
+      "plant",
+      "motorcycle",
+      "horse"
+    ],
+    "top_k_overlap": 3,
+    "passes_proxy_gate": true
+  },
+  "passing_proxies": [
+    "graph_intervention_rate"
+  ],
+  "proxy_evaluations": [
+    {
+      "proxy": "graph_intervention_rate",
+      "spearman_vs_oracle_gain": 0.58042,
+      "top_k": 4,
+      "top_classes": [
+        "car",
+        "plant",
+        "motorcycle",
+        "horse"
+      ],
+      "top_k_overlap": 3,
+      "passes_proxy_gate": true
+    },
+    {
+      "proxy": "agreement_anchor_recall",
+      "spearman_vs_oracle_gain": 0.227671,
+      "top_k": 4,
+      "top_classes": [
+        "aeroplane",
+        "horse",
+        "car",
+        "bicycle"
+      ],
+      "top_k_overlap": 1,
+      "passes_proxy_gate": false
+    },
+    {
+      "proxy": "candidate_containment_rate",
+      "spearman_vs_oracle_gain": 0.083916,
+      "top_k": 4,
+      "top_classes": [
+        "motorcycle",
+        "truck",
+        "bicycle",
+        "train"
+      ],
+      "top_k_overlap": 2,
+      "passes_proxy_gate": false
+    },
+    {
+      "proxy": "agreement_anchor_precision",
+      "spearman_vs_oracle_gain": 0.013986,
+      "top_k": 4,
+      "top_classes": [
+        "motorcycle",
+        "train",
+        "skateboard",
+        "horse"
+      ],
+      "top_k_overlap": 1,
+      "passes_proxy_gate": false
+    },
+    {
+      "proxy": "teacher_confidence",
+      "spearman_vs_oracle_gain": -0.34965,
+      "top_k": 4,
+      "top_classes": [
+        "aeroplane",
+        "horse",
+        "plant",
+        "knife"
+      ],
+      "top_k_overlap": 1,
+      "passes_proxy_gate": false
+    },
+    {
+      "proxy": "teacher_margin",
+      "spearman_vs_oracle_gain": -0.34965,
+      "top_k": 4,
+      "top_classes": [
+        "aeroplane",
+        "horse",
+        "plant",
+        "knife"
+      ],
+      "top_k_overlap": 1,
+      "passes_proxy_gate": false
+    },
+    {
+      "proxy": "clip_support_rate",
+      "spearman_vs_oracle_gain": -0.412587,
+      "top_k": 4,
+      "top_classes": [
+        "aeroplane",
+        "knife",
+        "truck",
+        "bus"
+      ],
+      "top_k_overlap": 1,
+      "passes_proxy_gate": false
+    },
+    {
+      "proxy": "temporal_top1_stability",
+      "spearman_vs_oracle_gain": -0.461538,
+      "top_k": 4,
+      "top_classes": [
+        "aeroplane",
+        "knife",
+        "plant",
+        "horse"
+      ],
+      "top_k_overlap": 1,
+      "passes_proxy_gate": false
+    },
+    {
+      "proxy": "conflict_opportunity_rate",
+      "spearman_vs_oracle_gain": -0.51049,
+      "top_k": 4,
+      "top_classes": [
+        "knife",
+        "person",
+        "truck",
+        "skateboard"
+      ],
+      "top_k_overlap": 1,
+      "passes_proxy_gate": false
+    },
+    {
+      "proxy": "temporal_probability_agreement",
+      "spearman_vs_oracle_gain": -0.566434,
+      "top_k": 4,
+      "top_classes": [
+        "aeroplane",
+        "knife",
+        "horse",
+        "plant"
+      ],
+      "top_k_overlap": 1,
+      "passes_proxy_gate": false
+    },
+    {
+      "proxy": "base_teacher_agreement_rate",
+      "spearman_vs_oracle_gain": -0.58042,
+      "top_k": 4,
+      "top_classes": [
+        "aeroplane",
+        "truck",
+        "knife",
+        "skateboard"
+      ],
+      "top_k_overlap": 1,
+      "passes_proxy_gate": false
+    },
+    {
+      "proxy": "source_support_rate",
+      "spearman_vs_oracle_gain": -0.685315,
+      "top_k": 4,
+      "top_classes": [
+        "knife",
+        "aeroplane",
+        "horse",
+        "person"
+      ],
+      "top_k_overlap": 0,
+      "passes_proxy_gate": false
+    }
+  ],
+  "next": "implement a class-conditional temporal residual using the best predeclared proxy",
+  "selection_warning": "proxy features are label-free, but this gate compares them with a validation-label oracle and is diagnostic only",
+  "class_proxies": [
+    {
+      "class_index": 0,
+      "class": "aeroplane",
+      "predicted_samples": 3646,
+      "stable_conflicts": 1378,
+      "teacher_confidence": 0.9872859546209108,
+      "teacher_margin": 0.9784016281328999,
+      "temporal_probability_agreement": 0.9839395502860929,
+      "temporal_top1_stability": 0.9899425287356322,
+      "candidate_containment_rate": 0.9985486211901307,
+      "source_support_rate": 0.9702467343976778,
+      "clip_support_rate": 0.9898403483309144,
+      "base_teacher_agreement_rate": 0.9941944847605225,
+      "graph_intervention_rate": 0.005805515239477504,
+      "agreement_anchor_precision": 0.9994402462916316,
+      "agreement_anchor_recall": 1.0,
+      "conflict_opportunity_rate": 0.38178826110806363
+    },
+    {
+      "class_index": 1,
+      "class": "bicycle",
+      "predicted_samples": 3679,
+      "stable_conflicts": 2211,
+      "teacher_confidence": 0.9624715883205618,
+      "teacher_margin": 0.9325716302128403,
+      "temporal_probability_agreement": 0.9477721524858631,
+      "temporal_top1_stability": 0.9481132075471698,
+      "candidate_containment_rate": 0.9990954319312528,
+      "source_support_rate": 0.9507010402532791,
+      "clip_support_rate": 0.9782903663500678,
+      "base_teacher_agreement_rate": 0.9895974672094076,
+      "graph_intervention_rate": 0.010402532790592492,
+      "agreement_anchor_precision": 0.9991145218417946,
+      "agreement_anchor_recall": 0.9997046662728883,
+      "conflict_opportunity_rate": 0.6338678988855667
+    },
+    {
+      "class_index": 2,
+      "class": "bus",
+      "predicted_samples": 4667,
+      "stable_conflicts": 2033,
+      "teacher_confidence": 0.9416481714440987,
+      "teacher_margin": 0.8930076703386134,
+      "temporal_probability_agreement": 0.9438025291700405,
+      "temporal_top1_stability": 0.9394639556377079,
+      "candidate_containment_rate": 0.9965568125922283,
+      "source_support_rate": 0.9144121987211018,
+      "clip_support_rate": 0.9798327594687654,
+      "base_teacher_agreement_rate": 0.9901623216920806,
+      "graph_intervention_rate": 0.009837678307919331,
+      "agreement_anchor_precision": 0.9981464318813716,
+      "agreement_anchor_recall": 0.9993041057759221,
+      "conflict_opportunity_rate": 0.46368116563102635
+    },
+    {
+      "class_index": 3,
+      "class": "car",
+      "predicted_samples": 9210,
+      "stable_conflicts": 3260,
+      "teacher_confidence": 0.907890521085884,
+      "teacher_margin": 0.8326324905048337,
+      "temporal_probability_agreement": 0.9139154495876483,
+      "temporal_top1_stability": 0.9293044469783353,
+      "candidate_containment_rate": 0.9763803680981595,
+      "source_support_rate": 0.907361963190184,
+      "clip_support_rate": 0.8392638036809816,
+      "base_teacher_agreement_rate": 0.8760736196319019,
+      "graph_intervention_rate": 0.12392638036809817,
+      "agreement_anchor_precision": 0.9881928908774547,
+      "agreement_anchor_recall": 0.9997485225700994,
+      "conflict_opportunity_rate": 0.38089033659066235
+    },
+    {
+      "class_index": 4,
+      "class": "horse",
+      "predicted_samples": 4819,
+      "stable_conflicts": 1539,
+      "teacher_confidence": 0.9802399387872397,
+      "teacher_margin": 0.9664243499771387,
+      "temporal_probability_agreement": 0.96678800668639,
+      "temporal_top1_stability": 0.9667085427135679,
+      "candidate_containment_rate": 0.9974009096816114,
+      "source_support_rate": 0.9701104613385315,
+      "clip_support_rate": 0.9785575048732943,
+      "base_teacher_agreement_rate": 0.98635477582846,
+      "graph_intervention_rate": 0.01364522417153996,
+      "agreement_anchor_precision": 0.9995740149094782,
+      "agreement_anchor_recall": 1.0,
+      "conflict_opportunity_rate": 0.3303589956422494
+    },
+    {
+      "class_index": 5,
+      "class": "knife",
+      "predicted_samples": 2453,
+      "stable_conflicts": 2193,
+      "teacher_confidence": 0.9691882759020093,
+      "teacher_margin": 0.9482554724352577,
+      "temporal_probability_agreement": 0.9689430411418537,
+      "temporal_top1_stability": 0.9686395759717314,
+      "candidate_containment_rate": 0.9972640218878249,
+      "source_support_rate": 0.9740082079343365,
+      "clip_support_rate": 0.9858641130870953,
+      "base_teacher_agreement_rate": 0.9927040583675331,
+      "graph_intervention_rate": 0.00729594163246694,
+      "agreement_anchor_precision": 0.9969578444154715,
+      "agreement_anchor_recall": 0.9956597222222222,
+      "conflict_opportunity_rate": 0.9229514879739095
+    },
+    {
+      "class_index": 6,
+      "class": "motorcycle",
+      "predicted_samples": 5870,
+      "stable_conflicts": 1053,
+      "teacher_confidence": 0.9374436028266337,
+      "teacher_margin": 0.8885828951490582,
+      "temporal_probability_agreement": 0.9202676723404002,
+      "temporal_top1_stability": 0.9132697311361665,
+      "candidate_containment_rate": 1.0,
+      "source_support_rate": 0.9439696106362773,
+      "clip_support_rate": 0.9620132953466287,
+      "base_teacher_agreement_rate": 0.9857549857549858,
+      "graph_intervention_rate": 0.014245014245014245,
+      "agreement_anchor_precision": 1.0,
+      "agreement_anchor_recall": 0.9992868604029239,
+      "conflict_opportunity_rate": 0.19642248722316866
+    },
+    {
+      "class_index": 7,
+      "class": "person",
+      "predicted_samples": 4751,
+      "stable_conflicts": 3969,
+      "teacher_confidence": 0.9304993071748917,
+      "teacher_margin": 0.8835255105655955,
+      "temporal_probability_agreement": 0.9338126593211201,
+      "temporal_top1_stability": 0.9367476988435214,
+      "candidate_containment_rate": 0.998740236835475,
+      "source_support_rate": 0.9687578735197783,
+      "clip_support_rate": 0.9748047367094986,
+      "base_teacher_agreement_rate": 0.9894179894179894,
+      "graph_intervention_rate": 0.010582010582010581,
+      "agreement_anchor_precision": 0.9979386165826843,
+      "agreement_anchor_recall": 0.9915794264906691,
+      "conflict_opportunity_rate": 0.8918122500526205
+    },
+    {
+      "class_index": 8,
+      "class": "plant",
+      "predicted_samples": 4465,
+      "stable_conflicts": 1974,
+      "teacher_confidence": 0.9776210602384208,
+      "teacher_margin": 0.9608108630208981,
+      "temporal_probability_agreement": 0.9657813588197973,
+      "temporal_top1_stability": 0.9676470588235294,
+      "candidate_containment_rate": 0.9984802431610942,
+      "source_support_rate": 0.96403242147923,
+      "clip_support_rate": 0.9782168186423505,
+      "base_teacher_agreement_rate": 0.983789260385005,
+      "graph_intervention_rate": 0.016210739614994935,
+      "agreement_anchor_precision": 0.9993011879804332,
+      "agreement_anchor_recall": 0.9990684676292502,
+      "conflict_opportunity_rate": 0.4568868980963046
+    },
+    {
+      "class_index": 9,
+      "class": "skateboard",
+      "predicted_samples": 2714,
+      "stable_conflicts": 1650,
+      "teacher_confidence": 0.9562944515004302,
+      "teacher_margin": 0.9223411390908909,
+      "temporal_probability_agreement": 0.9495931874156833,
+      "temporal_top1_stability": 0.9455587392550143,
+      "candidate_containment_rate": 0.9975757575757576,
+      "source_support_rate": 0.9527272727272728,
+      "clip_support_rate": 0.9745454545454545,
+      "base_teacher_agreement_rate": 0.990909090909091,
+      "graph_intervention_rate": 0.00909090909090909,
+      "agreement_anchor_precision": 0.9996019108280255,
+      "agreement_anchor_recall": 0.996033320111067,
+      "conflict_opportunity_rate": 0.6429624170965365
+    },
+    {
+      "class_index": 10,
+      "class": "train",
+      "predicted_samples": 4195,
+      "stable_conflicts": 971,
+      "teacher_confidence": 0.9336699171549997,
+      "teacher_margin": 0.8839207708161665,
+      "temporal_probability_agreement": 0.9434884459504262,
+      "temporal_top1_stability": 0.9575936883629191,
+      "candidate_containment_rate": 0.9989701338825953,
+      "source_support_rate": 0.9104016477857878,
+      "clip_support_rate": 0.972193614830072,
+      "base_teacher_agreement_rate": 0.9907312049433573,
+      "graph_intervention_rate": 0.009268795056642637,
+      "agreement_anchor_precision": 0.99975,
+      "agreement_anchor_recall": 0.9992503748125937,
+      "conflict_opportunity_rate": 0.24171632896305126
+    },
+    {
+      "class_index": 11,
+      "class": "truck",
+      "predicted_samples": 4919,
+      "stable_conflicts": 3721,
+      "teacher_confidence": 0.911772235631302,
+      "teacher_margin": 0.8401709126767397,
+      "temporal_probability_agreement": 0.9266252796910399,
+      "temporal_top1_stability": 0.9247017892644135,
+      "candidate_containment_rate": 0.9994625100779361,
+      "source_support_rate": 0.9422198333781242,
+      "clip_support_rate": 0.9801128728836335,
+      "base_teacher_agreement_rate": 0.9940876108572965,
+      "graph_intervention_rate": 0.005912389142703574,
+      "agreement_anchor_precision": 0.998867240598097,
+      "agreement_anchor_recall": 0.9861328561842988,
+      "conflict_opportunity_rate": 0.8180524496848953
+    }
+  ]
+}

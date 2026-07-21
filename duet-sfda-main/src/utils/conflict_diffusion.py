@@ -624,6 +624,61 @@ def transport_candidate_mass(
 
 
 @torch.no_grad()
+def class_intervention_route_multipliers(
+    teacher_label: torch.Tensor,
+    base_teacher_label: torch.Tensor,
+    sample_weight: torch.Tensor,
+    num_classes: int,
+    min_count: int = 20,
+    floor: float = 0.25,
+    max_ratio: float = 4.0,
+    eps: float = 1e-6,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Redistribute fixed total residual weight by class graph intervention rate."""
+    if min_count <= 0:
+        raise ValueError("class route min_count must be positive")
+    if floor <= 0 or max_ratio < floor:
+        raise ValueError("class route ratios must satisfy 0 < floor <= max_ratio")
+    if any(t.numel() != teacher_label.numel() for t in (base_teacher_label, sample_weight)):
+        raise ValueError("class route tensors must have the same sample dimension")
+
+    labels = teacher_label.long()
+    base_labels = base_teacher_label.long().to(labels.device)
+    weights = sample_weight.float().to(labels.device)
+    active = weights > 0
+    counts = torch.zeros(num_classes, dtype=torch.long, device=labels.device)
+    interventions = torch.zeros(num_classes, dtype=torch.float, device=labels.device)
+    if not active.any():
+        return torch.ones(num_classes, device=labels.device), interventions, counts
+
+    active_labels = labels[active]
+    counts.scatter_add_(0, active_labels, torch.ones_like(active_labels))
+    interventions.scatter_add_(
+        0,
+        active_labels,
+        (labels[active] != base_labels[active]).float(),
+    )
+    rates = interventions / counts.clamp_min(1).float()
+    eligible = counts >= min_count
+    if not eligible.any() or float(rates[eligible].max().item()) <= eps:
+        return torch.ones(num_classes, device=labels.device), rates, counts
+
+    weighted_rate = (
+        rates[active_labels] * weights[active]
+    ).sum() / weights[active].sum().clamp_min(eps)
+    if float(weighted_rate.item()) <= eps:
+        return torch.ones(num_classes, device=labels.device), rates, counts
+
+    multipliers = torch.ones(num_classes, dtype=torch.float, device=labels.device)
+    multipliers[eligible] = (rates[eligible] / weighted_rate).clamp(floor, max_ratio)
+    normalizer = (
+        multipliers[active_labels] * weights[active]
+    ).sum() / weights[active].sum().clamp_min(eps)
+    multipliers = multipliers / normalizer.clamp_min(eps)
+    return multipliers, rates, counts
+
+
+@torch.no_grad()
 def update_temporal_resolution(
     pending_label: torch.Tensor,
     pending_count: torch.Tensor,
