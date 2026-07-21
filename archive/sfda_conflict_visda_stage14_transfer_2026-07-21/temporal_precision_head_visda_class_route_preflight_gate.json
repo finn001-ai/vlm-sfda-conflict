@@ -1,0 +1,22 @@
+{
+  "decision": "fail_full_training_gate",
+  "metric": "mean per-class accuracy",
+  "selection_warning": "all peaks use VisDA validation labels and are oracle diagnostics",
+  "matched_cycles": 4,
+  "baseline_target_head_mix": 0.3,
+  "candidate_target_head_mix": 0.3,
+  "baseline_matched_peak": 90.15,
+  "candidate_matched_peak": 90.13,
+  "matched_improvement": -0.02,
+  "minimum_improvement": 0.25,
+  "baseline_full_peak": 91.07,
+  "baseline_late_gain": 0.92,
+  "projected_candidate_full_peak": 91.05,
+  "required_full_peak": 91.4,
+  "checks": {
+    "config_valid": true,
+    "matched_improvement": false,
+    "projected_to_beat_reference": false
+  },
+  "next": "do not run the full mix-0.4 job; next test temporal stability with PL/GTR stable cycles 3"
+}

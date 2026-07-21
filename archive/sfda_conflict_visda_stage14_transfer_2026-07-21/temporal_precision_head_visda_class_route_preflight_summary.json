@@ -1,0 +1,112 @@
+{
+  "decision": "visda_stage14_run_complete",
+  "metric": "mean per-class accuracy",
+  "selection_warning": "peak reads validation labels and is oracle-only",
+  "num_checkpoints": 16,
+  "final": {
+    "iteration": 3464,
+    "max_iteration": 3464,
+    "cycle": 4,
+    "max_cycle": 4,
+    "accuracy": 89.98,
+    "class_accuracy": [
+      98.49,
+      87.8,
+      89.06,
+      77.17,
+      97.31,
+      97.93,
+      94.91,
+      82.7,
+      95.34,
+      96.58,
+      94.12,
+      68.31
+    ]
+  },
+  "oracle_peak": {
+    "iteration": 1732,
+    "max_iteration": 3464,
+    "cycle": 4,
+    "max_cycle": 4,
+    "accuracy": 90.13,
+    "class_accuracy": [
+      98.33,
+      88.75,
+      89.23,
+      78.04,
+      97.68,
+      96.87,
+      94.86,
+      83.32,
+      95.49,
+      96.1,
+      93.98,
+      68.85
+    ]
+  },
+  "peak_minus_final": 0.15,
+  "classes": [
+    {
+      "class": "aeroplane",
+      "final_accuracy": 98.49,
+      "peak_checkpoint_accuracy": 98.33
+    },
+    {
+      "class": "bicycle",
+      "final_accuracy": 87.8,
+      "peak_checkpoint_accuracy": 88.75
+    },
+    {
+      "class": "bus",
+      "final_accuracy": 89.06,
+      "peak_checkpoint_accuracy": 89.23
+    },
+    {
+      "class": "car",
+      "final_accuracy": 77.17,
+      "peak_checkpoint_accuracy": 78.04
+    },
+    {
+      "class": "horse",
+      "final_accuracy": 97.31,
+      "peak_checkpoint_accuracy": 97.68
+    },
+    {
+      "class": "knife",
+      "final_accuracy": 97.93,
+      "peak_checkpoint_accuracy": 96.87
+    },
+    {
+      "class": "motorcycle",
+      "final_accuracy": 94.91,
+      "peak_checkpoint_accuracy": 94.86
+    },
+    {
+      "class": "person",
+      "final_accuracy": 82.7,
+      "peak_checkpoint_accuracy": 83.32
+    },
+    {
+      "class": "plant",
+      "final_accuracy": 95.34,
+      "peak_checkpoint_accuracy": 95.49
+    },
+    {
+      "class": "skateboard",
+      "final_accuracy": 96.58,
+      "peak_checkpoint_accuracy": 96.1
+    },
+    {
+      "class": "train",
+      "final_accuracy": 94.12,
+      "peak_checkpoint_accuracy": 93.98
+    },
+    {
+      "class": "truck",
+      "final_accuracy": 68.31,
+      "peak_checkpoint_accuracy": 68.85
+    }
+  ],
+  "next": "compare with same-source VisDA baselines, then run adaptation seeds 2021/2022"
+}

@@ -1,0 +1,82 @@
+{
+  "config": {
+    "glob": "output/uda/VISDA-C/TV/temporal_precision_head_seed2020_visda_class_route_preflight/temporal_diagnostics/*_cycle*.npz",
+    "out": "output/uda/VISDA-C/temporal_precision_head_visda_class_route_preflight_dynamics.json",
+    "min_coverage": 5.0,
+    "min_pass_tasks": 1
+  },
+  "decision": "pass_training_gate",
+  "reason": "Temporal stable predictions beat final CLIP on enough conflict tasks.",
+  "pass_tasks": 1,
+  "tasks": [
+    {
+      "task": "TV",
+      "cycles": 4,
+      "samples": 55388,
+      "initial_conflicts": 27465,
+      "initial_conflict_rate": 49.5866,
+      "final_conflicts": 5211,
+      "final_conflict_rate": 9.4082,
+      "stable_mix_on_initial_conflicts": 25588,
+      "stable_mix_conflict_coverage": 93.1658,
+      "first_source_accuracy_on_initial_conflicts": 10.7118,
+      "first_clip_accuracy_on_initial_conflicts": 71.2835,
+      "final_source_accuracy_on_initial_conflicts": 78.4234,
+      "final_clip_accuracy_on_initial_conflicts": 80.2876,
+      "final_mix_accuracy_on_initial_conflicts": 82.4904,
+      "stable_mix_accuracy": 85.3486,
+      "stable_clip_accuracy": 83.1327,
+      "stable_source_accuracy": 81.2842,
+      "corrections_over_final_clip": 915,
+      "degradations_from_final_clip": 348,
+      "net_correct_gain_over_final_clip": 567,
+      "discordant_decisions": 1263,
+      "one_sided_correction_p_value": 0.0,
+      "outside_final_candidate_selected": 262,
+      "outside_final_candidate_accuracy": 61.0687,
+      "cycle_metrics": [
+        {
+          "cycle": 1,
+          "source_accuracy": 52.6341,
+          "clip_accuracy": 82.6695,
+          "mix_accuracy": 74.7256,
+          "teacher_accuracy": 76.8777,
+          "agreement_rate": 50.4134,
+          "valid_pseudo_labels": 27923,
+          "valid_pseudo_label_accuracy": 93.8689
+        },
+        {
+          "cycle": 2,
+          "source_accuracy": 83.8521,
+          "clip_accuracy": 86.396,
+          "mix_accuracy": 87.0911,
+          "teacher_accuracy": 88.0841,
+          "agreement_rate": 86.8546,
+          "valid_pseudo_labels": 26513,
+          "valid_pseudo_label_accuracy": 96.2698
+        },
+        {
+          "cycle": 3,
+          "source_accuracy": 86.1252,
+          "clip_accuracy": 87.1073,
+          "mix_accuracy": 87.7681,
+          "teacher_accuracy": 88.5679,
+          "agreement_rate": 89.4761,
+          "valid_pseudo_labels": 45940,
+          "valid_pseudo_label_accuracy": 93.8071
+        },
+        {
+          "cycle": 4,
+          "source_accuracy": 86.34,
+          "clip_accuracy": 87.4323,
+          "mix_accuracy": 87.9685,
+          "teacher_accuracy": 88.7882,
+          "agreement_rate": 90.5918,
+          "valid_pseudo_labels": 47387,
+          "valid_pseudo_label_accuracy": 93.4666
+        }
+      ],
+      "pass_task_gate": true
+    }
+  ]
+}

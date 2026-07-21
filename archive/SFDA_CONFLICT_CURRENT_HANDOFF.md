@@ -173,7 +173,7 @@ archive/sfda_conflict_visda_stage14_transfer_2026-07-21/temporal_precision_head_
 archive/sfda_conflict_visda_stage14_transfer_2026-07-21/temporal_precision_head_visda_seed2020_dynamics.json
 ```
 
-## Current Pending Experiment
+## Completed Class-Routing Preflight
 
 The existing Stage14 VisDA diagnostics found class-heterogeneous graph
 corrections. Stable teacher corrections are globally useful (`+433` net), but
@@ -187,8 +187,8 @@ top-4 overlap = 3/4
 proxy top-4 = car, plant, motorcycle, horse
 ```
 
-This supports one compute-gated preflight, not a claim of success. Commit
-`745245f` adds optional class intervention routing. It is disabled by default:
+This supported one compute-gated preflight, not a claim of success. Commit
+`745245f` added optional class intervention routing. It is disabled by default:
 
 ```text
 DCCL.GTR_CLASS_ROUTING = False
@@ -201,39 +201,65 @@ the total GTR weight. Therefore existing Office-Home runs and configs are
 unchanged. The implementation passed the full local suite (`105` tests), shell
 syntax checks, Python compilation, and `git diff --check`.
 
-The next cloud command is only the four-cycle preflight:
+The four-cycle preflight completed all 16 checkpoints and failed its gate:
+
+```text
+final mean per-class accuracy = 89.98
+oracle peak = 90.13
+matched baseline oracle peak = 90.15
+matched improvement = -0.02
+projected full oracle peak = 91.05
+required full oracle peak = 91.40
+decision = fail_full_training_gate
+```
+
+The temporal conflict diagnostic still passed (`93.17%` stable coverage and
+`+567` net corrections over final CLIP), but it did not convert to end-to-end
+gain. Do not run the eight-cycle class-routing script. The variant is closed
+and remains inside the Stage14 VisDA transfer archive.
+
+The gate artifact's `next` text says "mix-0.4" because of a stale shared
+summarizer default; the metrics and failure decision are valid. The generator
+has been corrected. Results are archived under:
+
+```text
+archive/sfda_conflict_visda_stage14_transfer_2026-07-21/
+```
+
+## Current Pending Experiment
+
+The next predeclared proposal is still a Stage14 internal VisDA preflight. It
+sets both temporal stability requirements from two to three cycles:
+
+```text
+PL_STABLE_CYCLES=3
+GTR_STABLE_CYCLES=3
+```
+
+It runs five cycles so the delayed mechanism can be judged on the matched
+cycles 4-5 window. The full script is gate-protected. After pulling the latest
+main, the next cloud command is only:
 
 ```bash
 cd /hyperai/home/vlm-sfda-conflict/duet-sfda-main
 git pull
-bash tools/run_visda_temporal_precision_head_class_route_preflight.sh
+bash tools/run_visda_temporal_precision_head_stability3_preflight.sh
 ```
 
-Primary decision file:
-
-```text
-output/uda/VISDA-C/temporal_precision_head_visda_class_route_preflight_gate.json
-```
-
-Also retain the generated accuracy, summary, per-class, dynamics, and training
-log files. Run the eight-cycle script only if the decision is exactly:
-
-```text
-pass_full_training_gate
-```
-
-Then use:
+The gate requires a valid `2/2 -> 3/3` configuration, a passing temporal
+dynamics diagnostic, at least `+0.20 pp` candidate improvement in the cycles
+4-5 oracle peak, and a projected full oracle peak of at least `91.40` after
+adding the baseline post-cycle-5 late gain. Only a decision exactly equal to
+`pass_full_training_gate` permits:
 
 ```bash
-bash tools/run_visda_temporal_precision_head_class_route_seed2020.sh
+bash tools/run_visda_temporal_precision_head_stability3_seed2020.sh
 ```
 
-If the preflight fails, archive it and stop this class-routing variant. The
-next predeclared proposal is a Stage14 temporal-stability preflight with both
-`PL_STABLE_CYCLES=3` and `GTR_STABLE_CYCLES=3`, using a later-cycle matched
-gate because the change cannot be judged reliably in the earliest cycles.
-That proposal still needs implementation, a script, and a precise gate before
-cloud execution.
+If the preflight fails, archive it and do not run the full job. First compare
+the pseudo-label precision/coverage and graph-temporal correction coverage;
+only then decide whether one decoupled stability axis (`PL=3,GTR=2` or
+`PL=2,GTR=3`) has mechanism support. Do not launch either automatically.
 
 ## Instructions For A New Conversation
 
@@ -255,11 +281,11 @@ Start the new conversation with the following message:
 重大方法更新才增加 stage。Office-Home 的目标是稳定超过 DUET 84.7167，
 VisDA-C 当前参考是 91.4。peak 必须明确标注为 oracle peak。
 
-当前待办：检查类别干预路由四轮预检是否已经运行。如果没有，先让我运行
-tools/run_visda_temporal_precision_head_class_route_preflight.sh；如果已有结果，
-先归档并按 gate 判断，不要直接启动八轮训练。
+当前待办：类别干预路由四轮预检已失败并归档，不要启动其八轮训练。先让我
+运行 tools/run_visda_temporal_precision_head_stability3_preflight.sh；只有 gate
+明确为 pass_full_training_gate 才能运行对应八轮脚本。
 ```
 
-In the new conversation, attach the latest gate/summary/dynamics files if the
-preflight has already completed. The handoff plus those outputs is sufficient
-to continue without replaying the old chat.
+In the new conversation, attach the latest stability-3 gate/summary/dynamics
+files if that preflight has completed. The handoff plus those outputs is
+sufficient to continue without replaying the old chat.

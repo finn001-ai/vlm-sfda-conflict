@@ -254,3 +254,82 @@ bash tools/run_visda_temporal_precision_head_class_route_seed2020.sh
 
 This remains a VisDA mechanism preflight under the Stage14 transfer archive.
 It becomes a new project stage only if the preflight succeeds.
+
+## Class intervention routing preflight result
+
+The four-cycle run completed all 16 checkpoints, activated class routing, and
+failed the predeclared full-training gate:
+
+```text
+baseline matched oracle peak = 90.15
+class-route matched oracle peak = 90.13
+matched improvement = -0.02
+projected full oracle peak = 91.05
+required full oracle peak = 91.40
+decision = fail_full_training_gate
+```
+
+The final mean per-class accuracy was `89.98`; the oracle peak was `90.13` at
+cycle 4, iteration 1732/3464. The temporal mechanism diagnostic still passed:
+stable decisions covered `93.17%` of initial conflicts and improved over final
+CLIP by 567 net correct samples. This is useful diagnostic evidence but did not
+convert into end-to-end accuracy. The full eight-cycle class-routing job must
+not be launched, and the class-routing variant is closed.
+
+The archived gate's `next` string incorrectly says "mix-0.4 job" because the
+shared gate summarizer retained its older default text. This wording defect
+does not affect the recorded configuration checks, metrics, or
+`fail_full_training_gate` decision. The generator has been corrected for
+future class-routing runs.
+
+Archived artifacts:
+
+```text
+temporal_precision_head_visda_class_route_preflight_accuracy.csv
+temporal_precision_head_visda_class_route_preflight_summary.json
+temporal_precision_head_visda_class_route_preflight_per_class.csv
+temporal_precision_head_visda_class_route_preflight_dynamics.json
+temporal_precision_head_visda_class_route_preflight_gate.json
+```
+
+## Next predeclared Stage14 temporal-stability preflight
+
+The next experiment tests whether requiring three consecutive stable cycles
+improves the precision/coverage tradeoff of both the pseudo-label memory and
+the graph-temporal residual. This changes only:
+
+```text
+PL_STABLE_CYCLES: 2 -> 3
+GTR_STABLE_CYCLES: 2 -> 3
+```
+
+It remains a Stage14 internal VisDA preflight. Because a three-cycle memory is
+not meaningfully expressed in the earliest cycles, the preflight runs five
+cycles and evaluates the later matched window, cycles 4-5. Run only:
+
+```bash
+bash tools/run_visda_temporal_precision_head_stability3_preflight.sh
+```
+
+The full eight-cycle script is present but gate-protected:
+
+```bash
+bash tools/run_visda_temporal_precision_head_stability3_seed2020.sh
+```
+
+The full run is allowed only if every predeclared check passes:
+
+1. The baseline uses `PL/GTR_STABLE_CYCLES=2`, the candidate uses `3`, both
+   target-head mixes are `0.3`, and the candidate completes five cycles.
+2. The temporal dynamics file reports `pass_training_gate`.
+3. The candidate cycles 4-5 oracle peak improves over the matched baseline
+   cycles 4-5 oracle peak by at least `0.20` percentage points.
+4. Adding the baseline post-cycle-5 late gain to the candidate matched oracle
+   peak projects to at least `91.40`.
+
+The gate is deliberately conservative and oracle-labeled: all accuracy peaks
+use VisDA validation labels and must be reported as oracle peaks. If it fails,
+do not run the full stability-3 job. Archive the result and compare the
+pseudo-label precision/coverage trajectory with graph-temporal correction
+coverage before deciding whether a one-axis `PL=3,GTR=2` or `PL=2,GTR=3`
+diagnostic is mechanism-supported; do not launch either automatically.
