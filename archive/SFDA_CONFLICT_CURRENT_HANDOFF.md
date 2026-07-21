@@ -12,7 +12,7 @@ stage and does not replace the per-stage evidence.
 local repository: /Users/stranger/Documents/领域迁移
 GitHub: https://github.com/finn001-ai/vlm-sfda-conflict.git
 branch: main
-latest pushed commit: 745245f
+latest method implementation commit: 745245f
 commit title: Add gated VisDA class intervention routing
 ```
 
@@ -241,7 +241,8 @@ Start the new conversation with the following message:
 
 ```text
 继续 SFDA 冲突样本论文项目。仓库是
-/Users/stranger/Documents/领域迁移，当前 main 最新提交为 745245f。
+/Users/stranger/Documents/领域迁移。请先 git pull 获取最新 main；类别干预
+路由的实现提交是 745245f。
 
 开始前请先完整阅读：
 1. archive/SFDA_CONFLICT_CURRENT_HANDOFF.md
