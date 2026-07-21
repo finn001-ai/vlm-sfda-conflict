@@ -187,3 +187,32 @@ retaining the warning that validation labels are used only for mechanism
 diagnosis. If class-conditional routing is unsupported, the next training
 proposal is the already specified `PL_STABLE_CYCLES=3` plus
 `GTR_STABLE_CYCLES=3` variant.
+
+## Classwise conflict result
+
+The eight-cycle diagnostic supports class-conditional routing at the oracle
+analysis level. Stable teacher corrections are highly heterogeneous:
+
+```text
+global stable teacher minus CLIP = +1.6685 pp; net corrections = +433
+predicted classes passing the route gate = car, motorcycle, plant, truck
+true car stable teacher minus CLIP = +8.9909 pp; net corrections = +376
+true truck stable teacher minus CLIP = -1.7431 pp; net corrections = -70
+true person stable teacher minus CLIP = +0.2671 pp; net corrections = +9
+```
+
+This result explains why a global target-head blend is ineffective: useful and
+harmful conflict flows coexist across classes. The oracle class list cannot be
+hard-coded because it uses validation labels. Before implementing another
+training method, run a second zero-training gate over predeclared label-free
+class proxies:
+
+```bash
+bash tools/run_visda_stage14_unlabeled_route_proxy_probe.sh
+```
+
+The proxy gate requires a single label-free statistic to have Spearman
+correlation at least `0.5` with oracle class gain and top-4 overlap at least
+`3/4`. A failed gate rejects class routing and sends the project to the
+`PL/GTR_STABLE_CYCLES=3` proposal instead of fitting a proxy combination to
+the twelve validation classes.
