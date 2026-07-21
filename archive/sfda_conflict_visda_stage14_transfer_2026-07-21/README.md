@@ -144,3 +144,46 @@ training was performed and this is not an experimental result. The launcher
 now uses a `temporal_precision_head_seed...` identifier, the common dispatcher
 accepts all `temporal_precision_head_...` variants, and both launchers refuse
 to summarize a log without a `Task: TV` accuracy record.
+
+## Mix-0.4 preflight result
+
+The corrected four-cycle preflight completed normally and failed the full-run
+gate:
+
+```text
+baseline matched peak = 90.15
+mix-0.4 matched peak = 90.16
+matched improvement = +0.01
+projected full peak = 91.08
+required full peak = 91.40
+decision = fail_full_training_gate
+```
+
+The complete mix-0.4 run must not be launched. Its pseudo-label counts,
+accuracies, and checkpoint trajectory are also nearly identical to the
+baseline. A global blend coefficient therefore has no useful leverage in this
+range; the target head is initialized from the source head and the two blends
+do not induce materially different top-1 decisions.
+
+Archived artifacts:
+
+```text
+temporal_precision_head_visda_mix040_preflight_accuracy.csv
+temporal_precision_head_visda_mix040_preflight_summary.json
+temporal_precision_head_visda_mix040_preflight_per_class.csv
+temporal_precision_head_visda_mix040_preflight_dynamics.json
+temporal_precision_head_visda_mix040_preflight_gate.json
+```
+
+Before another training run, analyze the existing eight-cycle baseline NPZs:
+
+```bash
+bash tools/run_visda_stage14_classwise_conflict_probe.sh
+```
+
+This is a zero-training diagnostic. It tests whether stable temporal
+corrections are heterogeneous across predicted classes, while explicitly
+retaining the warning that validation labels are used only for mechanism
+diagnosis. If class-conditional routing is unsupported, the next training
+proposal is the already specified `PL_STABLE_CYCLES=3` plus
+`GTR_STABLE_CYCLES=3` variant.
