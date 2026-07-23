@@ -278,6 +278,8 @@ _C.DCCL.CAND_WEIGHT = "none"
 # Optional target-domain list used by adaptation, pseudo-labeling, and graph
 # construction. Evaluation continues to use the full target list.
 _C.DCCL.ADAPTATION_LIST = ""
+_C.DCCL.CONSISTENCY_STOP_GRAD = False
+_C.DCCL.LOSS_DIAG = False
 _C.DCCL.KL_MODE = "clip"
 _C.DCCL.KL_CANDIDATE = "confidence"
 _C.DCCL.CALIB_MODE = "none"

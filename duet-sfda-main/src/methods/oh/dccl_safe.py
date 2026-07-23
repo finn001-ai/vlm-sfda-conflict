@@ -48,6 +48,7 @@ from src.utils.conflict_diffusion import (
     graph_temporal_residual_weights,
     update_temporal_resolution,
 )
+from src.utils.consistency import prediction_consistency_kl
 from src.utils.utils import image_test
 
 
@@ -713,12 +714,18 @@ def train_clip_visual(
 # -----------------------------------------------------------------------------
 
 
-def consistency_loss(weak_logits: torch.Tensor, strong_logits: torch.Tensor):
+def consistency_loss(
+    weak_logits: torch.Tensor,
+    strong_logits: torch.Tensor,
+    stop_gradient: bool = False,
+):
     """要求同一图像的弱增强与强增强预测保持一致。"""
 
-    weak_prob = F.softmax(weak_logits, dim=1)
-    strong_prob = F.softmax(strong_logits, dim=1)
-    return F.kl_div(strong_prob.log(), weak_prob, reduction="batchmean")
+    return prediction_consistency_kl(
+        weak_logits,
+        strong_logits,
+        stop_gradient=stop_gradient,
+    )
 
 
 @torch.no_grad()
@@ -982,7 +989,11 @@ def train_target(cfg):
 
             # L_cons：所有样本都参与弱/强增强一致性。
             total_loss = (
-                consistency_loss(weak_logits, strong_logits)
+                consistency_loss(
+                    weak_logits,
+                    strong_logits,
+                    stop_gradient=bool(cfg.DCCL.CONSISTENCY_STOP_GRAD),
+                )
                 * float(cfg.ACTIVE.CON_PAR)
             )
 

@@ -51,6 +51,7 @@ from src.utils.class_pair_feature_adapter import (
     ClassPairFeatureAdapter,
     weighted_graph_temporal_kl,
 )
+from src.utils.consistency import prediction_consistency_kl
 from src.utils.agreement_covariance_transport import AgreementCovarianceTransport
 from src.utils.agreement_whitened_transport import AgreementWhitenedTransport
 from src.utils.three_view_noise_em import (
@@ -596,16 +597,79 @@ def cal_acc_trajectory_ensemble(
     return accuracy, mean_ent
 
 
-def consistency_loss(weak_output, strong_output):
-    # Apply softmax to both outputs to get probabilities
-    # weak_probs = F.softmax(weak_output, dim=1)
-    # strong_probs = F.softmax(strong_output, dim=1)
-    weak_probs = nn.Softmax(dim=1)(weak_output)
-    strong_probs = nn.Softmax(dim=1)(strong_output)
+def consistency_loss(weak_output, strong_output, stop_gradient=False):
+    return prediction_consistency_kl(
+        weak_output,
+        strong_output,
+        stop_gradient=stop_gradient,
+    )
 
-    # Compute KL divergence between the weak and strong probabilities
-    loss = F.kl_div(strong_probs.log(), weak_probs, reduction="batchmean")
-    return loss
+
+def init_loss_diagnostics():
+    return {
+        "steps": 0,
+        "terms": {
+            name: {"raw_sum": 0.0, "weighted_sum": 0.0, "active_batches": 0}
+            for name in (
+                "consistency",
+                "stable_ce",
+                "candidate",
+                "clip_kl",
+                "gtr",
+                "pair_gtr",
+                "three_view_em",
+            )
+        },
+    }
+
+
+def record_loss_diagnostic(diagnostics, name, loss_value, weight):
+    if diagnostics is None:
+        return
+    term = diagnostics["terms"][name]
+    raw_value = float(loss_value.detach().item())
+    term["raw_sum"] += raw_value
+    term["weighted_sum"] += raw_value * float(weight)
+    term["active_batches"] += 1
+
+
+def log_loss_diagnostics(diagnostics, cycle):
+    if diagnostics is None:
+        return
+    steps = max(int(diagnostics["steps"]), 1)
+    weighted_means = {
+        name: values["weighted_sum"] / steps
+        for name, values in diagnostics["terms"].items()
+    }
+    tracked_total = sum(weighted_means.values())
+    fields = [
+        "DCCL loss diagnostics: cycle={}; steps={}; tracked_weighted_total={:.6f}".format(
+            int(cycle), int(diagnostics["steps"]), tracked_total
+        )
+    ]
+    for name, values in diagnostics["terms"].items():
+        active_batches = int(values["active_batches"])
+        raw_active_mean = (
+            values["raw_sum"] / active_batches if active_batches > 0 else 0.0
+        )
+        weighted_step_mean = weighted_means[name]
+        share = (
+            weighted_step_mean / tracked_total if tracked_total > 0.0 else 0.0
+        )
+        fields.append(
+            "{}_raw={:.6f}; {}_weighted={:.6f}; {}_share={:.4f}; "
+            "{}_active_batches={}".format(
+                name,
+                raw_active_mean,
+                name,
+                weighted_step_mean,
+                name,
+                share,
+                name,
+                active_batches,
+            )
+        )
+    logging.info("; ".join(fields))
 
 
 def train_clip(cfg, model, confi_imag, confi_dis, text_features, clip_optimizer, q_value):
@@ -1668,6 +1732,9 @@ def train_target(cfg):
         pair_feature_gtr_loss_batches = 0
         three_view_em_loss_sum = 0.0
         three_view_em_loss_batches = 0
+        loss_diagnostics = (
+            init_loss_diagnostics() if cfg.DCCL.LOSS_DIAG else None
+        )
         # netC.train()
         while iter_num < max_iter:
             try:
@@ -1683,6 +1750,8 @@ def train_target(cfg):
             strong_x = inputs_test[2].cuda()
 
             iter_num += 1
+            if loss_diagnostics is not None:
+                loss_diagnostics["steps"] += 1
             optimizer = cosine_scheduler(cfg, optimizer, iter_num=iter_num, max_iter=max_iter)
 
             weak_base_feas = netB(netF(weak_x))
@@ -1718,14 +1787,31 @@ def train_target(cfg):
 
             filtered_idx = tar_idx[hard_mask[tar_idx]]
 
-            con_loss = consistency_loss(weak_logits, strong_logits)
+            con_loss = consistency_loss(
+                weak_logits,
+                strong_logits,
+                stop_gradient=bool(cfg.DCCL.CONSISTENCY_STOP_GRAD),
+            )
             classifier_loss = con_loss * cfg.ACTIVE.CON_PAR
+            record_loss_diagnostic(
+                loss_diagnostics,
+                "consistency",
+                con_loss,
+                cfg.ACTIVE.CON_PAR,
+            )
             # classifier_loss = metric_loss * cfg.ACTIVE.CLS_PAR
             if cfg.ACTIVE.CLS_PAR > 0:
                 pred = mem_label[filtered_idx]
                 supervised_logits = weak_logits[hard_mask[tar_idx]]
                 if pred.size(0) != 0:
-                    classifier_loss += nn.CrossEntropyLoss()(supervised_logits, pred) * cfg.ACTIVE.CLS_PAR
+                    stable_ce_loss = nn.CrossEntropyLoss()(supervised_logits, pred)
+                    classifier_loss += stable_ce_loss * cfg.ACTIVE.CLS_PAR
+                    record_loss_diagnostic(
+                        loss_diagnostics,
+                        "stable_ce",
+                        stable_ce_loss,
+                        cfg.ACTIVE.CLS_PAR,
+                    )
             batch_candidate_mask = candidate_mask[tar_idx]
             if cfg.DCCL.CAND_PAR > 0 and batch_candidate_mask.any():
                 candidate_positions = torch.nonzero(batch_candidate_mask, as_tuple=False).squeeze(1).cuda()
@@ -1740,6 +1826,12 @@ def train_target(cfg):
                 weights = candidate_weight[candidate_indices].clamp_min(cfg.DCCL.EPSILON)
                 candidate_loss = (candidate_losses * weights).sum() / weights.sum()
                 classifier_loss += candidate_loss * cfg.DCCL.CAND_PAR
+                record_loss_diagnostic(
+                    loss_diagnostics,
+                    "candidate",
+                    candidate_loss,
+                    cfg.DCCL.CAND_PAR,
+                )
             # pseudo_output = weak_preds[filtered_idx]
             kl_target_batch = kl_target[tar_idx]
             kl_weight_batch = kl_weight[tar_idx]
@@ -1749,6 +1841,12 @@ def train_target(cfg):
             if kl_weight_batch.sum() > 0:
                 mi_loss = (per_sample_kl * kl_weight_batch).sum() / kl_weight_batch.sum()
                 classifier_loss += mi_loss * cfg.ACTIVE.KL_PAR
+                record_loss_diagnostic(
+                    loss_diagnostics,
+                    "clip_kl",
+                    mi_loss,
+                    cfg.ACTIVE.KL_PAR,
+                )
             if cfg.DCCL.GTR_PAR > 0:
                 gtr_weight_batch = gtr_weight[tar_idx]
                 if gtr_weight_batch.sum() > 0:
@@ -1760,6 +1858,12 @@ def train_target(cfg):
                         per_sample_gtr * gtr_weight_batch
                     ).sum() / gtr_weight_batch.sum()
                     classifier_loss += gtr_loss * cfg.DCCL.GTR_PAR
+                    record_loss_diagnostic(
+                        loss_diagnostics,
+                        "gtr",
+                        gtr_loss,
+                        cfg.DCCL.GTR_PAR,
+                    )
                     if (
                         pair_feature_adapter is not None
                         and cfg.DCCL.PAIR_FEATURE_GRADIENT_MODE == "gtr_only"
@@ -1777,6 +1881,12 @@ def train_target(cfg):
                             cfg.DCCL.EPSILON,
                         )
                         classifier_loss += pair_gtr_loss * cfg.DCCL.GTR_PAR
+                        record_loss_diagnostic(
+                            loss_diagnostics,
+                            "pair_gtr",
+                            pair_gtr_loss,
+                            cfg.DCCL.GTR_PAR,
+                        )
                         pair_feature_gtr_loss_sum += float(
                             pair_gtr_loss.detach().item()
                         )
@@ -1803,6 +1913,12 @@ def train_target(cfg):
                         float(cfg.DCCL.EPSILON),
                     )
                     classifier_loss += em_loss * cfg.DCCL.THREE_VIEW_EM_PAR
+                    record_loss_diagnostic(
+                        loss_diagnostics,
+                        "three_view_em",
+                        em_loss,
+                        cfg.DCCL.THREE_VIEW_EM_PAR,
+                    )
                     three_view_em_loss_sum += float(em_loss.detach().item())
                     three_view_em_loss_batches += 1
 
@@ -2006,6 +2122,7 @@ def train_target(cfg):
                 if pair_feature_adapter is not None:
                     pair_feature_adapter.train()
                 # netC.train()
+        log_loss_diagnostics(loss_diagnostics, curr_cycle + 1)
         curr_cycle += 1
 
     # torch.save(netF.state_dict(), osp.join(cfg.output_dir, "target_F_" + cfg.MODEL.METHOD + ".pt"))
