@@ -1,0 +1,422 @@
+(base) root@k0hauxeo3dlc-yttrve499c9k-main:/hyperai/home/vlm-sfda-conflict/duet-sfda-main# python image_target_of_oh_vs.py \
+  --cfg cfgs/visda/plmatch.yaml \
+  CKPT_DIR . \
+  SETTING.OUTPUT_SRC source \
+  MODEL.METHOD plmatch_visda_full_seed2020 \
+  SETTING.SEED 2020 \
+  SETTING.S 0 \
+  SETTING.T 1 \
+  ACTIVE.CYCLE 8
+[26/07/23 16:02:37] [conf.py:  542]: PyTorch Version: torch=2.8.0+cu128, cuda=12.8
+[26/07/23 16:02:37] [conf.py:  543]: ACCD:
+  ALPHA: 0.9
+  ANCHOR_MEMORY: dynamic
+  ANCHOR_MIN_PER_CLASS: 5
+  ANCHOR_RATIO: 0.5
+  CANDIDATE_MARGIN: 0.1
+  CANDIDATE_MASS: 0.6
+  CHUNK_SIZE: 512
+  ENABLED: False
+  GRAPH_K: 15
+  RESOLUTION_ACTION: hard_label
+  RESOLUTION_MEMORY: persistent
+  RESOLUTION_TARGET: both
+  STABLE_CYCLES: 2
+  START_CYCLE: 0
+  STEPS: 20
+  TEMPERATURE: 0.07
+ACTIVE:
+  ADAPTATION_LIST:
+  ARCH: ViT-B/32
+  BETA: 0.99
+  CLS_PAR: 0.4
+  CON_PAR: 0.2
+  CTX_INIT: a_photo_of_a
+  CYCLE: 8
+  ENT: True
+  EPSILON: 1e-05
+  FINE_LR: 1e-07
+  GENT: True
+  GENT_PAR: 0.1
+  IIC_PAR: 1.0
+  KL_PAR: 0.4
+  LOAD: None
+  N_CTX: 4
+  Q_VALUE: 1.05
+  TTA_STEPS: 1
+ADACONTRAST:
+  ALPHA: 1.0
+  BETA: 1.0
+  CE_SUP_TYPE: weak_strong
+  CE_TYPE: standard
+  CONTRAST_TYPE: class_aware
+  DIST_TYPE: cosine
+  ETA: 1.0
+  FULL_PROGRESS: 0
+  GAMMA: 0.2
+  NUM_NEIGHBORS: 10
+  OPTIM_COS: True
+  OPTIM_EXP: False
+  REFINE_METHOD: nearest_neighbors
+  SCHEDULE: [10, 20]
+CKPT_DIR: .
+CKPT_PATH:
+COWA:
+  ALPHA: 0.2
+  COEFF: JMDS
+  DISTANCE: cosine
+  EPSILON: 1e-05
+  EPSILON2: 1e-06
+  PICKLE: False
+  WARM: 0.0
+CUDNN:
+  BENCHMARK: True
+DA: uda
+DATA_DIR: /home/sfda/data/
+DCCL:
+  ADAPTATION_LIST:
+  CALIB_AUTO_LAMBDA: 0.2
+  CALIB_MODE: none
+  CALIB_POWER: 0.5
+  CAND_PAR: 0.05
+  CAND_START_CYCLE: 0
+  CAND_TAU: 0.0
+  CAND_WEIGHT: none
+  CONSISTENCY_STOP_GRAD: False
+  COV_GLOBAL_HOLDOUT_RATIO: 0.2
+  COV_GLOBAL_MIN_ANCHORS: 512
+  COV_GLOBAL_MIN_IMPROVEMENT: 0.001
+  COV_GLOBAL_SHRINKAGE: 0.1
+  COV_TRANSPORT_ADAPT: False
+  COV_TRANSPORT_MAX_GATE: 0.05
+  COV_TRANSPORT_MIN_ANCHORS: 8
+  COV_TRANSPORT_MODE: conditional
+  COV_TRANSPORT_RANK: 4
+  COV_TRANSPORT_START_CYCLE: 1
+  EPSILON: 1e-06
+  GAP_PROMOTE: 0.3
+  GRAPH_TEACHER_FUSION: False
+  GTF_ALPHA: 0.9
+  GTF_ANCHOR_MIN_PER_CLASS: 5
+  GTF_ANCHOR_RATIO: 0.5
+  GTF_APPLY_TO: both
+  GTF_CHUNK_SIZE: 512
+  GTF_GRAPH_K: 15
+  GTF_STEPS: 20
+  GTF_STRENGTH: 0.5
+  GTF_TEMPERATURE: 0.07
+  GTR_CLASS_ROUTE_FLOOR: 0.25
+  GTR_CLASS_ROUTE_MAX_RATIO: 4.0
+  GTR_CLASS_ROUTE_MIN_COUNT: 20
+  GTR_CLASS_ROUTING: False
+  GTR_MEMORY: reversible
+  GTR_MIN_DISAGREEMENT: 0.25
+  GTR_MIN_GRAPH_CONF: 0.05
+  GTR_PAR: 0.0
+  GTR_STABLE_CYCLES: 2
+  KL_CANDIDATE: confidence
+  KL_MODE: clip
+  LOSS_DIAG: False
+  PAIR_FEATURE_ADAPT: False
+  PAIR_FEATURE_GATE_INIT: -2.0
+  PAIR_FEATURE_GRADIENT_MODE: joint
+  PAIR_FEATURE_LR_MULT: 1.0
+  PAIR_FEATURE_MAX_GATE: 0.05
+  PAIR_FEATURE_MIN_ACTIVE_RANK: 1
+  PAIR_FEATURE_START_CYCLE: 1
+  PAIR_FLOW_GATE_INIT: -2.0
+  PAIR_FLOW_MAX_GATE: 0.3
+  PAIR_FLOW_MIN_COUNT: 5
+  PAIR_FLOW_MIN_CYCLES: 2
+  PAIR_FLOW_RANK: 16
+  PL_BALANCE_COVERAGE: 0.75
+  PL_BALANCE_MIN_PER_CLASS: 1
+  PL_CLASS_BALANCE: False
+  PL_EXPAND: none
+  PL_MEMORY: monotonic
+  PL_MEMORY_MIN_CONF: 0.0
+  PL_MEMORY_WARMUP_CYCLES: 1
+  PL_MIN_CONF: 0.0
+  PL_STABLE_CYCLES: 2
+  PL_STABLE_MEMORY: reversible
+  PL_TOPK_PER_CLASS: 0
+  PROMOTE_K: 2
+  PROTO_ADAPT: False
+  PROTO_MIN_PER_CLASS: 3
+  PROTO_MIX: 0.0
+  PROTO_MOMENTUM: 0.0
+  PROTO_TEMPERATURE: 0.2
+  TARGET_HEAD_ADAPT: False
+  TARGET_HEAD_EMA: False
+  TARGET_HEAD_EMA_MOMENTUM: 0.99
+  TARGET_HEAD_LR_MULT: 1.0
+  TARGET_HEAD_MIX: 0.3
+  TARGET_HEAD_START_CYCLE: 1
+  TARGET_HEAD_VARIANT: blend
+  TARGET_RESIDUAL_GATE_INIT: -2.0
+  TARGET_RESIDUAL_MAX_GATE: 0.3
+  TAU_HIGH: 0.7
+  TAU_LOW: 0.4
+  TEMPORAL_DIAG: False
+  TEMPORAL_DIAG_DIR: temporal_diagnostics
+  THREE_VIEW_EM: False
+  THREE_VIEW_EM_DIRICHLET: 5.0
+  THREE_VIEW_EM_MIN_CLASS_ANCHORS: 3
+  THREE_VIEW_EM_PAR: 0.05
+  THREE_VIEW_EM_START_CYCLE: 1
+  THREE_VIEW_EM_STEPS: 5
+  TOPO_ALPHA: 0.9
+  TOPO_ANCHOR_MIN_PER_CLASS: 5
+  TOPO_ANCHOR_RATIO: 0.5
+  TOPO_CHUNK_SIZE: 512
+  TOPO_GRAPH_K: 15
+  TOPO_STEPS: 20
+  TOPO_TARGET_MIX: -1.0
+  TOPO_TEMPERATURE: 0.07
+  TRAJECTORY_ENSEMBLE: False
+  TRAJECTORY_SNAPSHOT_INTERVALS: [2, 3, 4]
+DESC:
+DIFO:
+  ARCH: ViT-B/32
+  CLS_PAR: 0.4
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 1.0
+  IIC_PAR: 1.0
+  LOAD: None
+  N_CTX: 4
+  TTA_STEPS: 1
+FOLDER: ./data/
+GKD:
+  CLS_PAR: 0.3
+  DISTANCE: cosine
+  ENT: True
+  ENT_PAR: 1.0
+  EPSILON: 1e-05
+  GENT: True
+  THRESHOLD: 0.0
+GPU_ID: 0
+ISSAVE: False
+LCFD:
+  ARCH: ViT-B/32
+  CLS_PAR: 0.4
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 1.0
+  LOSS_FUNC: sce
+  N_CTX: 4
+  TTA_STEPS: 1
+LOG_DEST: plmatch_260723_160237.txt
+LOG_TIME: 260723_160237
+MODEL:
+  ADAPTATION: source
+  ARCH: resnet101
+  EPISODIC: False
+  METHOD: plmatch_visda_full_seed2020
+  WEIGHTS: IMAGENET1K_V1
+NRC:
+  EPSILON: 1e-05
+  K: 5
+  KK: 4
+NUM_WORKERS: 4
+OPTIM:
+  DAMPENING: 0.0
+  LR: 0.001
+  LR_DECAY1: 0.1
+  LR_DECAY2: 1
+  LR_DECAY3: 0.01
+  METHOD: SGD
+  MOMENTUM: 0.9
+  NESTEROV: True
+  WD: 0.001
+PLUE:
+  CTR: True
+  EPSILON: 1e-05
+  LABEL_REFINEMENT: True
+  NEG_L: True
+  NUM_NEIGHBORS: 10
+  REWEIGHTING: True
+  TEMPORAL_LENGTH: 5
+ProDe:
+  ARCH: ViT-B/32
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 0.1
+  IIC_PAR: 1.3
+  LOAD: None
+  N_CTX: 4
+  TTA_STEPS: 1
+SAVE_DIR: ./output
+SCLM:
+  CLS_PAR: 0.3
+  CLS_SNT: 0.1
+  CONFI_PAR: 0.3
+  DISTANCE: cosine
+  ENT: True
+  ENT_PAR: 1.0
+  EPSILON: 1e-05
+  GENT: True
+  INITC_PAR: 0.3
+  NEW_ENT_PAR: 0.3
+  THRESHOLD: 0.0
+SETTING:
+  DATASET: VISDA-C
+  OUTPUT_SRC: source
+  S: 0
+  SEED: 2020
+  T: 1
+SHOT:
+  CLS_PAR: 0.3
+  DISTANCE: cosine
+  ENT: True
+  ENT_PAR: 1.0
+  EPSILON: 1e-05
+  GENT: True
+  THRESHOLD: 0.0
+SOURCE:
+  EPSILON: 1e-05
+  TRTE: val
+TEST:
+  BATCH_SIZE: 64
+  INTERVAL: 4
+  MAX_EPOCH: 4
+TPDS:
+  DISTANCE: cosine
+  EPSILON: 1e-05
+  THRESHOLD: 0.0
+TSD:
+  ARCH: ViT-B/32
+  CLS_PAR: 0.4
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 1.0
+  IIC_PAR: 1.0
+  LENT_PAR: 0.05
+  LOAD: None
+  N_CTX: 4
+  TTA_STEPS: 1
+bottleneck: 512
+class_num: 12
+domain: ['train', 'validation']
+name: TV
+name_file: ./data/VISDA-C/classname.txt
+name_src: T
+output_dir: ./output/uda/VISDA-C/TV/plmatch_visda_full_seed2020
+output_dir_src: ./source/uda/VISDA-C/T
++++++++++++++++++++IB+++++++++++++++++++++
+using plmatch method
+100%|███████████████████████████████████████| 338M/338M [00:21<00:00, 16.4MiB/s]
+/usr/local/lib/python3.10/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
+  warnings.warn(
+/usr/local/lib/python3.10/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=ResNet101_Weights.IMAGENET1K_V1`. You can also use `weights=ResNet101_Weights.DEFAULT` to get the most up-to-date weights.
+  warnings.warn(msg)
+/usr/local/lib/python3.10/site-packages/torch/nn/utils/weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+train_clip
+[26/07/23 16:05:21] [plmatch.py:  618]: Number of valid pseudo-labeled samples: 27165/55388; Accuracy = 93.98%
+[26/07/23 16:05:21] [plmatch.py:  627]: Mixed output with valid mask: 93.98%
+[26/07/23 16:05:21] [plmatch.py:  637]: all_mix_output Accuracy = 73.83%; clip_output_accuracy = 82.87%; pure_output_accuracy = 51.45%;
+[26/07/23 16:06:30] [plmatch.py:  344]: CLIP visual Accuracy = 86.30%;
+[26/07/23 16:10:28] [plmatch.py:  520]: Task: TV, Iter:866/3464; Cycle: 1/8; Accuracy = 83.57%; classifier_loss = 0.5798404216766357
+96.96 78.07 86.7 75.42 96.14 81.01 94.63 72.12 86.46 92.02 91.45 51.91
+[26/07/23 16:14:33] [plmatch.py:  520]: Task: TV, Iter:1732/3464; Cycle: 1/8; Accuracy = 84.72%; classifier_loss = 0.5301464200019836
+97.89 76.26 89.13 75.98 96.91 85.06 94.44 74.18 87.87 93.99 92.63 52.34
+[26/07/23 16:18:35] [plmatch.py:  520]: Task: TV, Iter:2598/3464; Cycle: 1/8; Accuracy = 85.54%; classifier_loss = 0.16969329118728638
+97.86 81.41 88.36 79.68 96.25 85.83 94.63 73.22 89.29 94.39 92.42 53.1
+[26/07/23 16:22:50] [plmatch.py:  520]: Task: TV, Iter:3464/3464; Cycle: 1/8; Accuracy = 85.76%; classifier_loss = 0.1856849640607834
+98.03 82.91 86.59 80.53 96.95 86.07 93.0 74.6 89.07 93.69 92.66 55.03
+[26/07/23 16:25:36] [plmatch.py:  618]: Number of valid pseudo-labeled samples: 49045/55388; Accuracy = 91.29%
+[26/07/23 16:25:36] [plmatch.py:  627]: Mixed output with valid mask: 91.62%
+[26/07/23 16:25:36] [plmatch.py:  637]: all_mix_output Accuracy = 87.61%; clip_output_accuracy = 86.92%; pure_output_accuracy = 84.30%;
+[26/07/23 16:27:00] [plmatch.py:  344]: CLIP visual Accuracy = 87.69%;
+[26/07/23 16:31:18] [plmatch.py:  520]: Task: TV, Iter:866/3464; Cycle: 2/8; Accuracy = 88.24%; classifier_loss = 0.12070833146572113
+98.27 82.79 87.33 79.68 96.93 95.13 94.69 79.62 92.48 94.48 92.04 65.37
+[26/07/23 16:35:24] [plmatch.py:  520]: Task: TV, Iter:1732/3464; Cycle: 2/8; Accuracy = 88.71%; classifier_loss = 0.3183611035346985
+98.41 87.51 88.38 78.87 97.44 94.7 93.98 81.23 91.84 96.14 92.68 63.32
+[26/07/23 16:39:31] [plmatch.py:  520]: Task: TV, Iter:2598/3464; Cycle: 2/8; Accuracy = 88.70%; classifier_loss = 0.11390213668346405
+97.94 84.66 88.14 81.22 97.42 94.22 94.25 81.88 92.46 96.54 93.7 61.91
+[26/07/23 16:43:34] [plmatch.py:  520]: Task: TV, Iter:3464/3464; Cycle: 2/8; Accuracy = 88.84%; classifier_loss = 0.3157336711883545
+98.52 84.06 87.29 79.86 97.08 94.6 93.74 83.0 92.59 95.44 93.74 66.13
+[26/07/23 16:45:58] [plmatch.py:  618]: Number of valid pseudo-labeled samples: 52134/55388; Accuracy = 90.10%
+[26/07/23 16:45:58] [plmatch.py:  627]: Mixed output with valid mask: 90.76%
+[26/07/23 16:45:58] [plmatch.py:  637]: all_mix_output Accuracy = 88.53%; clip_output_accuracy = 87.80%; pure_output_accuracy = 86.74%;
+[26/07/23 16:47:05] [plmatch.py:  344]: CLIP visual Accuracy = 88.28%;
+[26/07/23 16:51:01] [plmatch.py:  520]: Task: TV, Iter:866/3464; Cycle: 3/8; Accuracy = 89.32%; classifier_loss = 0.4602261483669281
+98.08 84.69 89.04 77.31 96.7 95.71 95.27 84.62 93.21 95.0 93.77 68.4
+[26/07/23 16:54:56] [plmatch.py:  520]: Task: TV, Iter:1732/3464; Cycle: 3/8; Accuracy = 89.73%; classifier_loss = 0.18681156635284424
+97.86 85.44 87.33 80.65 97.57 96.34 95.31 81.92 94.22 95.22 94.36 70.51
+[26/07/23 16:58:45] [plmatch.py:  520]: Task: TV, Iter:2598/3464; Cycle: 3/8; Accuracy = 89.79%; classifier_loss = 0.31333619356155396
+98.44 89.7 89.83 77.81 97.85 96.0 93.22 84.28 94.26 95.66 93.58 66.87
+[26/07/23 17:02:22] [plmatch.py:  520]: Task: TV, Iter:3464/3464; Cycle: 3/8; Accuracy = 89.78%; classifier_loss = 0.3309173882007599
+98.52 86.88 89.4 82.45 97.38 95.33 94.65 82.2 92.75 96.27 92.99 68.57
+[26/07/23 17:04:28] [plmatch.py:  618]: Number of valid pseudo-labeled samples: 53372/55388; Accuracy = 90.06%
+[26/07/23 17:04:28] [plmatch.py:  627]: Mixed output with valid mask: 90.42%
+[26/07/23 17:04:28] [plmatch.py:  637]: all_mix_output Accuracy = 88.94%; clip_output_accuracy = 88.28%; pure_output_accuracy = 88.04%;
+[26/07/23 17:05:43] [plmatch.py:  344]: CLIP visual Accuracy = 88.77%;
+[26/07/23 17:09:48] [plmatch.py:  520]: Task: TV, Iter:866/3464; Cycle: 4/8; Accuracy = 90.08%; classifier_loss = 0.26146095991134644
+98.52 86.27 87.29 78.77 97.74 96.19 94.63 84.12 94.09 97.11 94.92 71.32
+[26/07/23 17:14:03] [plmatch.py:  520]: Task: TV, Iter:1732/3464; Cycle: 4/8; Accuracy = 90.06%; classifier_loss = 0.0808468908071518
+98.19 84.95 88.55 82.16 97.87 96.58 95.96 83.55 94.35 96.14 93.58 68.82
+[26/07/23 17:18:00] [plmatch.py:  520]: Task: TV, Iter:2598/3464; Cycle: 4/8; Accuracy = 90.35%; classifier_loss = 0.26789483428001404
+98.49 88.75 88.29 81.39 98.0 96.67 94.72 84.32 94.13 95.97 94.92 68.49
+[26/07/23 17:22:10] [plmatch.py:  520]: Task: TV, Iter:3464/3464; Cycle: 4/8; Accuracy = 90.33%; classifier_loss = 0.11947612464427948
+98.44 87.6 89.0 81.66 97.78 96.92 95.24 85.02 93.91 95.75 93.15 69.48
+[26/07/23 17:24:56] [plmatch.py:  618]: Number of valid pseudo-labeled samples: 54002/55388; Accuracy = 89.89%
+[26/07/23 17:24:56] [plmatch.py:  627]: Mixed output with valid mask: 90.42%
+[26/07/23 17:24:56] [plmatch.py:  637]: all_mix_output Accuracy = 89.38%; clip_output_accuracy = 88.74%; pure_output_accuracy = 88.46%;
+[26/07/23 17:26:22] [plmatch.py:  344]: CLIP visual Accuracy = 89.05%;
+[26/07/23 17:30:23] [plmatch.py:  520]: Task: TV, Iter:866/3464; Cycle: 5/8; Accuracy = 90.53%; classifier_loss = 0.07942745089530945
+98.44 87.34 87.97 82.39 97.93 96.53 95.82 84.58 94.37 96.36 93.79 70.87
+[26/07/23 17:34:32] [plmatch.py:  520]: Task: TV, Iter:1732/3464; Cycle: 5/8; Accuracy = 90.82%; classifier_loss = 0.2712814211845398
+98.55 89.06 88.49 80.41 98.08 96.87 95.19 83.78 95.47 96.54 93.72 73.68
+[26/07/23 17:38:35] [plmatch.py:  520]: Task: TV, Iter:2598/3464; Cycle: 5/8; Accuracy = 90.76%; classifier_loss = 0.1790778636932373
+98.77 89.27 89.72 79.35 98.08 96.72 95.53 84.15 95.78 96.89 91.6 73.23
+[26/07/23 17:42:37] [plmatch.py:  520]: Task: TV, Iter:3464/3464; Cycle: 5/8; Accuracy = 90.65%; classifier_loss = 0.25136780738830566
+98.52 88.23 86.16 79.23 97.87 96.67 96.29 84.02 95.38 97.02 94.36 74.08
+[26/07/23 17:44:59] [plmatch.py:  618]: Number of valid pseudo-labeled samples: 54403/55388; Accuracy = 89.43%
+[26/07/23 17:44:59] [plmatch.py:  627]: Mixed output with valid mask: 90.14%
+[26/07/23 17:44:59] [plmatch.py:  637]: all_mix_output Accuracy = 89.37%; clip_output_accuracy = 88.96%; pure_output_accuracy = 88.41%;
+[26/07/23 17:46:21] [plmatch.py:  344]: CLIP visual Accuracy = 89.18%;
+[26/07/23 17:50:33] [plmatch.py:  520]: Task: TV, Iter:866/3464; Cycle: 6/8; Accuracy = 91.00%; classifier_loss = 0.32884252071380615
+97.97 88.78 87.74 82.82 97.83 97.3 94.79 86.4 95.89 96.32 94.19 71.95
+[26/07/23 17:54:43] [plmatch.py:  520]: Task: TV, Iter:1732/3464; Cycle: 6/8; Accuracy = 91.12%; classifier_loss = 0.10194873809814453
+98.66 89.87 89.74 82.29 98.25 97.54 94.67 84.52 95.78 96.89 94.33 70.84
+[26/07/23 17:58:51] [plmatch.py:  520]: Task: TV, Iter:2598/3464; Cycle: 6/8; Accuracy = 91.12%; classifier_loss = 0.45286786556243896
+98.68 89.55 88.57 80.79 98.02 97.59 95.89 84.7 96.04 96.58 94.62 72.37
+[26/07/23 18:02:52] [plmatch.py:  520]: Task: TV, Iter:3464/3464; Cycle: 6/8; Accuracy = 91.13%; classifier_loss = 0.1878145933151245
+98.66 90.33 88.78 79.21 98.27 96.96 95.53 84.3 95.76 96.93 94.66 74.21
+[26/07/23 18:05:14] [plmatch.py:  618]: Number of valid pseudo-labeled samples: 54615/55388; Accuracy = 89.78%
+[26/07/23 18:05:14] [plmatch.py:  627]: Mixed output with valid mask: 90.07%
+[26/07/23 18:05:14] [plmatch.py:  637]: all_mix_output Accuracy = 89.43%; clip_output_accuracy = 88.89%; pure_output_accuracy = 89.00%;
+[26/07/23 18:06:21] [plmatch.py:  344]: CLIP visual Accuracy = 89.30%;
+
+
+[26/07/23 18:10:15] [plmatch.py:  520]: Task: TV, Iter:866/3464; Cycle: 7/8; Accuracy = 91.15%; classifier_loss = 0.10808447003364563
+98.38 88.95 87.65 81.35 98.08 97.06 94.91 85.2 96.42 97.5 93.41 74.87
+[26/07/23 18:14:08] [plmatch.py:  520]: Task: TV, Iter:1732/3464; Cycle: 7/8; Accuracy = 91.25%; classifier_loss = 0.5250662565231323
+98.68 89.41 89.91 78.84 98.06 98.07 95.62 85.75 96.17 96.19 95.0 73.34
+[26/07/23 18:17:59] [plmatch.py:  520]: Task: TV, Iter:2598/3464; Cycle: 7/8; Accuracy = 91.23%; classifier_loss = 0.18473662436008453
+98.49 89.76 87.57 83.03 97.85 97.59 95.36 84.85 95.1 97.72 94.43 73.0
+[26/07/23 18:21:57] [plmatch.py:  520]: Task: TV, Iter:3464/3464; Cycle: 7/8; Accuracy = 91.31%; classifier_loss = 0.1284586787223816
+98.41 89.18 88.19 82.65 98.23 97.73 95.27 85.3 96.26 96.76 95.07 72.71
+[26/07/23 18:24:25] [plmatch.py:  618]: Number of valid pseudo-labeled samples: 54784/55388; Accuracy = 90.09%
+[26/07/23 18:24:25] [plmatch.py:  627]: Mixed output with valid mask: 90.03%
+[26/07/23 18:24:25] [plmatch.py:  637]: all_mix_output Accuracy = 89.54%; clip_output_accuracy = 88.98%; pure_output_accuracy = 89.47%;
+[26/07/23 18:25:38] [plmatch.py:  344]: CLIP visual Accuracy = 89.41%;
+[26/07/23 18:29:38] [plmatch.py:  520]: Task: TV, Iter:866/3464; Cycle: 8/8; Accuracy = 91.29%; classifier_loss = 0.6010850667953491
+98.6 89.15 88.76 80.77 97.83 97.83 96.22 85.5 96.5 97.02 95.56 71.7
+[26/07/23 18:33:37] [plmatch.py:  520]: Task: TV, Iter:1732/3464; Cycle: 8/8; Accuracy = 91.52%; classifier_loss = 0.5957019925117493
+98.6 91.02 88.68 79.79 98.21 97.69 95.65 83.05 96.37 97.81 94.97 76.42
+[26/07/23 18:37:46] [plmatch.py:  520]: Task: TV, Iter:2598/3464; Cycle: 8/8; Accuracy = 91.43%; classifier_loss = 0.17364376783370972
+98.82 90.94 88.06 80.5 98.19 97.83 95.05 85.08 95.56 97.5 95.04 74.59
+[26/07/23 18:41:43] [plmatch.py:  520]: Task: TV, Iter:3464/3464; Cycle: 8/8; Accuracy = 91.50%; classifier_loss = 0.1432003527879715
+98.71 89.38 88.98 80.61 98.21 97.78 95.93 85.12 96.0 97.37 95.21 74.73
+Running time: 9545.92 Seconds

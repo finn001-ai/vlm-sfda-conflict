@@ -285,6 +285,28 @@ single-seed macro advantage over matched PLMatch; the difference remains a
 class redistribution. The complete raw terminal record, JSONs, comparison,
 and checksums are archived in the latest proxy-loss audit directory.
 
+The complete-data, eight-cycle released `plmatch.py` control is now also
+complete. This entrypoint is the full official DUET pipeline, not only an
+independent PLMatch loss baseline: it runs dual-perspective pseudo labels,
+TMI/DVO CLIP optimization, and PLMatch target training. Final accuracy is
+`91.50` and oracle peak is `91.52`, consistent with the paper's one-decimal
+`91.4` result but above DCCL Stage14 final `91.04` by `0.46 pp`.
+
+The local effective YAML matches official code commit
+`bd2644bf6a115ddb4bb64ec94fb121841c5783de`. The only local PLMatch changes
+are an optional proxy list and output-name dispatch; with the full-run override
+empty, both are behaviorally inert. A paper/code discrepancy remains:
+Appendix Table 4 states VisDA momentum `0.999`, while the official YAML and
+code use `ACTIVE.BETA=0.99`. The run follows released code. Full evidence is in:
+
+```text
+archive/sfda_conflict_visda_full_duet_control_2026-07-24/
+```
+
+This full control supersedes the proxy tie for the full-data method decision:
+current DCCL is below its matched official DUET base. Do not claim a VisDA
+improvement for DCCL in its current form.
+
 ## Instructions For A New Conversation
 
 Start the new conversation with the following message:
@@ -309,10 +331,12 @@ VisDA-C 当前参考是 91.4。peak 必须明确标注为 oracle peak。
 当前待办：类别干预路由、稳定性3/3、GTR权重、组合CLS/CON/GTR、一致性
 stop-gradient 和 KL_PAR=0.3 均已失败并归档，不运行对应八轮任务，也不盲测
 KL=0.5。KL0.3时序NPZ零训练诊断也已完成，简单可靠性路由无法避免car/truck
-补偿。同环境25%代理原始PLMatch对照已完成：PLMatch最终/peak均为87.93，
-相对DCCL P1 87.83只高0.10pp，落在预声明±0.20pp持平区间；当前DCCL没有
-证明对匹配PLMatch有宏平均优势，差异主要是car/person与truck/其余类别重分配。
-完整证据与下一步约束见最新代理Loss审计README。
+补偿。25%代理对照虽持平，但完整数据8轮官方DUET代码路径最终91.50、
+peak 91.52，分别高于DCCL最终91.04和peak 91.07约0.46/0.45pp；因此完整
+数据结论是当前DCCL低于其匹配官方基线。该入口虽命名plmatch，实际运行完整
+DUET（双视角伪标签、TMI/DVO、PLMatch）。本地有效参数与官方发布YAML一致；
+论文附录VisDA动量0.999与官方代码BETA=0.99存在作者侧不一致，本次遵循代码。
+完整审计见archive/sfda_conflict_visda_full_duet_control_2026-07-24/。
 ```
 
 The KL `0.3` temporal NPZ files are archived. The handoff and proxy-loss audit

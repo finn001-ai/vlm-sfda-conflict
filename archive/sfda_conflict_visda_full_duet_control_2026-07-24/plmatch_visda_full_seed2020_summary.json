@@ -1,0 +1,60 @@
+{
+  "decision": "official_duet_path_above_dccl",
+  "metric": "VisDA mean per-class accuracy",
+  "selection_warning": "oracle peak reads validation labels and is diagnostic only",
+  "num_checkpoints": 32,
+  "final": {
+    "cycle": 8,
+    "iteration": 3464,
+    "accuracy": 91.50,
+    "class_accuracy": [
+      98.71,
+      89.38,
+      88.98,
+      80.61,
+      98.21,
+      97.78,
+      95.93,
+      85.12,
+      96.00,
+      97.37,
+      95.21,
+      74.73
+    ]
+  },
+  "oracle_peak": {
+    "cycle": 8,
+    "iteration": 1732,
+    "accuracy": 91.52,
+    "class_accuracy": [
+      98.60,
+      91.02,
+      88.68,
+      79.79,
+      98.21,
+      97.69,
+      95.65,
+      83.05,
+      96.37,
+      97.81,
+      94.97,
+      76.42
+    ]
+  },
+  "paper_reported_duet": 91.4,
+  "final_delta_vs_paper": 0.10,
+  "dccl_stage14_final": 91.04,
+  "dccl_stage14_oracle_peak": 91.07,
+  "final_delta_vs_dccl": 0.46,
+  "peak_delta_vs_dccl_peak": 0.45,
+  "official_path_hard_mean": 80.1533,
+  "dccl_hard_mean": 77.7867,
+  "hard_mean_delta_vs_dccl": 2.3666,
+  "official_path_other9_mean": 95.2856,
+  "dccl_other9_mean": 95.4556,
+  "other9_mean_delta_vs_dccl": -0.17,
+  "released_code_beta": 0.99,
+  "paper_appendix_visda_momentum": 0.999,
+  "official_code_commit": "bd2644bf6a115ddb4bb64ec94fb121841c5783de",
+  "runtime_seconds": 9545.92
+}
