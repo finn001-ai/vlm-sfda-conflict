@@ -34,6 +34,8 @@ ACTIVE:
   KL_PAR: 0.4
   CON_PAR: 0.2
 DCCL:
+  # Optional proxy list for compute-saving preflights. Keep empty for full runs.
+  ADAPTATION_LIST: ""
   CAND_PAR: 0.0
   CAND_START_CYCLE: 0
   CAND_TAU: 0.0

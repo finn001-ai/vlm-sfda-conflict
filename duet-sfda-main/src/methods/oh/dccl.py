@@ -223,8 +223,21 @@ def data_load(cfg):
     dsets = {}
     dset_loaders = {}
     train_bs = cfg.TEST.BATCH_SIZE
-    txt_tar = open(cfg.t_dset_path).readlines()
+    adaptation_path = str(cfg.DCCL.ADAPTATION_LIST).strip()
+    target_list_path = adaptation_path if adaptation_path else cfg.t_dset_path
+    if adaptation_path and not osp.isfile(target_list_path):
+        raise FileNotFoundError(
+            "DCCL.ADAPTATION_LIST does not exist: {}".format(target_list_path)
+        )
+    txt_tar = open(target_list_path).readlines()
     txt_test = open(cfg.test_dset_path).readlines()
+    if adaptation_path:
+        logging.info(
+            "DCCL adaptation proxy list: {}; adaptation_samples={}; "
+            "full_evaluation_samples={}".format(
+                target_list_path, len(txt_tar), len(txt_test)
+            )
+        )
     # txt_test = open(cfg.t_dset_path).readlines()
 
     # if not cfg.da == 'uda':
@@ -254,7 +267,9 @@ def data_load(cfg):
     dsets["test"] = ImageList_idx(txt_test, transform=image_test())
     dset_loaders["test"] = DataLoader(dsets["test"], batch_size=train_bs * 3, shuffle=False,
                                       num_workers=cfg.NUM_WORKERS, drop_last=False)
-    dsets["test_aug"] = ImageList_idx(txt_test, transform=train_transform)
+    # Pseudo-label indices must match the adaptation loader. Final evaluation
+    # remains on txt_test, which is always the complete target list.
+    dsets["test_aug"] = ImageList_idx(txt_tar, transform=train_transform)
     dset_loaders["test_aug"] = DataLoader(dsets["test_aug"], batch_size=train_bs, shuffle=False,
                                           num_workers=cfg.NUM_WORKERS, drop_last=False)
     return dset_loaders

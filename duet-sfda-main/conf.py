@@ -275,6 +275,9 @@ _C.DCCL.CAND_PAR = 0.05
 _C.DCCL.CAND_START_CYCLE = 0
 _C.DCCL.CAND_TAU = 0.0
 _C.DCCL.CAND_WEIGHT = "none"
+# Optional target-domain list used by adaptation, pseudo-labeling, and graph
+# construction. Evaluation continues to use the full target list.
+_C.DCCL.ADAPTATION_LIST = ""
 _C.DCCL.KL_MODE = "clip"
 _C.DCCL.KL_CANDIDATE = "confidence"
 _C.DCCL.CALIB_MODE = "none"

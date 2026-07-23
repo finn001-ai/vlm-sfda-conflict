@@ -210,17 +210,31 @@ def build_target_transform() -> NCropsTransform:
 def data_load(cfg) -> dict[str, DataLoader]:
     """构造目标域训练、评估和整域伪标签推理所需的三个 DataLoader。"""
 
-    with open(cfg.t_dset_path) as handle:
+    adaptation_path = str(cfg.DCCL.ADAPTATION_LIST).strip()
+    target_list_path = adaptation_path if adaptation_path else cfg.t_dset_path
+    if adaptation_path and not osp.isfile(target_list_path):
+        raise FileNotFoundError(
+            f"DCCL.ADAPTATION_LIST does not exist: {target_list_path}"
+        )
+    with open(target_list_path) as handle:
         target_rows = handle.readlines()
     with open(cfg.test_dset_path) as handle:
         test_rows = handle.readlines()
+    if adaptation_path:
+        LOGGER.info(
+            "Stage14代理列表: %s, 适配样本=%d, 完整评估样本=%d",
+            target_list_path,
+            len(target_rows),
+            len(test_rows),
+        )
 
     batch_size = cfg.TEST.BATCH_SIZE
     target_transform = build_target_transform()
 
     target_set = ImageList_idx(target_rows, transform=target_transform)
     test_set = ImageList_idx(test_rows, transform=image_test())
-    test_aug_set = ImageList_idx(test_rows, transform=target_transform)
+    # 伪标签索引必须与 target 子集一致；test 仍使用完整目标域列表。
+    test_aug_set = ImageList_idx(target_rows, transform=target_transform)
 
     return {
         "target": DataLoader(
