@@ -30,6 +30,7 @@ from data.datautils_domain import build_dataset
 from data.cls_to_names import *
 from data.domain_datasets import domain_datasets
 from sklearn.metrics import confusion_matrix
+from src.utils.adaptation_lists import load_adaptation_and_evaluation_rows
 
 logger = logging.getLogger(__name__)
 
@@ -185,8 +186,19 @@ def data_load(cfg):
     dsets = {}
     dset_loaders = {}
     train_bs = cfg.TEST.BATCH_SIZE
-    txt_tar = open(cfg.t_dset_path).readlines()
-    txt_test = open(cfg.test_dset_path).readlines()
+    adaptation_override = str(cfg.ACTIVE.ADAPTATION_LIST).strip()
+    txt_tar, txt_test, adaptation_path = load_adaptation_and_evaluation_rows(
+        cfg.t_dset_path,
+        cfg.test_dset_path,
+        adaptation_override,
+    )
+    if adaptation_override:
+        logging.info(
+            "PLMatch adaptation proxy list: {}; adaptation_samples={}; "
+            "full_evaluation_samples={}".format(
+                adaptation_path, len(txt_tar), len(txt_test)
+            )
+        )
     # txt_test = open(cfg.t_dset_path).readlines()
 
     # if not cfg.da == 'uda':
@@ -216,7 +228,9 @@ def data_load(cfg):
     dsets["test"] = ImageList_idx(txt_test, transform=image_test())
     dset_loaders["test"] = DataLoader(dsets["test"], batch_size=train_bs * 3, shuffle=False,
                                       num_workers=cfg.NUM_WORKERS, drop_last=False)
-    dsets["test_aug"] = ImageList_idx(txt_test, transform=train_transform)
+    # tar_idx indexes pseudo-label tensors produced by test_aug, so both
+    # loaders must use the same ordered adaptation rows. Only test stays full.
+    dsets["test_aug"] = ImageList_idx(txt_tar, transform=train_transform)
     dset_loaders["test_aug"] = DataLoader(dsets["test_aug"], batch_size=train_bs, shuffle=False,
                                           num_workers=cfg.NUM_WORKERS, drop_last=False)
     return dset_loaders
@@ -651,4 +665,3 @@ def clip_text(model, text_features, inputs_test):
     image_features = image_features / image_features.norm(dim=1, keepdim=True)
     logits = logit_scale * image_features @ text_features.t()
     return logits
-

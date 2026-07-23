@@ -33,3 +33,5 @@ ACTIVE:
   BETA: 0.99
   CON_PAR: 0.2
   KL_PAR: 0.4
+  # Optional compute-saving adaptation list; evaluation remains full VisDA.
+  ADAPTATION_LIST: ""

@@ -272,7 +272,19 @@ for truck `-3.82 pp`, so confidence-conditioned KL/graph routing is rejected.
 
 The next training evidence requirement is a same-environment 25% proxy
 original PLMatch control. Do not implement another graph gate before that
-control identifies whether DCCL is above or below its actual local base.
+control identifies whether DCCL is above or below its actual local base. Its
+proxy-safe loader, automatic decision tool, and guarded run script are
+implemented. After pulling latest `main`, run only:
+
+```bash
+cd /hyperai/home/vlm-sfda-conflict/duet-sfda-main
+git pull
+bash tools/run_visda_plmatch_proxy25_control.sh
+```
+
+The decision compares final accuracy against DCCL P1 `87.83` with a
+`+/-0.20 pp` tie margin. Peak is retained as oracle-only and does not determine
+the control decision.
 
 ## Instructions For A New Conversation
 
@@ -298,8 +310,9 @@ VisDA-C 当前参考是 91.4。peak 必须明确标注为 oracle peak。
 当前待办：类别干预路由、稳定性3/3、GTR权重、组合CLS/CON/GTR、一致性
 stop-gradient 和 KL_PAR=0.3 均已失败并归档，不运行对应八轮任务，也不盲测
 KL=0.5。KL0.3时序NPZ零训练诊断也已完成，简单可靠性路由无法避免car/truck
-补偿。下一项且仅下一项训练是同环境25%代理原始PLMatch对照；结论与证据
-要求见最新代理Loss审计README。
+补偿。下一项且仅下一项训练是同环境25%代理原始PLMatch对照；拉取最新main
+后运行 bash tools/run_visda_plmatch_proxy25_control.sh。结论与证据要求见
+最新代理Loss审计README。
 ```
 
 The KL `0.3` temporal NPZ files are archived. The handoff and proxy-loss audit

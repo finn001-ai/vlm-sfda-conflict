@@ -327,6 +327,54 @@ The next training evidence is therefore the matched PLMatch control, not
 another DCCL loss coefficient or graph gate. Full NPZ findings are in
 `proxy25_kl030_npz_diagnostic.md`.
 
+## Pending matched PLMatch control
+
+The repository now supports an original PLMatch proxy control without changing
+its pseudo-label rule, losses, CLIP update, optimizer, or model architecture.
+The only data change is:
+
+```text
+target loader   = deterministic 25% adaptation list
+test_aug loader = the same ordered 25% adaptation list
+test loader     = complete 55,388-image validation list
+```
+
+Using the same adaptation rows for `target` and `test_aug` is required because
+`tar_idx` addresses the pseudo-label tensors produced by `test_aug`.
+
+After pulling the latest `main`, run only:
+
+```bash
+cd /hyperai/home/vlm-sfda-conflict/duet-sfda-main
+git pull
+bash tools/run_visda_plmatch_proxy25_control.sh
+```
+
+The script creates the proxy if it is missing, validates that it is exactly the
+deterministic `ratio=0.25, seed=2020` subset, refuses to overwrite an existing
+control, verifies `13,847` adaptation and `55,388` evaluation samples, requires
+all 16 checkpoints, and writes:
+
+```text
+output/uda/VISDA-C/plmatch_visda_proxy25_seed2020_accuracy.csv
+output/uda/VISDA-C/plmatch_visda_proxy25_seed2020_summary.json
+output/uda/VISDA-C/plmatch_visda_proxy25_seed2020_per_class.csv
+output/uda/VISDA-C/plmatch_visda_proxy25_seed2020_control.json
+output/uda/VISDA-C/plmatch_visda_proxy25_seed2020_source_sha256.txt
+output/uda/VISDA-C/plmatch_visda_proxy25_seed2020_proxy_sha256.txt
+```
+
+Decision relative to DCCL P1 final `87.83`:
+
+```text
+PLMatch final > 88.03  -> plmatch_above_dccl
+87.63 through 88.03    -> matched_within_margin
+PLMatch final < 87.63  -> dccl_above_plmatch
+```
+
+The peak is recorded separately and labeled oracle-only. The control decision
+uses final accuracy.
+
 ## Raw artifacts
 
 ```text

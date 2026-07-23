@@ -105,7 +105,10 @@ if __name__ == "__main__":
         print("training source model")
         acc = SOURCE.train_source(cfg)
 
-    elif cfg.MODEL.METHOD in {"plmatch", "plmatch_ref12"}:
+    elif (
+        cfg.MODEL.METHOD in {"plmatch", "plmatch_ref12"}
+        or cfg.MODEL.METHOD.startswith("plmatch_")
+    ):
         print("using plmatch method")
         acc = PLMATCH.train_target(cfg)
 
