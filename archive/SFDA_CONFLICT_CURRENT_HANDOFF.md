@@ -270,21 +270,20 @@ signal predicts beneficial versus harmful graph top-1 changes with ROC AUC
 only 0.587. A fixed margin-and-stability gate still exchanges car `+4.35 pp`
 for truck `-3.82 pp`, so confidence-conditioned KL/graph routing is rejected.
 
-The next training evidence requirement is a same-environment 25% proxy
-original PLMatch control. Do not implement another graph gate before that
-control identifies whether DCCL is above or below its actual local base. Its
-proxy-safe loader, automatic decision tool, and guarded run script are
-implemented. After pulling latest `main`, run only:
+The same-environment 25% proxy original PLMatch control is complete. It uses
+13,847 images for adaptation, all 55,388 images for evaluation, and all 16
+planned checkpoints. Final and oracle peak coincide at `87.93`. This is only
+`+0.10 pp` above DCCL P1 `87.83`, inside the predeclared `+/-0.20 pp` tie
+margin, so the decision is `matched_within_margin`, not PLMatch superiority.
+The completed DCCL combined run `87.96` is similarly only `+0.03 pp` above
+PLMatch.
 
-```bash
-cd /hyperai/home/vlm-sfda-conflict/duet-sfda-main
-git pull
-bash tools/run_visda_plmatch_proxy25_control.sh
-```
-
-The decision compares final accuracy against DCCL P1 `87.83` with a
-`+/-0.20 pp` tie margin. Peak is retained as oracle-only and does not determine
-the control decision.
+At class level, PLMatch versus P1 gains car `+5.06 pp` and person `+3.50 pp`
+but loses truck `-2.60 pp`. Its car/person/truck mean is `+1.99 pp`, while its
+other-nine mean is `-0.52 pp`. Current DCCL therefore has no demonstrated
+single-seed macro advantage over matched PLMatch; the difference remains a
+class redistribution. The complete raw terminal record, JSONs, comparison,
+and checksums are archived in the latest proxy-loss audit directory.
 
 ## Instructions For A New Conversation
 
@@ -310,9 +309,10 @@ VisDA-C 当前参考是 91.4。peak 必须明确标注为 oracle peak。
 当前待办：类别干预路由、稳定性3/3、GTR权重、组合CLS/CON/GTR、一致性
 stop-gradient 和 KL_PAR=0.3 均已失败并归档，不运行对应八轮任务，也不盲测
 KL=0.5。KL0.3时序NPZ零训练诊断也已完成，简单可靠性路由无法避免car/truck
-补偿。下一项且仅下一项训练是同环境25%代理原始PLMatch对照；拉取最新main
-后运行 bash tools/run_visda_plmatch_proxy25_control.sh。结论与证据要求见
-最新代理Loss审计README。
+补偿。同环境25%代理原始PLMatch对照已完成：PLMatch最终/peak均为87.93，
+相对DCCL P1 87.83只高0.10pp，落在预声明±0.20pp持平区间；当前DCCL没有
+证明对匹配PLMatch有宏平均优势，差异主要是car/person与truck/其余类别重分配。
+完整证据与下一步约束见最新代理Loss审计README。
 ```
 
 The KL `0.3` temporal NPZ files are archived. The handoff and proxy-loss audit

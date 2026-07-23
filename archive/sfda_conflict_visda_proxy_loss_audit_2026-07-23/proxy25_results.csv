@@ -5,4 +5,4 @@ P2,complete,0.4,0.2,0.4,0.10,false,78.17,80.05,62.69,73.64,92.55,87.82,no_macro_
 combined_cls_con_gtr,complete,0.5,0.3,0.4,0.05,false,77.96,80.70,63.43,74.03,92.60,87.96,fail_continuation_gate
 consistency_stopgrad,complete,0.4,0.2,0.4,0.00,true,74.40,79.90,66.17,73.49,92.38,87.66,fail_proxy_gate
 kl030,complete,0.4,0.2,0.3,0.00,false,75.73,80.68,63.91,73.44,92.34,87.61,fail_proxy_gate
-plmatch_control,pending,0.4,0.2,0.4,,false,,,,,,,matched_same_environment_control
+plmatch_control,complete,0.4,0.2,0.4,,false,80.42,84.18,62.74,75.78,91.99,87.93,matched_within_0.20pp

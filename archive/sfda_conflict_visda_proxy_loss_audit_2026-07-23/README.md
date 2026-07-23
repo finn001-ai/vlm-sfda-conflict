@@ -305,33 +305,29 @@ not be launched for eight cycles.
 
 ## Next decision
 
-No further DCCL training run is predeclared from this scalar audit. In
-particular, do not infer that `KL_PAR=0.5` must help merely because `0.3`
-hurts.
+The same-environment, same-proxy original PLMatch control is complete. It
+finishes at `87.93`, only `+0.10 pp` above DCCL P1 `87.83`, so the
+predeclared decision is `matched_within_margin`, not PLMatch superiority. The
+completed DCCL combined run (`87.96`) is only `+0.03 pp` above PLMatch and also
+does not support a superiority claim.
 
-Before another method change:
+The result closes the uncertainty about the local baseline: current DCCL
+complexity has not produced a meaningful single-seed macro gain over matched
+PLMatch. It redistributes class performance. Relative to DCCL P1, PLMatch gains
+`+5.06 pp` car and `+3.50 pp` person but loses `-2.60 pp` truck; its difficult
+class mean is `+1.99 pp`, while its other-nine mean is `-0.52 pp`.
 
-1. Establish a same-environment, same-proxy PLMatch control. The current
-   `91.4` VisDA number is an external reference rather than a locally archived
-   matched run, so it cannot identify how much of the remaining gap is due to
-   DCCL versus source weights/environment.
-2. The KL 0.3 NPZ zero-training diagnostic is complete. It confirms that the
-   graph teacher raises car while converting too many true trucks into car.
-   The best simple label-free signal predicts beneficial versus harmful graph
-   top-1 changes with ROC AUC only `0.587`.
-3. Do not test a confidence/margin-conditioned KL or graph route. A fixed
-   margin-and-stability gate still raises car by `4.35 pp` while lowering truck
-   by `3.82 pp`; it fails the no-compensation gate.
-
-The next training evidence is therefore the matched PLMatch control, not
-another DCCL loss coefficient or graph gate. Full NPZ findings are in
+No further DCCL scalar run is predeclared. Do not infer that `KL_PAR=0.5` must
+help merely because `0.3` hurts, and do not test another simple
+confidence/margin graph route. Full class-level control analysis is in
+`plmatch_proxy25_control_analysis.md`; the earlier graph diagnostic remains in
 `proxy25_kl030_npz_diagnostic.md`.
 
-## Pending matched PLMatch control
+## Completed matched PLMatch control
 
-The repository now supports an original PLMatch proxy control without changing
-its pseudo-label rule, losses, CLIP update, optimizer, or model architecture.
-The only data change is:
+The control uses the original PLMatch path without changing its pseudo-label
+rule, losses, CLIP update, optimizer, or model architecture. The only data
+change is:
 
 ```text
 target loader   = deterministic 25% adaptation list
@@ -342,38 +338,21 @@ test loader     = complete 55,388-image validation list
 Using the same adaptation rows for `target` and `test_aug` is required because
 `tar_idx` addresses the pseudo-label tensors produced by `test_aug`.
 
-After pulling the latest `main`, run only:
-
-```bash
-cd /hyperai/home/vlm-sfda-conflict/duet-sfda-main
-git pull
-bash tools/run_visda_plmatch_proxy25_control.sh
-```
-
-The script creates the proxy if it is missing, validates that it is exactly the
-deterministic `ratio=0.25, seed=2020` subset, refuses to overwrite an existing
-control, verifies `13,847` adaptation and `55,388` evaluation samples, requires
-all 16 checkpoints, and writes:
+The archived terminal record verifies `13,847` adaptation and `55,388`
+evaluation samples, all 16 checkpoints, and a runtime of `2186.87` seconds.
+The final checkpoint and oracle peak coincide at Cycle 4, Iteration 868:
 
 ```text
-output/uda/VISDA-C/plmatch_visda_proxy25_seed2020_accuracy.csv
-output/uda/VISDA-C/plmatch_visda_proxy25_seed2020_summary.json
-output/uda/VISDA-C/plmatch_visda_proxy25_seed2020_per_class.csv
-output/uda/VISDA-C/plmatch_visda_proxy25_seed2020_control.json
-output/uda/VISDA-C/plmatch_visda_proxy25_seed2020_source_sha256.txt
-output/uda/VISDA-C/plmatch_visda_proxy25_seed2020_proxy_sha256.txt
+PLMatch final      = 87.93
+PLMatch oracle     = 87.93
+DCCL P1 final      = 87.83
+final delta        = +0.10 pp for PLMatch
+decision           = matched_within_margin
 ```
 
-Decision relative to DCCL P1 final `87.83`:
-
-```text
-PLMatch final > 88.03  -> plmatch_above_dccl
-87.63 through 88.03    -> matched_within_margin
-PLMatch final < 87.63  -> dccl_above_plmatch
-```
-
-The peak is recorded separately and labeled oracle-only. The control decision
-uses final accuracy.
+The supplied summary, generated control JSON, complete terminal record, and
+derived comparison are preserved in this archive. The peak is still labeled
+oracle-only even though it equals the final checkpoint in this run.
 
 ## Raw artifacts
 
@@ -385,6 +364,10 @@ proxy25_kl030_full_raw.txt
 proxy25_kl030_temporal_diagnostics.tar.gz
 proxy25_kl030_temporal_dynamics.json
 proxy25_kl030_npz_diagnostic.md
+plmatch_proxy25_control_terminal_record.txt
+plmatch_visda_proxy25_seed2020_summary.json
+plmatch_visda_proxy25_seed2020_control.json
+plmatch_proxy25_control_analysis.md
 proxy25_results.csv
 SHA256SUMS
 ```

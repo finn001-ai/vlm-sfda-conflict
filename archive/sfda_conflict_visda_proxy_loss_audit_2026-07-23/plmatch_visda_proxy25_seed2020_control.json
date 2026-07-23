@@ -1,0 +1,20 @@
+{
+  "decision": "matched_within_margin",
+  "metric": "VisDA mean per-class accuracy",
+  "selection_warning": "oracle peak reads validation labels and is diagnostic only",
+  "tie_margin": 0.2,
+  "num_checkpoints": 16,
+  "plmatch_final": 87.93,
+  "plmatch_oracle_peak": 87.93,
+  "plmatch_peak_cycle": 4,
+  "plmatch_peak_iter": 868,
+  "plmatch_hard_mean": 75.78,
+  "plmatch_other9_mean": 91.9856,
+  "dccl_p1_final": 87.83,
+  "dccl_p1_hard_mean": 73.79,
+  "dccl_p1_other9_mean": 92.51,
+  "final_delta_vs_dccl": 0.1,
+  "hard_mean_delta_vs_dccl": 1.99,
+  "other9_mean_delta_vs_dccl": -0.5244,
+  "next": "treat the external 91.4 gap as potentially environment-dependent"
+}
