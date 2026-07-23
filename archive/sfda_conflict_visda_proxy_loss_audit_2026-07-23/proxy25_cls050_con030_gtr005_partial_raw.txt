@@ -1,0 +1,389 @@
+CPU: 16 vCPU  (OMP_NUM_THREADS=16)
+(base) root@k0hauxeo3dlc-yttrve499c9k-main:/hyperai/home# cd vlm-sfda-conflict/duet-sfda-main/
+(base) root@k0hauxeo3dlc-yttrve499c9k-main:/hyperai/home/vlm-sfda-conflict/duet-sfda-main# python image_target_of_oh_vs.py \
+  --cfg cfgs/visda/temporal_precision_head.yaml \
+  CKPT_DIR . SETTING.OUTPUT_SRC source \
+  MODEL.METHOD temporal_precision_head_visda_proxy25_p4_cls050
+[26/07/23 11:45:05] [conf.py:  537]: PyTorch Version: torch=2.8.0+cu128, cuda=12.8
+[26/07/23 11:45:05] [conf.py:  538]: ACCD:
+  ALPHA: 0.9
+  ANCHOR_MEMORY: dynamic
+  ANCHOR_MIN_PER_CLASS: 5
+  ANCHOR_RATIO: 0.5
+  CANDIDATE_MARGIN: 0.1
+  CANDIDATE_MASS: 0.6
+  CHUNK_SIZE: 512
+  ENABLED: False
+  GRAPH_K: 15
+  RESOLUTION_ACTION: hard_label
+  RESOLUTION_MEMORY: persistent
+  RESOLUTION_TARGET: both
+  STABLE_CYCLES: 2
+  START_CYCLE: 0
+  STEPS: 20
+  TEMPERATURE: 0.07
+ACTIVE:
+  ARCH: ViT-B/32
+  BETA: 0.99
+  CLS_PAR: 0.5
+  CON_PAR: 0.3
+  CTX_INIT: a_photo_of_a
+  CYCLE: 4
+  ENT: True
+  EPSILON: 1e-05
+  FINE_LR: 1e-07
+  GENT: True
+  GENT_PAR: 0.1
+  IIC_PAR: 1.0
+  KL_PAR: 0.4
+  LOAD: None
+  N_CTX: 4
+  Q_VALUE: 1.05
+  TTA_STEPS: 1
+ADACONTRAST:
+  ALPHA: 1.0
+  BETA: 1.0
+  CE_SUP_TYPE: weak_strong
+  CE_TYPE: standard
+  CONTRAST_TYPE: class_aware
+  DIST_TYPE: cosine
+  ETA: 1.0
+  FULL_PROGRESS: 0
+  GAMMA: 0.2
+  NUM_NEIGHBORS: 10
+  OPTIM_COS: True
+  OPTIM_EXP: False
+  REFINE_METHOD: nearest_neighbors
+  SCHEDULE: [10, 20]
+CKPT_DIR: .
+CKPT_PATH: 
+COWA:
+  ALPHA: 0.2
+  COEFF: JMDS
+  DISTANCE: cosine
+  EPSILON: 1e-05
+  EPSILON2: 1e-06
+  PICKLE: False
+  WARM: 0.0
+CUDNN:
+  BENCHMARK: True
+DA: uda
+DATA_DIR: /home/sfda/data/
+DCCL:
+  ADAPTATION_LIST: data/VISDA-C/validation_proxy25_seed2020_list.txt
+  CALIB_AUTO_LAMBDA: 0.2
+  CALIB_MODE: both_prior
+  CALIB_POWER: 0.5
+  CAND_PAR: 0.0
+  CAND_START_CYCLE: 0
+  CAND_TAU: 0.0
+  CAND_WEIGHT: none
+  COV_GLOBAL_HOLDOUT_RATIO: 0.2
+  COV_GLOBAL_MIN_ANCHORS: 512
+  COV_GLOBAL_MIN_IMPROVEMENT: 0.001
+  COV_GLOBAL_SHRINKAGE: 0.1
+  COV_TRANSPORT_ADAPT: False
+  COV_TRANSPORT_MAX_GATE: 0.05
+  COV_TRANSPORT_MIN_ANCHORS: 8
+  COV_TRANSPORT_MODE: conditional
+  COV_TRANSPORT_RANK: 4
+  COV_TRANSPORT_START_CYCLE: 1
+  EPSILON: 1e-06
+  GAP_PROMOTE: 0.3
+  GRAPH_TEACHER_FUSION: True
+  GTF_ALPHA: 0.9
+  GTF_ANCHOR_MIN_PER_CLASS: 5
+  GTF_ANCHOR_RATIO: 0.5
+  GTF_APPLY_TO: none
+  GTF_CHUNK_SIZE: 512
+  GTF_GRAPH_K: 15
+  GTF_STEPS: 20
+  GTF_STRENGTH: 0.5
+  GTF_TEMPERATURE: 0.07
+  GTR_CLASS_ROUTE_FLOOR: 0.25
+  GTR_CLASS_ROUTE_MAX_RATIO: 4.0
+  GTR_CLASS_ROUTE_MIN_COUNT: 20
+  GTR_CLASS_ROUTING: False
+  GTR_MEMORY: reversible
+  GTR_MIN_DISAGREEMENT: 0.25
+  GTR_MIN_GRAPH_CONF: 0.05
+  GTR_PAR: 0.05
+  GTR_STABLE_CYCLES: 2
+  KL_CANDIDATE: confidence
+  KL_MODE: clip
+  PAIR_FEATURE_ADAPT: False
+  PAIR_FEATURE_GATE_INIT: -2.0
+  PAIR_FEATURE_GRADIENT_MODE: joint
+  PAIR_FEATURE_LR_MULT: 1.0
+  PAIR_FEATURE_MAX_GATE: 0.05
+  PAIR_FEATURE_MIN_ACTIVE_RANK: 1
+  PAIR_FEATURE_START_CYCLE: 1
+  PAIR_FLOW_GATE_INIT: -2.0
+  PAIR_FLOW_MAX_GATE: 0.3
+  PAIR_FLOW_MIN_COUNT: 5
+  PAIR_FLOW_MIN_CYCLES: 2
+  PAIR_FLOW_RANK: 16
+  PL_BALANCE_COVERAGE: 0.75
+  PL_BALANCE_MIN_PER_CLASS: 1
+  PL_CLASS_BALANCE: False
+  PL_EXPAND: none
+  PL_MEMORY: stable
+  PL_MEMORY_MIN_CONF: 0.0
+  PL_MEMORY_WARMUP_CYCLES: 1
+  PL_MIN_CONF: 0.0
+  PL_STABLE_CYCLES: 2
+  PL_STABLE_MEMORY: reversible
+  PL_TOPK_PER_CLASS: 0
+  PROMOTE_K: 999
+  PROTO_ADAPT: False
+  PROTO_MIN_PER_CLASS: 3
+  PROTO_MIX: 0.0
+  PROTO_MOMENTUM: 0.0
+  PROTO_TEMPERATURE: 0.2
+  TARGET_HEAD_ADAPT: True
+  TARGET_HEAD_EMA: False
+  TARGET_HEAD_EMA_MOMENTUM: 0.99
+  TARGET_HEAD_LR_MULT: 1.0
+  TARGET_HEAD_MIX: 0.3
+  TARGET_HEAD_START_CYCLE: 1
+  TARGET_HEAD_VARIANT: blend
+  TARGET_RESIDUAL_GATE_INIT: -2.0
+  TARGET_RESIDUAL_MAX_GATE: 0.3
+  TAU_HIGH: 0.7
+  TAU_LOW: 0.4
+  TEMPORAL_DIAG: True
+  TEMPORAL_DIAG_DIR: temporal_diagnostics
+  THREE_VIEW_EM: False
+  THREE_VIEW_EM_DIRICHLET: 5.0
+  THREE_VIEW_EM_MIN_CLASS_ANCHORS: 3
+  THREE_VIEW_EM_PAR: 0.05
+  THREE_VIEW_EM_START_CYCLE: 1
+  THREE_VIEW_EM_STEPS: 5
+  TOPO_ALPHA: 0.9
+  TOPO_ANCHOR_MIN_PER_CLASS: 5
+  TOPO_ANCHOR_RATIO: 0.5
+  TOPO_CHUNK_SIZE: 512
+  TOPO_GRAPH_K: 15
+  TOPO_STEPS: 20
+  TOPO_TARGET_MIX: -1.0
+  TOPO_TEMPERATURE: 0.07
+  TRAJECTORY_ENSEMBLE: False
+  TRAJECTORY_SNAPSHOT_INTERVALS: [2, 3, 4]
+DESC: 
+DIFO:
+  ARCH: ViT-B/32
+  CLS_PAR: 0.4
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 1.0
+  IIC_PAR: 1.0
+  LOAD: None
+  N_CTX: 4
+  TTA_STEPS: 1
+FOLDER: ./data/
+GKD:
+  CLS_PAR: 0.3
+  DISTANCE: cosine
+  ENT: True
+  ENT_PAR: 1.0
+  EPSILON: 1e-05
+  GENT: True
+  THRESHOLD: 0.0
+GPU_ID: 0
+ISSAVE: False
+LCFD:
+  ARCH: ViT-B/32
+  CLS_PAR: 0.4
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 1.0
+  LOSS_FUNC: sce
+  N_CTX: 4
+  TTA_STEPS: 1
+LOG_DEST: temporal_precision_head_260723_114505.txt
+LOG_TIME: 260723_114505
+MODEL:
+  ADAPTATION: source
+  ARCH: resnet101
+  EPISODIC: False
+  METHOD: temporal_precision_head_visda_proxy25_p4_cls050
+  WEIGHTS: IMAGENET1K_V1
+NRC:
+  EPSILON: 1e-05
+  K: 5
+  KK: 4
+NUM_WORKERS: 4
+OPTIM:
+  DAMPENING: 0.0
+  LR: 0.001
+  LR_DECAY1: 0.1
+  LR_DECAY2: 1
+  LR_DECAY3: 0.01
+  METHOD: SGD
+  MOMENTUM: 0.9
+  NESTEROV: True
+  WD: 0.001
+PLUE:
+  CTR: True
+  EPSILON: 1e-05
+  LABEL_REFINEMENT: True
+  NEG_L: True
+  NUM_NEIGHBORS: 10
+  REWEIGHTING: True
+  TEMPORAL_LENGTH: 5
+ProDe:
+  ARCH: ViT-B/32
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 0.1
+  IIC_PAR: 1.3
+  LOAD: None
+  N_CTX: 4
+  TTA_STEPS: 1
+SAVE_DIR: ./output
+SCLM:
+  CLS_PAR: 0.3
+  CLS_SNT: 0.1
+  CONFI_PAR: 0.3
+  DISTANCE: cosine
+  ENT: True
+  ENT_PAR: 1.0
+  EPSILON: 1e-05
+  GENT: True
+  INITC_PAR: 0.3
+  NEW_ENT_PAR: 0.3
+  THRESHOLD: 0.0
+SETTING:
+  DATASET: VISDA-C
+  OUTPUT_SRC: source
+  S: 0
+  SEED: 2020
+  T: 1
+SHOT:
+  CLS_PAR: 0.3
+  DISTANCE: cosine
+  ENT: True
+  ENT_PAR: 1.0
+  EPSILON: 1e-05
+  GENT: True
+  THRESHOLD: 0.0
+SOURCE:
+  EPSILON: 1e-05
+  TRTE: val
+TEST:
+  BATCH_SIZE: 64
+  INTERVAL: 4
+  MAX_EPOCH: 4
+TPDS:
+  DISTANCE: cosine
+  EPSILON: 1e-05
+  THRESHOLD: 0.0
+TSD:
+  ARCH: ViT-B/32
+  CLS_PAR: 0.4
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 1.0
+  IIC_PAR: 1.0
+  LENT_PAR: 0.05
+  LOAD: None
+  N_CTX: 4
+  TTA_STEPS: 1
+bottleneck: 512
+class_num: 12
+domain: ['train', 'validation']
+name: TV
+name_file: ./data/VISDA-C/classname.txt
+name_src: T
+output_dir: ./output/uda/VISDA-C/TV/temporal_precision_head_visda_proxy25_p4_cls050
+output_dir_src: ./source/uda/VISDA-C/T
++++++++++++++++++++IB+++++++++++++++++++++
+using dccl method
+100%|███████████████████████████████████████| 338M/338M [00:20<00:00, 16.9MiB/s]
+[26/07/23 11:45:28] [dccl.py:  235]: DCCL adaptation proxy list: data/VISDA-C/validation_proxy25_seed2020_list.txt; adaptation_samples=13847; full_evaluation_samples=55388
+/usr/local/lib/python3.10/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
+  warnings.warn(
+/usr/local/lib/python3.10/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=ResNet101_Weights.IMAGENET1K_V1`. You can also use `weights=ResNet101_Weights.DEFAULT` to get the most up-to-date weights.
+  warnings.warn(msg)
+/usr/local/lib/python3.10/site-packages/torch/nn/utils/weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+[26/07/23 11:45:30] [dccl.py:  947]: DCCL target head enabled: variant=blend; mix=0.300; start_cycle=1; lr_mult=1.000
+train_clip
+[26/07/23 11:46:14] [dccl.py: 2352]: DCCL classwise calibration: requested_mode=both_prior; selected_mode=both_prior; power=0.500; source_prior_range=(0.0047,0.2871); clip_prior_range=(0.0382,0.1303)
+[26/07/23 11:46:14] [dccl.py: 2185]: DCCL pseudo-label memory: mode=stable; stable_memory=reversible; warmup=1; current=6936; stable=0; selected=6936
+[26/07/23 11:46:14] [dccl.py: 2482]: Number of valid pseudo-labeled samples: 6936/13847; Accuracy = 94.16%
+[26/07/23 11:46:14] [dccl.py: 2489]: Mixed output with valid mask: 94.16%
+[26/07/23 11:46:14] [dccl.py: 2499]: all_mix_output Accuracy = 74.80%; clip_output_accuracy = 82.81%; pure_output_accuracy = 52.42%;
+[26/07/23 11:46:14] [dccl.py:  733]: DCCL states: conflicts=6911; promoted=0; rejected=424; candidates=6487
+[26/07/23 11:46:14] [dccl.py:  871]: DCCL graph-teacher fusion: anchors=3472; strength=0.500; apply_to=none; mean_graph_weight=0.3738; max_graph_weight=0.4998; changed_top1=1821
+[26/07/23 11:46:14] [dccl.py:  839]: DCCL temporal diagnostics wrote: ./output/uda/VISDA-C/TV/temporal_precision_head_visda_proxy25_p4_cls050/temporal_diagnostics/TV_cycle01.npz
+[26/07/23 11:46:14] [dccl.py: 1454]: DCCL graph-temporal residual: eligible=4867; newly_stable=0; stable_active=0; demoted=0; loss_active=0; mean_weight=0.0000; mean_graph_conf=0.0000; mean_disagreement=0.0000
+[26/07/23 11:46:14] [dccl.py: 1631]: DCCL candidate gate: start_cycle=0; tau=0.000; weight=none; selected=6487/6911
+[26/07/23 11:46:33] [dccl.py:  672]: CLIP visual Accuracy = 85.33%;
+[26/07/23 11:49:13] [dccl.py: 1973]: Task: TV, Iter:217/868; Cycle: 1/4; Accuracy = 80.27%; classifier_loss = 0.3944031000137329
+96.57 79.45 84.88 68.7 94.33 78.22 92.46 62.6 88.66 83.82 87.54 46.03
+[26/07/23 11:51:19] [dccl.py: 1973]: Task: TV, Iter:434/868; Cycle: 1/4; Accuracy = 81.98%; classifier_loss = 0.4619537889957428
+96.93 76.52 84.73 70.86 95.25 81.25 91.72 66.77 88.39 89.52 90.93 50.94
+[26/07/23 11:53:21] [dccl.py: 1973]: Task: TV, Iter:651/868; Cycle: 1/4; Accuracy = 81.92%; classifier_loss = 0.6630889177322388
+97.81 76.83 83.62 73.54 96.67 83.42 92.15 64.7 88.7 89.13 90.32 46.09
+[26/07/23 11:55:24] [dccl.py: 1973]: Task: TV, Iter:868/868; Cycle: 1/4; Accuracy = 82.26%; classifier_loss = 0.4715295433998108
+97.28 78.04 82.99 73.61 95.1 83.52 92.89 64.42 87.38 91.76 91.53 48.56
+[26/07/23 11:55:49] [dccl.py: 2352]: DCCL classwise calibration: requested_mode=both_prior; selected_mode=both_prior; power=0.500; source_prior_range=(0.0430,0.1498); clip_prior_range=(0.0405,0.1560)
+[26/07/23 11:55:49] [dccl.py: 2185]: DCCL pseudo-label memory: mode=stable; stable_memory=reversible; warmup=0; current=11474; stable=6559; selected=6559
+[26/07/23 11:55:49] [dccl.py: 2482]: Number of valid pseudo-labeled samples: 6559/13847; Accuracy = 96.46%
+[26/07/23 11:55:49] [dccl.py: 2489]: Mixed output with valid mask: 96.46%
+[26/07/23 11:55:49] [dccl.py: 2499]: all_mix_output Accuracy = 86.13%; clip_output_accuracy = 85.69%; pure_output_accuracy = 80.81%;
+[26/07/23 11:55:49] [dccl.py:  733]: DCCL states: conflicts=2373; promoted=0; rejected=250; candidates=2123
+[26/07/23 11:55:49] [dccl.py:  871]: DCCL graph-teacher fusion: anchors=5741; strength=0.500; apply_to=none; mean_graph_weight=0.4242; max_graph_weight=0.5000; changed_top1=766
+[26/07/23 11:55:49] [dccl.py:  839]: DCCL temporal diagnostics wrote: ./output/uda/VISDA-C/TV/temporal_precision_head_visda_proxy25_p4_cls050/temporal_diagnostics/TV_cycle02.npz
+[26/07/23 11:55:49] [dccl.py: 1454]: DCCL graph-temporal residual: eligible=1765; newly_stable=792; stable_active=792; demoted=0; loss_active=548; mean_weight=0.5359; mean_graph_conf=0.7744; mean_disagreement=0.6897
+[26/07/23 11:55:49] [dccl.py: 1631]: DCCL candidate gate: start_cycle=0; tau=0.000; weight=none; selected=2123/2373
+[26/07/23 11:56:02] [dccl.py:  672]: CLIP visual Accuracy = 86.97%;
+[26/07/23 11:58:03] [dccl.py: 1973]: Task: TV, Iter:217/868; Cycle: 2/4; Accuracy = 84.49%; classifier_loss = 0.36465853452682495
+97.5 77.53 82.62 73.48 96.87 89.01 93.29 71.65 91.82 91.8 92.23 56.04
+[26/07/23 11:59:53] [dccl.py: 1973]: Task: TV, Iter:434/868; Cycle: 2/4; Accuracy = 85.13%; classifier_loss = 0.462841659784317
+97.64 77.99 84.97 76.37 96.4 90.41 93.1 73.95 91.87 91.98 92.4 54.51
+[26/07/23 12:01:44] [dccl.py: 1973]: Task: TV, Iter:651/868; Cycle: 2/4; Accuracy = 85.44%; classifier_loss = 0.3131429851055145
+97.7 81.99 83.01 76.68 96.18 90.41 93.62 74.82 91.98 93.12 91.97 53.86
+[26/07/23 12:03:44] [dccl.py: 1973]: Task: TV, Iter:868/868; Cycle: 2/4; Accuracy = 85.47%; classifier_loss = 0.39525261521339417
+97.2 80.78 81.77 79.41 95.84 91.23 94.39 76.53 92.37 90.97 90.93 54.25
+[26/07/23 12:04:07] [dccl.py: 2352]: DCCL classwise calibration: requested_mode=both_prior; selected_mode=both_prior; power=0.500; source_prior_range=(0.0426,0.1676); clip_prior_range=(0.0426,0.1554)
+[26/07/23 12:04:07] [dccl.py: 2185]: DCCL pseudo-label memory: mode=stable; stable_memory=reversible; warmup=0; current=11947; stable=10834; selected=10834
+[26/07/23 12:04:07] [dccl.py: 2482]: Number of valid pseudo-labeled samples: 10834/13847; Accuracy = 94.50%
+[26/07/23 12:04:07] [dccl.py: 2489]: Mixed output with valid mask: 94.50%
+[26/07/23 12:04:07] [dccl.py: 2499]: all_mix_output Accuracy = 87.62%; clip_output_accuracy = 86.51%; pure_output_accuracy = 84.27%;
+[26/07/23 12:04:07] [dccl.py:  733]: DCCL states: conflicts=1900; promoted=0; rejected=142; candidates=1758
+[26/07/23 12:04:07] [dccl.py:  871]: DCCL graph-teacher fusion: anchors=5976; strength=0.500; apply_to=none; mean_graph_weight=0.4377; max_graph_weight=0.5000; changed_top1=665
+[26/07/23 12:04:07] [dccl.py:  839]: DCCL temporal diagnostics wrote: ./output/uda/VISDA-C/TV/temporal_precision_head_visda_proxy25_p4_cls050/temporal_diagnostics/TV_cycle03.npz
+[26/07/23 12:04:07] [dccl.py: 1454]: DCCL graph-temporal residual: eligible=1451; newly_stable=357; stable_active=755; demoted=394; loss_active=504; mean_weight=0.5600; mean_graph_conf=0.7716; mean_disagreement=0.7196
+[26/07/23 12:04:07] [dccl.py: 1631]: DCCL candidate gate: start_cycle=0; tau=0.000; weight=none; selected=1758/1900
+[26/07/23 12:04:20] [dccl.py:  672]: CLIP visual Accuracy = 87.35%;
+[26/07/23 12:06:09] [dccl.py: 1973]: Task: TV, Iter:217/868; Cycle: 3/4; Accuracy = 86.73%; classifier_loss = 0.2587044835090637
+96.9 84.95 85.74 76.65 96.38 93.59 93.75 76.92 91.07 93.95 91.41 59.44
+[26/07/23 12:08:14] [dccl.py: 1973]: Task: TV, Iter:434/868; Cycle: 3/4; Accuracy = 87.00%; classifier_loss = 0.2376629114151001
+97.12 81.9 86.46 74.46 96.55 95.04 93.98 78.27 93.58 93.42 93.41 59.77
+[26/07/23 12:10:19] [dccl.py: 1973]: Task: TV, Iter:651/868; Cycle: 3/4; Accuracy = 87.36%; classifier_loss = 0.43193402886390686
+98.08 84.69 85.76 76.3 96.35 94.46 93.03 79.38 93.6 92.59 91.97 62.11
+[26/07/23 12:12:27] [dccl.py: 1973]: Task: TV, Iter:868/868; Cycle: 3/4; Accuracy = 87.08%; classifier_loss = 0.3349199593067169
+97.81 85.21 84.67 77.43 96.95 94.27 93.36 78.72 90.79 94.04 91.41 60.29
+[26/07/23 12:12:51] [dccl.py: 2352]: DCCL classwise calibration: requested_mode=both_prior; selected_mode=both_prior; power=0.500; source_prior_range=(0.0447,0.1576); clip_prior_range=(0.0443,0.1583)
+[26/07/23 12:12:51] [dccl.py: 2185]: DCCL pseudo-label memory: mode=stable; stable_memory=reversible; warmup=0; current=12219; stable=11383; selected=11383
+[26/07/23 12:12:51] [dccl.py: 2482]: Number of valid pseudo-labeled samples: 11383/13847; Accuracy = 94.20%
+[26/07/23 12:12:51] [dccl.py: 2489]: Mixed output with valid mask: 94.20%
+[26/07/23 12:12:51] [dccl.py: 2499]: all_mix_output Accuracy = 87.77%; clip_output_accuracy = 87.10%; pure_output_accuracy = 85.27%;
+[26/07/23 12:12:51] [dccl.py:  733]: DCCL states: conflicts=1628; promoted=0; rejected=107; candidates=1521
+[26/07/23 12:12:51] [dccl.py:  871]: DCCL graph-teacher fusion: anchors=6114; strength=0.500; apply_to=none; mean_graph_weight=0.4438; max_graph_weight=0.5000; changed_top1=552
+[26/07/23 12:12:51] [dccl.py:  839]: DCCL temporal diagnostics wrote: ./output/uda/VISDA-C/TV/temporal_precision_head_visda_proxy25_p4_cls050/temporal_diagnostics/TV_cycle04.npz
+[26/07/23 12:12:51] [dccl.py: 1454]: DCCL graph-temporal residual: eligible=1261; newly_stable=239; stable_active=663; demoted=331; loss_active=445; mean_weight=0.5658; mean_graph_conf=0.7718; mean_disagreement=0.7268
+[26/07/23 12:12:51] [dccl.py: 1631]: DCCL candidate gate: start_cycle=0; tau=0.000; weight=none; selected=1521/1628
+[26/07/23 12:13:04] [dccl.py:  672]: CLIP visual Accuracy = 87.79%;
+[26/07/23 12:15:06] [dccl.py: 1973]: Task: TV, Iter:217/868; Cycle: 4/4; Accuracy = 87.68%; classifier_loss = 0.31037503480911255
+97.5 84.63 85.76 79.27 96.33 94.46 93.81 81.65 93.36 93.38 90.86 61.16

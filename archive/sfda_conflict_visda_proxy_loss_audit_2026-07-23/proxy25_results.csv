@@ -1,0 +1,7 @@
+run,status,cls_par,con_par,kl_par,gtr_par,stop_grad,car,person,truck,hard_mean,other9_mean,final_macro,decision
+P0,complete,0.4,0.2,0.4,0.05,false,76.95,80.27,63.82,73.68,92.52,87.81,no_macro_gain
+P1,complete,0.4,0.2,0.4,0.00,false,75.36,80.68,65.34,73.79,92.51,87.83,matched_proxy_reference
+P2,complete,0.4,0.2,0.4,0.10,false,78.17,80.05,62.69,73.64,92.55,87.82,no_macro_gain
+combined_cls_con_gtr,complete,0.5,0.3,0.4,0.05,false,77.96,80.70,63.43,74.03,92.60,87.96,fail_continuation_gate
+consistency_stopgrad,complete,0.4,0.2,0.4,0.00,true,74.40,79.90,66.17,73.49,92.38,87.66,fail_proxy_gate
+kl030,pending,0.4,0.2,0.3,0.00,false,,,,,,,predeclared_next
