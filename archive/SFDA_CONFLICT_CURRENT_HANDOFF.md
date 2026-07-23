@@ -264,10 +264,15 @@ archive/sfda_conflict_visda_proxy_loss_audit_2026-07-23/
 ```
 
 There is no pending DCCL scalar run. Do not automatically test KL 0.5. The
-next evidence requirement is a same-environment 25% proxy PLMatch control plus
-a zero-training comparison of the P1 and KL 0.3 temporal NPZs. Only a
-label-free reliability signal that predicts the car/truck failure may justify
-a conservative per-sample KL route that keeps the global KL 0.4 anchor.
+KL 0.3 temporal NPZ audit is complete: the graph teacher improves car by
+7.62 pp over CLIP but lowers truck by 9.81 pp, and the best simple label-free
+signal predicts beneficial versus harmful graph top-1 changes with ROC AUC
+only 0.587. A fixed margin-and-stability gate still exchanges car `+4.35 pp`
+for truck `-3.82 pp`, so confidence-conditioned KL/graph routing is rejected.
+
+The next training evidence requirement is a same-environment 25% proxy
+original PLMatch control. Do not implement another graph gate before that
+control identifies whether DCCL is above or below its actual local base.
 
 ## Instructions For A New Conversation
 
@@ -292,10 +297,10 @@ VisDA-C 当前参考是 91.4。peak 必须明确标注为 oracle peak。
 
 当前待办：类别干预路由、稳定性3/3、GTR权重、组合CLS/CON/GTR、一致性
 stop-gradient 和 KL_PAR=0.3 均已失败并归档，不运行对应八轮任务，也不盲测
-KL=0.5。下一步先建立同环境25%代理PLMatch对照，并对P1/KL0.3的时序NPZ做
-零训练诊断；结论与证据要求见最新代理Loss审计README。
+KL=0.5。KL0.3时序NPZ零训练诊断也已完成，简单可靠性路由无法避免car/truck
+补偿。下一项且仅下一项训练是同环境25%代理原始PLMatch对照；结论与证据
+要求见最新代理Loss审计README。
 ```
 
-In a new conversation, attach the P1 and KL `0.3` temporal NPZ files if
-available. The handoff, the proxy-loss audit, and those diagnostics are
-sufficient to continue without replaying the old chat.
+The KL `0.3` temporal NPZ files are archived. The handoff and proxy-loss audit
+are sufficient to continue without replaying the old chat.

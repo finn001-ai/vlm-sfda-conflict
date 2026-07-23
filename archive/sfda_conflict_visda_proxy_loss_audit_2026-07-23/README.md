@@ -315,16 +315,17 @@ Before another method change:
    `91.4` VisDA number is an external reference rather than a locally archived
    matched run, so it cannot identify how much of the remaining gap is due to
    DCCL versus source weights/environment.
-2. Compare the saved P1 and KL 0.3 temporal NPZs without training. Test whether
-   the lost truck samples move primarily to car and whether CLIP margin or
-   temporal stability predicts when KL is beneficial.
-3. Only if a label-free reliability statistic passes that zero-training gate,
-   test a conservative per-sample/class-pair KL weighting rule while preserving
-   the global `0.4` anchor. The rule must be inferred from target predictions,
-   not hard-code VisDA class names, so it remains applicable to Office-Home.
+2. The KL 0.3 NPZ zero-training diagnostic is complete. It confirms that the
+   graph teacher raises car while converting too many true trucks into car.
+   The best simple label-free signal predicts beneficial versus harmful graph
+   top-1 changes with ROC AUC only `0.587`.
+3. Do not test a confidence/margin-conditioned KL or graph route. A fixed
+   margin-and-stability gate still raises car by `4.35 pp` while lowering truck
+   by `3.82 pp`; it fails the no-compensation gate.
 
-The likely next mechanism is therefore reliability-conditioned loss routing,
-not another global loss coefficient.
+The next training evidence is therefore the matched PLMatch control, not
+another DCCL loss coefficient or graph gate. Full NPZ findings are in
+`proxy25_kl030_npz_diagnostic.md`.
 
 ## Raw artifacts
 
@@ -333,6 +334,9 @@ proxy25_gtr_sweep_raw.txt
 proxy25_cls050_con030_gtr005_partial_raw.txt
 proxy25_stopgrad_full_raw.txt
 proxy25_kl030_full_raw.txt
+proxy25_kl030_temporal_diagnostics.tar.gz
+proxy25_kl030_temporal_dynamics.json
+proxy25_kl030_npz_diagnostic.md
 proxy25_results.csv
 SHA256SUMS
 ```
@@ -340,4 +344,4 @@ SHA256SUMS
 The combined-run raw attachment ends at the first Cycle-4 checkpoint; its
 remaining checkpoints and final class vector were supplied separately and are
 recorded in the completed-run table above. `SHA256SUMS` preserves the hashes
-of the four copied raw attachments.
+of the copied raw attachments and temporal diagnostic bundle.
