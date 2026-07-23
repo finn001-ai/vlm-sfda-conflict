@@ -247,13 +247,15 @@ Completed proxy conclusions:
 GTR 0/0.05/0.10 changes car versus truck but leaves macro within 0.02 pp.
 CLS=0.5 + CON=0.3 + GTR=0.05 ends at 87.96; early gain decays to +0.13.
 weak-teacher consistency stop-gradient ends at 87.66 and fails.
+KL_PAR=0.3 ends at 87.61; all 16 checkpoints are below the KL=0.4 reference.
 ```
 
 Commit `faa7bc6` added an opt-in consistency stop-gradient flag and task-loss
 magnitude diagnostics. The stop-gradient default is `False`, so existing
-configs preserve legacy behavior. Its diagnostic shows CLIP KL at roughly
-48-56% of tracked weighted task-loss magnitude, consistency at 25-32%, stable
-CE at 13-20%, and GTR at zero in the isolated run.
+configs preserve legacy behavior. The KL 0.3 audit shows that the large CLIP
+KL loss-value share is not evidence that it should be weakened globally.
+Reducing it raises car by 0.37 pp but lowers truck by 1.43 pp, hard mean by
+0.35 pp, other-nine mean by 0.17 pp, and final macro by 0.22 pp.
 
 Full records and raw logs:
 
@@ -261,18 +263,11 @@ Full records and raw logs:
 archive/sfda_conflict_visda_proxy_loss_audit_2026-07-23/
 ```
 
-The only pending run is the predeclared proxy `KL_PAR=0.3` audit with all other
-P1 settings restored:
-
-```text
-CLS=0.4; CON=0.2; KL=0.3; GTR=0;
-CONSISTENCY_STOP_GRAD=False; LOSS_DIAG=True
-```
-
-It passes only with final macro at least `87.98`, hard-class mean at least
-`74.29`, positive Cycle-3/4 deltas, and no compensating car/truck exchange.
-If it fails, stop global scalar loss-weight tuning and archive before proposing
-another intervention.
+There is no pending DCCL scalar run. Do not automatically test KL 0.5. The
+next evidence requirement is a same-environment 25% proxy PLMatch control plus
+a zero-training comparison of the P1 and KL 0.3 temporal NPZs. Only a
+label-free reliability signal that predicts the car/truck failure may justify
+a conservative per-sample KL route that keeps the global KL 0.4 anchor.
 
 ## Instructions For A New Conversation
 
@@ -295,11 +290,12 @@ Start the new conversation with the following message:
 重大方法更新才增加 stage。Office-Home 的目标是稳定超过 DUET 84.7167，
 VisDA-C 当前参考是 91.4。peak 必须明确标注为 oracle peak。
 
-当前待办：类别干预路由、稳定性3/3、GTR权重、组合CLS/CON/GTR和一致性
-stop-gradient 均已失败并归档，不运行对应八轮任务。下一项且仅下一项是
-25%代理集 KL_PAR=0.3 单变量预检；门槛和完整命令见最新代理Loss审计README。
+当前待办：类别干预路由、稳定性3/3、GTR权重、组合CLS/CON/GTR、一致性
+stop-gradient 和 KL_PAR=0.3 均已失败并归档，不运行对应八轮任务，也不盲测
+KL=0.5。下一步先建立同环境25%代理PLMatch对照，并对P1/KL0.3的时序NPZ做
+零训练诊断；结论与证据要求见最新代理Loss审计README。
 ```
 
-In a new conversation, attach the KL `0.3` raw log if it has completed. The
-handoff, the proxy-loss audit, and that log are sufficient to continue without
-replaying the old chat.
+In a new conversation, attach the P1 and KL `0.3` temporal NPZ files if
+available. The handoff, the proxy-loss audit, and those diagnostics are
+sufficient to continue without replaying the old chat.

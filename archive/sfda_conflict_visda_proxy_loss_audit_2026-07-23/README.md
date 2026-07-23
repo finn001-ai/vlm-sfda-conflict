@@ -204,8 +204,84 @@ Although `CLS_PAR` and `KL_PAR` are both `0.4`, the CLIP KL contributes about
 `build_conflict_kl_target` applies the full CLIP distribution with unit weight
 to every target sample; `KL_CANDIDATE` is inactive in this mode.
 
-This identifies the main KL coefficient as the next scalar parameter to audit.
-It does not by itself prove that KL gradients are excessive.
+This identified the main KL coefficient as a scalar parameter worth auditing.
+It did not by itself prove that KL gradients were excessive. The completed
+`KL_PAR=0.3` result below shows that the large numeric share was not evidence
+that the global CLIP constraint should be weakened.
+
+## KL 0.3 audit
+
+The predeclared isolated run completed normally:
+
+```yaml
+ACTIVE:
+  CLS_PAR: 0.4
+  CON_PAR: 0.2
+  KL_PAR: 0.3
+DCCL:
+  GTR_PAR: 0.0
+  CONSISTENCY_STOP_GRAD: false
+  LOSS_DIAG: true
+```
+
+It failed every primary gate:
+
+| Metric | P1 KL 0.4 | KL 0.3 | Delta |
+|---|---:|---:|---:|
+| Final macro | 87.83 | 87.61 | -0.22 |
+| Hard mean | 73.79 | 73.44 | -0.35 |
+| Other-9 mean | 92.51 | 92.34 | -0.17 |
+
+All 16 evaluation checkpoints were below P1. The matched cycle-end trajectory
+was:
+
+| Checkpoint | P1 KL 0.4 | KL 0.3 | Delta |
+|---|---:|---:|---:|
+| Cycle 1 final | 81.72 | 81.18 | -0.54 |
+| Cycle 2 final | 85.31 | 84.88 | -0.43 |
+| Cycle 3 peak | 87.17 | 86.98 | -0.19 |
+| Cycle 3 final | 86.87 | 86.66 | -0.21 |
+| Cycle 4 final | 87.83 | 87.61 | -0.22 |
+
+Final class changes show another car/truck boundary redistribution:
+
+| Class | P1 KL 0.4 | KL 0.3 | Delta |
+|---|---:|---:|---:|
+| Car | 75.36 | 75.73 | +0.37 |
+| Person | 80.68 | 80.68 | 0.00 |
+| Truck | 65.34 | 63.91 | -1.43 |
+| Bicycle | 86.01 | 85.29 | -0.72 |
+| Skateboard | 94.56 | 94.04 | -0.52 |
+
+The KL 0.3 loss-value shares remained substantial but lower:
+
+| Cycle | Consistency share | Stable CE share | CLIP KL share |
+|---:|---:|---:|---:|
+| 1 | 28.49% | 21.17% | 50.34% |
+| 2 | 34.98% | 14.41% | 50.61% |
+| 3 | 33.28% | 22.95% | 43.77% |
+| 4 | 34.68% | 23.08% | 42.25% |
+
+At the Cycle-4 boundary, KL 0.3 had 48 fewer stable pseudo-labels, 52 more
+source/CLIP conflicts, 25 fewer graph anchors, and a 0.16 pp lower pure task
+output than P1. Pseudo-label precision was 0.05 pp higher, so the loss came
+from weaker coverage and representation anchoring, not lower admitted-label
+precision.
+
+Interpretation:
+
+```text
+The full CLIP KL is acting as a useful stabilizer.
+Its large loss-value share is not equivalent to excessive harmful gradient.
+Lowering it globally releases a high-frequency car bias and damages truck.
+```
+
+VisDA compounds this effect because optimization averages over samples while
+the reported metric averages over classes. The full validation set contains
+10,401 car samples but only 5,548 truck samples and 4,000 person samples.
+`both_prior` calibrates prediction marginals, but the consistency, stable CE,
+and KL objectives are still reduced by sample count. A global coefficient
+cannot repair this class/pair-asymmetric objective mismatch.
 
 ## Closed paths
 
@@ -218,6 +294,8 @@ eight-cycle combined CLS=0.5, CON=0.3, GTR=0.05
 weak-teacher stop-gradient consistency
 direct graph-teacher main-KL injection
 PL/GTR stability 3/3
+global KL reduction from 0.4 to 0.3
+blind continuation to KL 0.5
 ```
 
 The earlier full-data stability-3 candidate used transferred Office-Home
@@ -225,57 +303,28 @@ parameters (`CALIB_POWER=0.8`, `TARGET_HEAD_MIX=0.5`) and `PL/GTR=3/3`. It
 finished five cycles but remained below the matched canonical result; it must
 not be launched for eight cycles.
 
-## Next predeclared experiment
+## Next decision
 
-The next and only currently authorized proxy run changes:
+No further DCCL training run is predeclared from this scalar audit. In
+particular, do not infer that `KL_PAR=0.5` must help merely because `0.3`
+hurts.
 
-```text
-ACTIVE.KL_PAR: 0.4 -> 0.3
-```
+Before another method change:
 
-It restores all other P1 settings:
+1. Establish a same-environment, same-proxy PLMatch control. The current
+   `91.4` VisDA number is an external reference rather than a locally archived
+   matched run, so it cannot identify how much of the remaining gap is due to
+   DCCL versus source weights/environment.
+2. Compare the saved P1 and KL 0.3 temporal NPZs without training. Test whether
+   the lost truck samples move primarily to car and whether CLIP margin or
+   temporal stability predicts when KL is beneficial.
+3. Only if a label-free reliability statistic passes that zero-training gate,
+   test a conservative per-sample/class-pair KL weighting rule while preserving
+   the global `0.4` anchor. The rule must be inferred from target predictions,
+   not hard-code VisDA class names, so it remains applicable to Office-Home.
 
-```yaml
-ACTIVE:
-  CYCLE: 4
-  CLS_PAR: 0.4
-  CON_PAR: 0.2
-  KL_PAR: 0.3
-DCCL:
-  GTR_PAR: 0.0
-  CONSISTENCY_STOP_GRAD: false
-  LOSS_DIAG: true
-```
-
-Command:
-
-```bash
-python image_target_of_oh_vs.py \
-  --cfg cfgs/visda/temporal_precision_head.yaml \
-  CKPT_DIR . SETTING.OUTPUT_SRC source \
-  MODEL.METHOD temporal_precision_head_visda_proxy25_kl030 \
-  ACTIVE.CYCLE 4 \
-  ACTIVE.CLS_PAR 0.4 \
-  ACTIVE.CON_PAR 0.2 \
-  ACTIVE.KL_PAR 0.3 \
-  DCCL.ADAPTATION_LIST data/VISDA-C/validation_proxy25_seed2020_list.txt \
-  DCCL.GTR_PAR 0.0 \
-  DCCL.CONSISTENCY_STOP_GRAD False \
-  DCCL.LOSS_DIAG True
-```
-
-Gate relative to P1:
-
-```text
-final macro >= 87.98
-hard-class mean >= 74.29
-cycles 3-4 retain a positive advantage
-no compensating car/truck exchange
-```
-
-If KL `0.3` remains near `87.8` or fails the class gate, stop global scalar
-loss-weight tuning. Do not automatically run KL `0.5`; first archive and
-inspect the loss shares and classwise changes.
+The likely next mechanism is therefore reliability-conditioned loss routing,
+not another global loss coefficient.
 
 ## Raw artifacts
 
@@ -283,6 +332,7 @@ inspect the loss shares and classwise changes.
 proxy25_gtr_sweep_raw.txt
 proxy25_cls050_con030_gtr005_partial_raw.txt
 proxy25_stopgrad_full_raw.txt
+proxy25_kl030_full_raw.txt
 proxy25_results.csv
 SHA256SUMS
 ```
@@ -290,4 +340,4 @@ SHA256SUMS
 The combined-run raw attachment ends at the first Cycle-4 checkpoint; its
 remaining checkpoints and final class vector were supplied separately and are
 recorded in the completed-run table above. `SHA256SUMS` preserves the hashes
-of the three copied raw attachments.
+of the four copied raw attachments.
