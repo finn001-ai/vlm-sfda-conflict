@@ -71,6 +71,38 @@ This full-data control establishes that current DCCL Stage14 is below its
 matched released DUET base by `0.46 pp` at the final checkpoint. The proxy
 control's `+0.10 pp` PLMatch/DCCL difference understated the full-data gap.
 
+## Dual-view inheritance and precision-coverage finding
+
+DCCL does retain the released DUET dual-perspective pseudo-label mechanism:
+one task/source-model view and one CLIP image-text view. Both methods use
+branch agreement and an average of the two probability vectors. This inherited
+dual-view construction must not be described as a DCCL novelty.
+
+The effective DCCL run changes the common base with `both_prior` calibration,
+two-cycle reversible stable memory, a `0.3` target-head blend from cycle 2,
+and a `0.05` graph-temporal residual loss on selected conflicts. At the
+matched pseudo-label refresh immediately before cycle-4 training:
+
+| Metric | Official DUET path | DCCL Stage14 | DCCL - DUET |
+|---|---:|---:|---:|
+| global mixed-output accuracy | 88.94% | 87.98% | -0.96 pp |
+| selected pseudo-label count | 53,372 | 47,393 | -5,979 |
+| selected mixed-label accuracy | 90.42% | 93.46% | +3.04 pp |
+| selected coverage | 96.36% | 85.57% | -10.80 pp |
+
+DCCL therefore raises selected-label precision while sharply reducing
+coverage, and its global mixed prediction is worse at the same checkpoint.
+This is consistent with, but does not alone causally isolate, the final
+`91.04` versus `91.50` gap because the DCCL additions are coupled in the run.
+
+The next revision should preserve the official DUET dual-view path and apply
+DCCL only to genuinely conflicting samples. The full reasoning, active-option
+audit, and source-log locations are recorded in:
+
+```text
+dual_view_precision_coverage_audit.md
+```
+
 ## Class comparison against DCCL Stage14 final
 
 | Class | Official DUET path | DCCL | DUET - DCCL |
@@ -181,6 +213,7 @@ ordering exactly match later runs or author-provided artifacts.
 ```text
 plmatch_visda_full_seed2020_raw.txt
 plmatch_visda_full_seed2020_summary.json
+dual_view_precision_coverage_audit.md
 SHA256SUMS
 ```
 
