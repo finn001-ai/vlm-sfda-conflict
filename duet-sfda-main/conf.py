@@ -271,6 +271,15 @@ _C.ACTIVE.KL_PAR = 0.4
 # Optional target-domain adaptation list. Methods that support this field use
 # it for training and pseudo-label inference while retaining full evaluation.
 _C.ACTIVE.ADAPTATION_LIST = ""
+
+# --------------------------- Failure-audit options ------------------------ #
+# These options only write read-only diagnostic snapshots. They do not alter
+# pseudo labels, losses, optimizers, or inference logits.
+_C.FAILURE_AUDIT = CfgNode()
+_C.FAILURE_AUDIT.ENABLED = False
+_C.FAILURE_AUDIT.DIR = "failure_audit"
+_C.FAILURE_AUDIT.FEATURE_DTYPE = "float16"
+
 # --------------------------------- DCCL options ----------------------------- #
 _C.DCCL = CfgNode()
 

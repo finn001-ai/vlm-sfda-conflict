@@ -65,6 +65,7 @@ from src.utils.three_view_noise_em import (
     three_view_class_conditional_em,
     weighted_soft_kl as weighted_three_view_em_kl,
 )
+from src.utils.failure_audit import save_failure_audit_snapshot
 # from src.utils import loss, active_prompt, IID_losses
 # from proposed_method import *
 from torch.nn.functional import normalize
@@ -581,6 +582,87 @@ def cal_acc(
         return accuracy * 100, mean_ent
 
 
+def collect_final_failure_audit(
+    cfg,
+    loader,
+    netF,
+    netB,
+    netC,
+    target_head,
+    pair_feature_adapter,
+    covariance_transport,
+    boundary_head,
+    proto_state,
+    curr_cycle,
+):
+    """Collect deterministic full-target Stage14 features and head outputs."""
+    task_features = []
+    base_probabilities = []
+    effective_probabilities = []
+    target_labels = []
+    netF.eval()
+    netB.eval()
+    netC.eval()
+    if target_head is not None:
+        target_head.eval()
+    if pair_feature_adapter is not None:
+        pair_feature_adapter.eval()
+    if boundary_head is not None:
+        boundary_head.eval()
+
+    with torch.no_grad():
+        for data in loader:
+            inputs = data[0].cuda()
+            raw_feature = netB(netF(inputs))
+            base_logits = netC(raw_feature)
+            adapted_feature = apply_pair_feature_adapter(
+                cfg, raw_feature, pair_feature_adapter, curr_cycle
+            )
+            adapted_feature = apply_agreement_covariance_transport(
+                cfg,
+                adapted_feature,
+                covariance_transport,
+                curr_cycle,
+                data[2],
+            )
+            effective_logits = netC(adapted_feature)
+            effective_logits = apply_target_head_logits(
+                cfg,
+                adapted_feature,
+                effective_logits,
+                target_head,
+                curr_cycle,
+            )
+            effective_logits = apply_target_prototype_logits(
+                cfg, adapted_feature, effective_logits, proto_state
+            )
+            effective_logits = apply_reciprocal_boundary_logits(
+                cfg,
+                adapted_feature,
+                effective_logits,
+                boundary_head,
+                curr_cycle,
+            )
+            task_features.append(raw_feature.float().cpu())
+            base_probabilities.append(F.softmax(base_logits, dim=1).float().cpu())
+            effective_probabilities.append(
+                F.softmax(effective_logits, dim=1).float().cpu()
+            )
+            target_labels.append(data[1].long().cpu())
+
+    task_feature = torch.cat(task_features, dim=0)
+    base_task_prob = torch.cat(base_probabilities, dim=0)
+    task_prob = torch.cat(effective_probabilities, dim=0)
+    target_label = torch.cat(target_labels, dim=0)
+    return {
+        "target_label": target_label,
+        "task_feature": task_feature,
+        "base_task_prob": base_task_prob,
+        "task_prob": task_prob,
+        "source_label": task_prob.argmax(dim=1),
+    }
+
+
 def cal_acc_trajectory_ensemble(
     loader,
     netF,
@@ -920,6 +1002,7 @@ def save_temporal_diagnostics(
     model_soft,
     teacher_soft,
     target_label,
+    task_features=None,
 ):
     if not cfg.DCCL.TEMPORAL_DIAG:
         return
@@ -927,8 +1010,7 @@ def save_temporal_diagnostics(
     out_dir = osp.join(cfg.output_dir, cfg.DCCL.TEMPORAL_DIAG_DIR)
     os.makedirs(out_dir, exist_ok=True)
     out_path = osp.join(out_dir, f"{cfg.name}_cycle{curr_cycle + 1:02d}.npz")
-    np.savez_compressed(
-        out_path,
+    payload = dict(
         cycle=np.array(curr_cycle + 1, dtype=np.int64),
         task=np.array(cfg.name),
         mix_label=mem_label.cpu().numpy().astype(np.int64),
@@ -941,6 +1023,18 @@ def save_temporal_diagnostics(
         teacher_prob=teacher_soft.cpu().numpy().astype(np.float32),
         target_label=target_label.cpu().numpy().astype(np.int64),
     )
+    if cfg.FAILURE_AUDIT.ENABLED:
+        if task_features is None:
+            raise ValueError("Failure audit requires DCCL task features")
+        feature_dtype = (
+            np.float16
+            if cfg.FAILURE_AUDIT.FEATURE_DTYPE == "float16"
+            else np.float32
+        )
+        payload["task_feature"] = (
+            task_features.cpu().numpy().astype(feature_dtype)
+        )
+    np.savez_compressed(out_path, **payload)
     logging.info("DCCL temporal diagnostics wrote: {}".format(out_path))
 
 
@@ -1605,6 +1699,7 @@ def train_target(cfg):
             model_soft,
             teacher_soft,
             target_label,
+            task_features,
         )
         sample_idx = torch.arange(source_label.size(0))
         candidate_mass = model_soft[sample_idx, source_label] + model_soft[sample_idx, clip_label]
@@ -2478,6 +2573,29 @@ def train_target(cfg):
                 # netC.train()
         log_loss_diagnostics(loss_diagnostics, curr_cycle + 1)
         curr_cycle += 1
+
+    if cfg.FAILURE_AUDIT.ENABLED:
+        final_payload = collect_final_failure_audit(
+            cfg,
+            dset_loaders['test'],
+            netF,
+            netB,
+            netC,
+            target_head,
+            pair_feature_adapter,
+            covariance_transport,
+            boundary_head,
+            proto_state,
+            max(int(cfg.ACTIVE.CYCLE) - 1, 0),
+        )
+        save_failure_audit_snapshot(
+            cfg,
+            "final_full.npz",
+            cycle=np.array(cfg.ACTIVE.CYCLE, dtype=np.int64),
+            task=np.array(cfg.name),
+            phase=np.array("final_full"),
+            **final_payload,
+        )
 
     # torch.save(netF.state_dict(), osp.join(cfg.output_dir, "target_F_" + cfg.MODEL.METHOD + ".pt"))
     # torch.save(netB.state_dict(), osp.join(cfg.output_dir, "target_B_" + cfg.MODEL.METHOD + ".pt"))

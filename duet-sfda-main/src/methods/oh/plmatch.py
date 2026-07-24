@@ -31,6 +31,7 @@ from data.cls_to_names import *
 from data.domain_datasets import domain_datasets
 from sklearn.metrics import confusion_matrix
 from src.utils.adaptation_lists import load_adaptation_and_evaluation_rows
+from src.utils.failure_audit import save_failure_audit_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -431,10 +432,29 @@ def train_target(cfg):
         netF.eval()
         netB.eval()
         # netC.eval()
-        mem_label, label_mask, confi_imag, confi_dis, clip_soft = obtain_label(
+        label_result = obtain_label(
             dset_loaders['test_aug'], netF, netB, netC, text_inputs, text_features, clip_model, prev_label_mask,
-            curr_cycle,
+            curr_cycle, return_diagnostics=cfg.FAILURE_AUDIT.ENABLED,
         )
+        if cfg.FAILURE_AUDIT.ENABLED:
+            (
+                mem_label,
+                label_mask,
+                confi_imag,
+                confi_dis,
+                clip_soft,
+                audit_payload,
+            ) = label_result
+            save_failure_audit_snapshot(
+                cfg,
+                f"pre_cycle{curr_cycle + 1:02d}.npz",
+                cycle=np.array(curr_cycle + 1, dtype=np.int64),
+                task=np.array(cfg.name),
+                phase=np.array("pre_cycle"),
+                **audit_payload,
+            )
+        else:
+            mem_label, label_mask, confi_imag, confi_dis, clip_soft = label_result
         clip_soft = clip_soft.cuda()
         mem_label = mem_label.cuda()
         prev_label_mask = label_mask
@@ -523,6 +543,17 @@ def train_target(cfg):
                 # netC.train()
         curr_cycle += 1
 
+    if cfg.FAILURE_AUDIT.ENABLED:
+        final_payload = collect_final_failure_audit(dset_loaders['test'], netF, netB, netC)
+        save_failure_audit_snapshot(
+            cfg,
+            "final_full.npz",
+            cycle=np.array(cfg.ACTIVE.CYCLE, dtype=np.int64),
+            task=np.array(cfg.name),
+            phase=np.array("final_full"),
+            **final_payload,
+        )
+
     # torch.save(netF.state_dict(), osp.join(cfg.output_dir, "target_F_" + cfg.MODEL.METHOD + ".pt"))
     # torch.save(netB.state_dict(), osp.join(cfg.output_dir, "target_B_" + cfg.MODEL.METHOD + ".pt"))
     # torch.save(netC.state_dict(), osp.join(cfg.output_dir, "target_C_" + cfg.MODEL.METHOD + ".pt"))
@@ -551,7 +582,18 @@ def cal_cosine(weak_feas, strong_feas):
     return mean_cos
 
 
-def obtain_label(loader, netF, netB, netC, text_inputs, text_features, clip_model, prev_label_mask, curr_cycle):
+def obtain_label(
+    loader,
+    netF,
+    netB,
+    netC,
+    text_inputs,
+    text_features,
+    clip_model,
+    prev_label_mask,
+    curr_cycle,
+    return_diagnostics=False,
+):
     # class_logit_bias = get_class_bias(netF, netB, netC)
     start_test = True
     with torch.no_grad():
@@ -577,11 +619,17 @@ def obtain_label(loader, netF, netB, netC, text_inputs, text_features, clip_mode
                 all_output = weak_outputs.float().cpu()
                 all_clip_score = clip_score.float().cpu()
                 all_label = labels.float()
+                if return_diagnostics:
+                    all_task_features = weak_feas.float().cpu()
                 start_test = False
             else:
                 all_output = torch.cat((all_output, weak_outputs.float().cpu()), 0)
                 all_label = torch.cat((all_label, labels.float()), 0)
                 all_clip_score = torch.cat((all_clip_score, clip_score.float()), 0)
+                if return_diagnostics:
+                    all_task_features = torch.cat(
+                        (all_task_features, weak_feas.float().cpu()), 0
+                    )
 
     all_output = nn.Softmax(dim=1)(all_output)
     clip_all_output = nn.Softmax(dim=1)(all_clip_score).cpu()
@@ -639,7 +687,54 @@ def obtain_label(loader, netF, netB, netC, text_inputs, text_features, clip_mode
     confi_imag = loader.dataset.imgs
     confi_dis = all_mix_output.detach()
 
-    return all_mix_output_pred, label_mask, confi_imag, confi_dis, clip_all_output
+    result = (
+        all_mix_output_pred,
+        label_mask,
+        confi_imag,
+        confi_dis,
+        clip_all_output,
+    )
+    if not return_diagnostics:
+        return result
+    audit_payload = {
+        "mix_label": all_mix_output_pred.long(),
+        "label_mask": label_mask.bool(),
+        "source_label": all_output_pred.long(),
+        "clip_label": clip_all_output_pred.long(),
+        "task_prob": all_output.float(),
+        "clip_prob": clip_all_output.float(),
+        "target_label": all_label.long(),
+        "task_feature": all_task_features.float(),
+    }
+    return result + (audit_payload,)
+
+
+def collect_final_failure_audit(loader, netF, netB, netC):
+    """Collect deterministic full-target features and source-head predictions."""
+    features = []
+    probabilities = []
+    labels = []
+    netF.eval()
+    netB.eval()
+    netC.eval()
+    with torch.no_grad():
+        for data in loader:
+            inputs = data[0].cuda()
+            task_feature = netB(netF(inputs))
+            task_prob = F.softmax(netC(task_feature), dim=1)
+            features.append(task_feature.float().cpu())
+            probabilities.append(task_prob.float().cpu())
+            labels.append(data[1].long().cpu())
+    task_feature = torch.cat(features, dim=0)
+    task_prob = torch.cat(probabilities, dim=0)
+    target_label = torch.cat(labels, dim=0)
+    return {
+        "target_label": target_label,
+        "task_feature": task_feature,
+        "base_task_prob": task_prob,
+        "task_prob": task_prob,
+        "source_label": task_prob.argmax(dim=1),
+    }
 
 
 def clip_pre_text(cfg):
