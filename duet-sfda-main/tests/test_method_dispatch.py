@@ -37,6 +37,20 @@ class MethodDispatchTest(unittest.TestCase):
         self.assertIn('ACTIVE.ADAPTATION_LIST "$proxy_list"', script)
         self.assertIn('if [ "$checkpoint_count" -ne 16 ]', script)
 
+    def test_reciprocal_boundary_variants_use_dccl_dispatch(self):
+        entrypoint = Path("image_target_of_oh_vs.py").read_text()
+        self.assertIn(
+            'cfg.MODEL.METHOD.startswith("reciprocal_boundary_")',
+            entrypoint,
+        )
+        for name in (
+            "run_visda_reciprocal_boundary_proxy25.sh",
+            "run_office_home_reciprocal_boundary_preflight.sh",
+        ):
+            script = Path("tools", name).read_text()
+            self.assertIn("--cfg cfgs/", script)
+            self.assertIn("reciprocal_boundary.yaml", script)
+
 
 if __name__ == "__main__":
     unittest.main()

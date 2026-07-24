@@ -51,6 +51,13 @@ from src.utils.class_pair_feature_adapter import (
     ClassPairFeatureAdapter,
     weighted_graph_temporal_kl,
 )
+from src.utils.reciprocal_boundary import (
+    ReciprocalBoundaryHead,
+    reciprocal_boundary_consistency_loss,
+    reciprocal_boundary_margin_loss,
+    reciprocal_boundary_preservation_loss,
+    update_reciprocal_boundary_state,
+)
 from src.utils.consistency import prediction_consistency_kl
 from src.utils.agreement_covariance_transport import AgreementCovarianceTransport
 from src.utils.agreement_whitened_transport import AgreementWhitenedTransport
@@ -396,6 +403,29 @@ def apply_agreement_covariance_transport(
     return transport(features, sample_indices)
 
 
+def apply_reciprocal_boundary_logits(
+    cfg,
+    features,
+    base_logits,
+    boundary_head,
+    curr_cycle,
+    *,
+    detach_residual=False,
+):
+    if (
+        not cfg.DCCL.RECIPROCAL_BOUNDARY
+        or boundary_head is None
+        or curr_cycle < cfg.DCCL.BOUNDARY_START_CYCLE
+        or int(boundary_head.active_count.item()) == 0
+    ):
+        return base_logits
+    return boundary_head(
+        features,
+        base_logits,
+        detach_residual=detach_residual,
+    )
+
+
 def build_target_classifier_head(cfg, source_head):
     if cfg.DCCL.TARGET_HEAD_VARIANT == "residual":
         return SourceAnchoredResidualClassifier(cfg, source_head)
@@ -492,6 +522,7 @@ def cal_acc(
     pair_feature_adapter=None,
     covariance_transport=None,
     flag=False,
+    boundary_head=None,
 ):
     start_test = True
     with torch.no_grad():
@@ -520,6 +551,13 @@ def cal_acc(
                 )
                 outputs = apply_target_prototype_logits(
                     cfg, adapted_feas, outputs, proto_state
+                )
+                outputs = apply_reciprocal_boundary_logits(
+                    cfg,
+                    adapted_feas,
+                    outputs,
+                    boundary_head,
+                    curr_cycle,
                 )
             if start_test:
                 all_output = outputs.float().cpu()
@@ -618,6 +656,9 @@ def init_loss_diagnostics():
                 "gtr",
                 "pair_gtr",
                 "three_view_em",
+                "boundary_margin",
+                "boundary_consistency",
+                "boundary_keep",
             )
         },
     }
@@ -983,6 +1024,7 @@ def train_target(cfg):
     target_head_ema = None
     pair_feature_adapter = None
     covariance_transport = None
+    boundary_head = None
 
     for k, v in netF.named_parameters():
         if cfg.OPTIM.LR_DECAY1 > 0:
@@ -1161,6 +1203,91 @@ def train_target(cfg):
             )
         )
 
+    if cfg.DCCL.RECIPROCAL_BOUNDARY:
+        incompatible = []
+        for enabled, name in (
+            (cfg.DCCL.TARGET_HEAD_ADAPT, "TARGET_HEAD_ADAPT"),
+            (cfg.DCCL.PROTO_ADAPT, "PROTO_ADAPT"),
+            (cfg.DCCL.PAIR_FEATURE_ADAPT, "PAIR_FEATURE_ADAPT"),
+            (cfg.DCCL.COV_TRANSPORT_ADAPT, "COV_TRANSPORT_ADAPT"),
+            (cfg.DCCL.THREE_VIEW_EM, "THREE_VIEW_EM"),
+            (cfg.DCCL.TRAJECTORY_ENSEMBLE, "TRAJECTORY_ENSEMBLE"),
+            (cfg.DCCL.GRAPH_TEACHER_FUSION, "GRAPH_TEACHER_FUSION"),
+        ):
+            if enabled:
+                incompatible.append(name)
+        if cfg.DCCL.CALIB_MODE != "none":
+            incompatible.append("CALIB_MODE")
+        if cfg.DCCL.CAND_PAR > 0:
+            incompatible.append("CAND_PAR")
+        if cfg.DCCL.GTR_PAR > 0:
+            incompatible.append("GTR_PAR")
+        if incompatible:
+            raise ValueError(
+                "Reciprocal boundary preflight must isolate the new method; "
+                "disable {}".format(", ".join(incompatible))
+            )
+        if cfg.DCCL.BOUNDARY_START_CYCLE < 1:
+            raise ValueError("DCCL.BOUNDARY_START_CYCLE must be at least 1")
+        if cfg.DCCL.BOUNDARY_LR_MULT <= 0:
+            raise ValueError("DCCL.BOUNDARY_LR_MULT must be positive")
+        if (
+            cfg.DCCL.BOUNDARY_MAX_PAIRS <= 0
+            or cfg.DCCL.BOUNDARY_MIN_CONFLICTS <= 0
+            or cfg.DCCL.BOUNDARY_STABLE_CYCLES <= 0
+            or cfg.DCCL.BOUNDARY_MIN_ANCHORS_PER_SIDE <= 0
+            or cfg.DCCL.BOUNDARY_HIDDEN_DIM <= 0
+            or cfg.DCCL.BOUNDARY_MARGIN <= 0
+        ):
+            raise ValueError(
+                "DCCL reciprocal-boundary dimensions, support, and margin "
+                "values must be positive"
+            )
+        if (
+            cfg.DCCL.BOUNDARY_MARGIN_PAR <= 0
+            or cfg.DCCL.BOUNDARY_CONSISTENCY_PAR < 0
+            or cfg.DCCL.BOUNDARY_KEEP_PAR < 0
+        ):
+            raise ValueError("DCCL reciprocal-boundary loss weights are invalid")
+        boundary_head = ReciprocalBoundaryHead(
+            feature_dim=cfg.bottleneck,
+            num_classes=cfg.class_num,
+            hidden_dim=int(cfg.DCCL.BOUNDARY_HIDDEN_DIM),
+            max_pairs=int(cfg.DCCL.BOUNDARY_MAX_PAIRS),
+            max_shift=float(cfg.DCCL.BOUNDARY_MAX_SHIFT),
+            epsilon=float(cfg.DCCL.EPSILON),
+        ).cuda()
+        boundary_head.train()
+        for name, parameter in boundary_head.named_parameters():
+            parameter.requires_grad = True
+            group = {
+                "params": parameter,
+                "lr": cfg.OPTIM.LR * cfg.DCCL.BOUNDARY_LR_MULT,
+            }
+            if name.endswith("bias") or "project.1." in name:
+                group["weight_decay_scale"] = 0.0
+            param_group.append(group)
+        logging.info(
+            "DCCL reciprocal boundary enabled: start_cycle={}; max_pairs={}; "
+            "min_conflicts={}; stable_cycles={}; min_anchors_per_side={}; "
+            "hidden_dim={}; max_shift={:.3f}; lr_mult={:.3f}; "
+            "margin={:.3f}; loss_weights={:.3f}|{:.3f}|{:.3f}; "
+            "gradient_scope=boundary_head_only".format(
+                int(cfg.DCCL.BOUNDARY_START_CYCLE),
+                int(cfg.DCCL.BOUNDARY_MAX_PAIRS),
+                int(cfg.DCCL.BOUNDARY_MIN_CONFLICTS),
+                int(cfg.DCCL.BOUNDARY_STABLE_CYCLES),
+                int(cfg.DCCL.BOUNDARY_MIN_ANCHORS_PER_SIDE),
+                int(cfg.DCCL.BOUNDARY_HIDDEN_DIM),
+                float(cfg.DCCL.BOUNDARY_MAX_SHIFT),
+                float(cfg.DCCL.BOUNDARY_LR_MULT),
+                float(cfg.DCCL.BOUNDARY_MARGIN),
+                float(cfg.DCCL.BOUNDARY_MARGIN_PAR),
+                float(cfg.DCCL.BOUNDARY_CONSISTENCY_PAR),
+                float(cfg.DCCL.BOUNDARY_KEEP_PAR),
+            )
+        )
+
     optimizer = optim.SGD(param_group)
     optimizer = op_copy(optimizer)
 
@@ -1214,6 +1341,7 @@ def train_target(cfg):
     proto_state = None
     conflict_state = None
     pair_flow_state = None
+    boundary_state = None
     text_features = None
     curr_cycle = 0
     # office-home : 1.0 / VisDA-C : 1.05
@@ -1228,6 +1356,8 @@ def train_target(cfg):
             target_head.eval()
         if pair_feature_adapter is not None:
             pair_feature_adapter.eval()
+        if boundary_head is not None:
+            boundary_head.eval()
         inference_head = target_head_ema if target_head_ema is not None else target_head
         # netC.eval()
         (
@@ -1238,6 +1368,7 @@ def train_target(cfg):
             clip_soft,
             source_label,
             clip_label,
+            boundary_source_label,
             model_soft,
             task_features,
             clip_features,
@@ -1248,9 +1379,47 @@ def train_target(cfg):
             dset_loaders['test_aug'], netF, netB, netC, inference_head,
             pair_feature_adapter,
             covariance_transport,
+            boundary_head,
             text_inputs, text_features, clip_model, prev_label_mask,
             proto_state, pl_state, curr_cycle,
         )
+        if boundary_head is not None:
+            was_frozen = bool(boundary_state and boundary_state["frozen"])
+            boundary_state = update_reciprocal_boundary_state(
+                boundary_source_label,
+                clip_label,
+                boundary_state,
+                num_classes=cfg.class_num,
+                max_pairs=int(cfg.DCCL.BOUNDARY_MAX_PAIRS),
+                min_conflicts=int(cfg.DCCL.BOUNDARY_MIN_CONFLICTS),
+                min_cycles=int(cfg.DCCL.BOUNDARY_STABLE_CYCLES),
+                min_anchors_per_side=int(
+                    cfg.DCCL.BOUNDARY_MIN_ANCHORS_PER_SIDE
+                ),
+            )
+            boundary_head.set_pairs(boundary_state["pairs"])
+            logging.info(
+                "DCCL reciprocal boundary state: cycle={}; conflicts={}; "
+                "stable_anchors={}; eligible_pairs={}; active_pairs={}; "
+                "active_conflicts={}; frozen={}; pairs={}".format(
+                    curr_cycle + 1,
+                    int(boundary_state["last_conflicts"]),
+                    int(boundary_state["last_stable_anchors"]),
+                    int(boundary_state["last_eligible_pairs"]),
+                    len(boundary_state["pairs"]),
+                    int(boundary_state["active_conflict_mask"].sum().item()),
+                    bool(boundary_state["frozen"]),
+                    boundary_state["pairs"],
+                )
+            )
+            if boundary_state["frozen"] and not was_frozen:
+                logging.info(
+                    "DCCL reciprocal boundary pairs frozen: pairs={}; "
+                    "anchor_counts={}".format(
+                        boundary_state["pairs"],
+                        boundary_state["pair_anchor_counts"].tolist(),
+                    )
+                )
         if covariance_transport is not None and not bool(
             covariance_transport.fitted.item()
         ):
@@ -1702,6 +1871,39 @@ def train_target(cfg):
             )
         )
 
+        boundary_anchor_label = None
+        boundary_anchor_mask = None
+        boundary_pairs = None
+        boundary_pair_anchor_counts = None
+        boundary_active_conflict = None
+        boundary_preserve_mask = None
+        if boundary_state is not None:
+            boundary_anchor_label = boundary_state["anchor_label"].cuda()
+            boundary_anchor_mask = (
+                boundary_state["anchor_streak"]
+                >= int(cfg.DCCL.BOUNDARY_STABLE_CYCLES)
+            ).cuda()
+            boundary_pairs = boundary_head.active_pairs().detach().clone()
+            boundary_pair_anchor_counts = boundary_state[
+                "pair_anchor_counts"
+            ].cuda()
+            boundary_active_conflict = boundary_state[
+                "active_conflict_mask"
+            ].cuda()
+            if boundary_pairs.numel() > 0:
+                pair_classes = boundary_pairs.reshape(-1)
+                boundary_pair_anchor = boundary_anchor_mask & (
+                    boundary_anchor_label.unsqueeze(1)
+                    == pair_classes.unsqueeze(0)
+                ).any(dim=1)
+            else:
+                boundary_pair_anchor = torch.zeros_like(
+                    boundary_anchor_mask
+                )
+            boundary_preserve_mask = ~(
+                boundary_active_conflict | boundary_pair_anchor
+            )
+
         clip_soft = clip_soft.cuda()
         kl_target = kl_target.cuda()
         kl_weight = kl_weight.cuda()
@@ -1713,6 +1915,8 @@ def train_target(cfg):
         mem_label = hard_label.cuda()
         source_label = source_label.cuda()
         clip_label = clip_label.cuda()
+        if boundary_head is not None:
+            boundary_source_label = boundary_source_label.cuda()
         candidate_weight = candidate_weight.cuda()
         prev_label_mask = label_mask
 
@@ -1728,6 +1932,8 @@ def train_target(cfg):
             target_head.train()
         if pair_feature_adapter is not None:
             pair_feature_adapter.train()
+        if boundary_head is not None:
+            boundary_head.train()
         pair_feature_gtr_loss_sum = 0.0
         pair_feature_gtr_loss_batches = 0
         three_view_em_loss_sum = 0.0
@@ -1769,16 +1975,36 @@ def train_target(cfg):
                 cfg, strong_feas, covariance_transport, curr_cycle, tar_idx
             )
 
-            weak_logits = netC(weak_feas)
-            strong_logits = netC(strong_feas)
-            weak_logits = apply_target_head_logits(
-                cfg, weak_feas, weak_logits, target_head, curr_cycle
+            weak_base_logits = netC(weak_feas)
+            strong_base_logits = netC(strong_feas)
+            weak_base_logits = apply_target_head_logits(
+                cfg, weak_feas, weak_base_logits, target_head, curr_cycle
             )
-            strong_logits = apply_target_head_logits(
-                cfg, strong_feas, strong_logits, target_head, curr_cycle
+            strong_base_logits = apply_target_head_logits(
+                cfg, strong_feas, strong_base_logits, target_head, curr_cycle
             )
-            weak_logits = apply_target_prototype_logits(cfg, weak_feas, weak_logits, proto_state)
-            strong_logits = apply_target_prototype_logits(cfg, strong_feas, strong_logits, proto_state)
+            weak_base_logits = apply_target_prototype_logits(
+                cfg, weak_feas, weak_base_logits, proto_state
+            )
+            strong_base_logits = apply_target_prototype_logits(
+                cfg, strong_feas, strong_base_logits, proto_state
+            )
+            weak_logits = apply_reciprocal_boundary_logits(
+                cfg,
+                weak_feas,
+                weak_base_logits,
+                boundary_head,
+                curr_cycle,
+                detach_residual=True,
+            )
+            strong_logits = apply_reciprocal_boundary_logits(
+                cfg,
+                strong_feas,
+                strong_base_logits,
+                boundary_head,
+                curr_cycle,
+                detach_residual=True,
+            )
 
             # batch_cos = cal_cosine(weak_feas, strong_feas)
             # weak_logits = weak_logits * batch_cos
@@ -1921,6 +2147,85 @@ def train_target(cfg):
                     )
                     three_view_em_loss_sum += float(em_loss.detach().item())
                     three_view_em_loss_batches += 1
+            if (
+                boundary_head is not None
+                and curr_cycle >= cfg.DCCL.BOUNDARY_START_CYCLE
+                and int(boundary_head.active_count.item()) > 0
+            ):
+                boundary_weak_logits = apply_reciprocal_boundary_logits(
+                    cfg,
+                    weak_feas.detach(),
+                    weak_base_logits.detach(),
+                    boundary_head,
+                    curr_cycle,
+                )
+                boundary_strong_logits = apply_reciprocal_boundary_logits(
+                    cfg,
+                    strong_feas.detach(),
+                    strong_base_logits.detach(),
+                    boundary_head,
+                    curr_cycle,
+                )
+                batch_indices = tar_idx.cuda()
+                boundary_margin_loss = reciprocal_boundary_margin_loss(
+                    boundary_weak_logits,
+                    weak_base_logits.detach(),
+                    boundary_anchor_label[batch_indices],
+                    boundary_anchor_mask[batch_indices],
+                    boundary_pairs,
+                    boundary_pair_anchor_counts,
+                    total_samples=boundary_anchor_label.numel(),
+                    margin=float(cfg.DCCL.BOUNDARY_MARGIN),
+                    epsilon=float(cfg.DCCL.EPSILON),
+                )
+                classifier_loss += (
+                    boundary_margin_loss * cfg.DCCL.BOUNDARY_MARGIN_PAR
+                )
+                record_loss_diagnostic(
+                    loss_diagnostics,
+                    "boundary_margin",
+                    boundary_margin_loss,
+                    cfg.DCCL.BOUNDARY_MARGIN_PAR,
+                )
+                if cfg.DCCL.BOUNDARY_CONSISTENCY_PAR > 0:
+                    boundary_consistency_loss = (
+                        reciprocal_boundary_consistency_loss(
+                            boundary_weak_logits,
+                            boundary_strong_logits,
+                            weak_base_logits.detach(),
+                            strong_base_logits.detach(),
+                            boundary_source_label[batch_indices],
+                            clip_label[batch_indices],
+                            boundary_pairs,
+                            epsilon=float(cfg.DCCL.EPSILON),
+                        )
+                    )
+                    classifier_loss += (
+                        boundary_consistency_loss
+                        * cfg.DCCL.BOUNDARY_CONSISTENCY_PAR
+                    )
+                    record_loss_diagnostic(
+                        loss_diagnostics,
+                        "boundary_consistency",
+                        boundary_consistency_loss,
+                        cfg.DCCL.BOUNDARY_CONSISTENCY_PAR,
+                    )
+                if cfg.DCCL.BOUNDARY_KEEP_PAR > 0:
+                    boundary_keep_loss = reciprocal_boundary_preservation_loss(
+                        boundary_weak_logits,
+                        weak_base_logits.detach(),
+                        boundary_preserve_mask[batch_indices],
+                        epsilon=float(cfg.DCCL.EPSILON),
+                    )
+                    classifier_loss += (
+                        boundary_keep_loss * cfg.DCCL.BOUNDARY_KEEP_PAR
+                    )
+                    record_loss_diagnostic(
+                        loss_diagnostics,
+                        "boundary_keep",
+                        boundary_keep_loss,
+                        cfg.DCCL.BOUNDARY_KEEP_PAR,
+                    )
 
             optimizer.zero_grad()
             classifier_loss.backward()
@@ -1939,6 +2244,8 @@ def train_target(cfg):
                     target_head.eval()
                 if pair_feature_adapter is not None:
                     pair_feature_adapter.eval()
+                if boundary_head is not None:
+                    boundary_head.eval()
                 captured_trajectory_snapshot = False
                 if cfg.DCCL.TRAJECTORY_ENSEMBLE and (
                     curr_cycle == cfg.ACTIVE.CYCLE - 1
@@ -1963,9 +2270,18 @@ def train_target(cfg):
                 # netC.eval()
                 if cfg.SETTING.DATASET == 'VISDA-C':
                     acc_s_te, acc_list = cal_acc(
-                        dset_loaders['test'], netF, netB, netC, cfg,
-                        proto_state, inference_head, curr_cycle,
-                        pair_feature_adapter, covariance_transport, True
+                        dset_loaders['test'],
+                        netF,
+                        netB,
+                        netC,
+                        cfg=cfg,
+                        proto_state=proto_state,
+                        target_head=inference_head,
+                        curr_cycle=curr_cycle,
+                        pair_feature_adapter=pair_feature_adapter,
+                        covariance_transport=covariance_transport,
+                        flag=True,
+                        boundary_head=boundary_head,
                     )
                     log_str = ('Task: {}, Iter:{}/{}; Cycle: {}/{}; '
                                'Accuracy = {:.2f}%; classifier_loss = {}').format(cfg.name, iter_num, max_iter,
@@ -1974,9 +2290,18 @@ def train_target(cfg):
                                                                                   classifier_loss) + '\n' + acc_list
                 else:
                     acc_s_te, _ = cal_acc(
-                        dset_loaders['test'], netF, netB, netC, cfg,
-                        proto_state, inference_head, curr_cycle,
-                        pair_feature_adapter, covariance_transport, False
+                        dset_loaders['test'],
+                        netF,
+                        netB,
+                        netC,
+                        cfg=cfg,
+                        proto_state=proto_state,
+                        target_head=inference_head,
+                        curr_cycle=curr_cycle,
+                        pair_feature_adapter=pair_feature_adapter,
+                        covariance_transport=covariance_transport,
+                        flag=False,
+                        boundary_head=boundary_head,
                     )
                     log_str = ('Task: {}, Iter:{}/{}; Cycle: {}/{}; '
                                'Accuracy = {:.2f}%; classifier_loss = {}').format(cfg.name, iter_num, max_iter,
@@ -2082,6 +2407,33 @@ def train_target(cfg):
                         ),
                         three_view_em_loss_batches,
                     )
+                if boundary_head is not None:
+                    logging.info(
+                        (
+                            "DCCL reciprocal boundary checkpoint: "
+                            "task={}; cycle={}; iteration={}; "
+                            "boundary_active_pairs={}; "
+                            "boundary_active_conflicts={}; "
+                            "boundary_coefficient_norm={:.6f}; "
+                            "boundary_frozen={}"
+                        ).format(
+                            cfg.name,
+                            curr_cycle + 1,
+                            iter_num,
+                            int(boundary_head.active_count.item()),
+                            int(
+                                boundary_state[
+                                    "active_conflict_mask"
+                                ].sum().item()
+                                if boundary_state is not None
+                                else 0
+                            ),
+                            float(
+                                boundary_head.coefficient.weight.detach().norm().item()
+                            ),
+                            bool(boundary_state and boundary_state["frozen"]),
+                        )
+                    )
 
                 # cfg.out_file.write(log_str + '\n')
                 # cfg.out_file.flush()
@@ -2121,6 +2473,8 @@ def train_target(cfg):
                     target_head.train()
                 if pair_feature_adapter is not None:
                     pair_feature_adapter.train()
+                if boundary_head is not None:
+                    boundary_head.train()
                 # netC.train()
         log_loss_diagnostics(loss_diagnostics, curr_cycle + 1)
         curr_cycle += 1
@@ -2489,6 +2843,7 @@ def obtain_label(
     target_head,
     pair_feature_adapter,
     covariance_transport,
+    boundary_head,
     text_inputs,
     text_features,
     clip_model,
@@ -2532,6 +2887,14 @@ def obtain_label(
             weak_outputs = apply_target_prototype_logits(
                 cfg, adapted_weak_feas, weak_outputs, proto_state
             )
+            boundary_base_outputs = weak_outputs
+            weak_outputs = apply_reciprocal_boundary_logits(
+                cfg,
+                adapted_weak_feas,
+                boundary_base_outputs,
+                boundary_head,
+                curr_cycle,
+            )
             # strong_outputs = netC(strong_feas)
 
             clip_image_features = F.normalize(clip_model.encode_image(weak_x), dim=1)
@@ -2540,6 +2903,7 @@ def obtain_label(
             clip_score = clip_score.cpu()
             if start_test:
                 all_output = weak_outputs.float().cpu()
+                all_boundary_base_output = boundary_base_outputs.float().cpu()
                 all_clip_score = clip_score.float().cpu()
                 all_task_features = weak_feas.float().cpu()
                 all_clip_features = clip_image_features.float().cpu()
@@ -2547,12 +2911,20 @@ def obtain_label(
                 start_test = False
             else:
                 all_output = torch.cat((all_output, weak_outputs.float().cpu()), 0)
+                all_boundary_base_output = torch.cat(
+                    (
+                        all_boundary_base_output,
+                        boundary_base_outputs.float().cpu(),
+                    ),
+                    0,
+                )
                 all_label = torch.cat((all_label, labels.float()), 0)
                 all_clip_score = torch.cat((all_clip_score, clip_score.float()), 0)
                 all_task_features = torch.cat((all_task_features, weak_feas.float().cpu()), 0)
                 all_clip_features = torch.cat((all_clip_features, clip_image_features.float().cpu()), 0)
 
     all_output = nn.Softmax(dim=1)(all_output)
+    all_boundary_base_output = nn.Softmax(dim=1)(all_boundary_base_output)
     clip_all_output = nn.Softmax(dim=1)(all_clip_score).cpu()
     all_output, clip_all_output, all_mix_output = apply_classwise_calibration(
         cfg, all_output, clip_all_output, all_task_features, all_clip_features
@@ -2560,7 +2932,21 @@ def obtain_label(
 
     # Compute predictions for all_output and clip_all_output
     _, all_output_pred = torch.max(all_output, dim=1)
+    _, boundary_source_pred = torch.max(all_boundary_base_output, dim=1)
     _, clip_all_output_pred = torch.max(clip_all_output, dim=1)
+    if boundary_head is not None:
+        boundary_probability_l1 = (
+            all_output - all_boundary_base_output
+        ).abs().sum(dim=1)
+        logging.info(
+            "DCCL reciprocal boundary action: cycle={}; changed_top1={}; "
+            "mean_probability_l1={:.8f}; max_probability_l1={:.8f}".format(
+                curr_cycle + 1,
+                int((all_output_pred != boundary_source_pred).sum().item()),
+                float(boundary_probability_l1.mean().item()),
+                float(boundary_probability_l1.max().item()),
+            )
+        )
 
     _, all_mix_output_pred = torch.max(all_mix_output, dim=1)
 
@@ -2626,6 +3012,7 @@ def obtain_label(
         clip_all_output,
         all_output_pred,
         clip_all_output_pred,
+        boundary_source_pred,
         all_output,
         all_task_features,
         all_clip_features,

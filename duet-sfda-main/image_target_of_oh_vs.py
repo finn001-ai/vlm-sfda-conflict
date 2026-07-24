@@ -132,7 +132,10 @@ if __name__ == "__main__":
         "temporal_precision_head_pair_feature",
         "temporal_precision_head_pair_feature_coverage",
         "temporal_precision_head_covariance_transport",
-    } or cfg.MODEL.METHOD.startswith("temporal_precision_head_"):
+    } or cfg.MODEL.METHOD.startswith("temporal_precision_head_") or (
+        cfg.MODEL.METHOD == "reciprocal_boundary"
+        or cfg.MODEL.METHOD.startswith("reciprocal_boundary_")
+    ):
         print("using dccl method")
         acc = DCCL.train_target(cfg)
 
