@@ -356,6 +356,39 @@ archive/sfda_conflict_visda_full_duet_control_2026-07-24/
   dual_view_precision_coverage_audit.md
 ```
 
+## Pending VisDA Structural Ablation
+
+A compute-gated structural ablation now isolates the two interventions that
+activate when the VisDA gap first appears: stable/reversible pseudo-label
+memory and the adapted target head. It holds `both_prior`, all three base
+losses, and the deterministic 25% proxy fixed, disables GTR, and runs:
+
+```text
+V1 = monotonic memory + target head
+V2 = stable/reversible memory + no target head
+V3 = monotonic memory + no target head
+```
+
+V0 (`stable + head`, GTR=0, final `87.83`) and the matched official-DUET proxy
+control (`87.93`) are archived references. The new job does not repeat V0.
+Run:
+
+```bash
+cd duet-sfda-main
+bash tools/run_visda_structural_ablation_proxy25.sh
+```
+
+The unified gate requires at least `+0.15 pp` final macro improvement over the
+matched official-DUET proxy, no hard-class-mean regression, at most `0.10 pp`
+other-nine regression, and no individual car/person/truck regression greater
+than `0.50 pp`. Do not launch a full-data variant unless the gate JSON reports
+`pass_proxy_gate`; a pass permits only one matched full-data four-cycle
+preflight. The full contract is in:
+
+```text
+VISDA_STRUCTURAL_ABLATION_STEP.md
+```
+
 ## Instructions For A New Conversation
 
 Start the new conversation with the following message:
