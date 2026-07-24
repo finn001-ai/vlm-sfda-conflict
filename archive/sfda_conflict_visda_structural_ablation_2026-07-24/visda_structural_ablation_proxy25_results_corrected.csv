@@ -1,0 +1,6 @@
+variant,pl_memory,target_head,final,oracle_peak,delta_final_vs_duet,hard_mean,other9_mean,coverage,selected_source_label_precision,pseudo_label_precision,mix_accuracy,pass_proxy_gate
+official_duet_control,monotonic,False,87.93,87.93,0.0,75.78,91.9856,94.8364,89.44,90.36,88.29,True
+v0_stable_head_archived,stable,True,87.83,87.83,-0.1,73.7933,92.5078,81.67,94.16,94.16,87.6,False
+v1_monotonic_head,monotonic,True,88.03,88.03,0.1,74.11,92.6633,94.4248,89.7,89.7,87.65,False
+v2_stable_nohead,stable,False,88.01,88.01,0.08,75.0933,92.3122,81.8444,94.15,94.15,87.72,False
+v3_monotonic_nohead,monotonic,False,88.18,88.18,0.25,75.4167,92.4378,94.6342,89.87,89.87,87.72,False

@@ -108,3 +108,23 @@ output/uda/VISDA-C/TV/temporal_precision_head_visda_proxy25_v*/*.txt
 
 Also preserve the source-checkpoint and proxy-list SHA-256 files written by
 the launcher.
+
+## Result
+
+The three cloud runs completed all 16 checkpoints and the unified gate failed:
+
+| Variant | Final | Delta vs DUET | Hard mean delta | Other-9 delta |
+|---|---:|---:|---:|---:|
+| V1 monotonic + head | 88.03 | +0.10 | -1.6700 | +0.6778 |
+| V2 stable + no head | 88.01 | +0.08 | -0.6867 | +0.3267 |
+| V3 monotonic + no head | 88.18 | +0.25 | -0.3633 | +0.4522 |
+
+V3 ranks first but loses `4.15 pp` on car and `1.18 pp` on person while
+gaining `4.24 pp` on truck. It fails the hard-class-mean and individual-class
+compensation gates. No full-data structural variant is allowed.
+
+The result and raw bundle are archived in:
+
+```text
+archive/sfda_conflict_visda_structural_ablation_2026-07-24/
+```

@@ -1,0 +1,223 @@
+{
+  "decision": "fail_proxy_gate",
+  "metric": "VisDA mean per-class accuracy",
+  "selection_warning": "final checkpoint is primary; oracle peaks and validation-label class gates are development diagnostics only",
+  "proxy_contract": {
+    "adaptation_samples": 13847,
+    "evaluation_samples": 55388,
+    "cycles": 4,
+    "seed": 2020,
+    "calib_mode": "both_prior",
+    "calib_power": 0.5,
+    "gtr_par": 0.0
+  },
+  "thresholds": {
+    "min_final_improvement": 0.15,
+    "min_hard_mean_improvement": 0.0,
+    "max_other9_regression": 0.1,
+    "max_hard_class_regression": 0.5
+  },
+  "official_duet_control": {
+    "final": 87.93,
+    "oracle_peak": 87.93,
+    "hard_mean": 75.78,
+    "other9_mean": 91.9856,
+    "selected_count": 13132,
+    "total_count": 13847,
+    "coverage": 94.8364,
+    "selected_source_label_precision": 89.44,
+    "pseudo_label_precision": 90.36,
+    "mix_accuracy": 88.29,
+    "class_accuracy": [
+      97.45,
+      83.63,
+      84.82,
+      80.42,
+      96.87,
+      93.98,
+      93.91,
+      84.18,
+      92.46,
+      93.56,
+      91.19,
+      62.74
+    ]
+  },
+  "archived_v0_reference": {
+    "variant": "v0_stable_head_archived",
+    "pl_memory": "stable",
+    "target_head": true,
+    "final": 87.83,
+    "oracle_peak": 87.83,
+    "class_accuracy": [
+      97.56,
+      86.01,
+      85.61,
+      75.36,
+      96.27,
+      95.81,
+      93.5,
+      80.68,
+      91.91,
+      94.56,
+      91.34,
+      65.34
+    ],
+    "selected_count": 11309,
+    "total_count": 13847,
+    "coverage": 81.67,
+    "selected_source_label_precision": 94.16,
+    "pseudo_label_precision": 94.16,
+    "mix_accuracy": 87.6,
+    "hard_mean": 73.7933,
+    "other9_mean": 92.5078
+  },
+  "archived_v0_warning": "V0 is the archived matched GTR=0 result and is not rerun by this job",
+  "variants": {
+    "v1_monotonic_head": {
+      "variant": "v1_monotonic_head",
+      "final": 88.03,
+      "oracle_peak": 88.03,
+      "oracle_peak_cycle": 4,
+      "oracle_peak_iteration": 868,
+      "delta_final_vs_duet": 0.1,
+      "hard_mean": 74.11,
+      "delta_hard_mean_vs_duet": -1.67,
+      "other9_mean": 92.6633,
+      "delta_other9_mean_vs_duet": 0.6778,
+      "hard_class_deltas_vs_duet": {
+        "car": -5.76,
+        "person": -3.38,
+        "truck": 4.13
+      },
+      "selected_count": 13075,
+      "total_count": 13847,
+      "coverage": 94.4248,
+      "selected_source_label_precision": 89.7,
+      "pseudo_label_precision": 89.7,
+      "mix_accuracy": 87.65,
+      "checks": {
+        "config_valid": true,
+        "final_improvement": false,
+        "hard_mean_noninferior": false,
+        "other9_noninferior": true,
+        "no_hard_class_compensation": false
+      },
+      "pass_proxy_gate": false,
+      "class_accuracy": [
+        97.53,
+        86.79,
+        85.76,
+        74.66,
+        96.31,
+        95.95,
+        93.39,
+        80.8,
+        91.78,
+        94.96,
+        91.5,
+        66.87
+      ]
+    },
+    "v2_stable_nohead": {
+      "variant": "v2_stable_nohead",
+      "final": 88.01,
+      "oracle_peak": 88.01,
+      "oracle_peak_cycle": 4,
+      "oracle_peak_iteration": 868,
+      "delta_final_vs_duet": 0.08,
+      "hard_mean": 75.0933,
+      "delta_hard_mean_vs_duet": -0.6867,
+      "other9_mean": 92.3122,
+      "delta_other9_mean_vs_duet": 0.3267,
+      "hard_class_deltas_vs_duet": {
+        "car": -3.49,
+        "person": -1.3,
+        "truck": 2.73
+      },
+      "selected_count": 11333,
+      "total_count": 13847,
+      "coverage": 81.8444,
+      "selected_source_label_precision": 94.15,
+      "pseudo_label_precision": 94.15,
+      "mix_accuracy": 87.72,
+      "checks": {
+        "config_valid": true,
+        "final_improvement": false,
+        "hard_mean_noninferior": false,
+        "other9_noninferior": true,
+        "no_hard_class_compensation": false
+      },
+      "pass_proxy_gate": false,
+      "class_accuracy": [
+        97.59,
+        85.53,
+        84.78,
+        76.93,
+        96.91,
+        95.08,
+        93.18,
+        82.88,
+        92.64,
+        93.95,
+        91.15,
+        65.47
+      ]
+    },
+    "v3_monotonic_nohead": {
+      "variant": "v3_monotonic_nohead",
+      "final": 88.18,
+      "oracle_peak": 88.18,
+      "oracle_peak_cycle": 4,
+      "oracle_peak_iteration": 868,
+      "delta_final_vs_duet": 0.25,
+      "hard_mean": 75.4167,
+      "delta_hard_mean_vs_duet": -0.3633,
+      "other9_mean": 92.4378,
+      "delta_other9_mean_vs_duet": 0.4522,
+      "hard_class_deltas_vs_duet": {
+        "car": -4.15,
+        "person": -1.18,
+        "truck": 4.24
+      },
+      "selected_count": 13104,
+      "total_count": 13847,
+      "coverage": 94.6342,
+      "selected_source_label_precision": 89.87,
+      "pseudo_label_precision": 89.87,
+      "mix_accuracy": 87.72,
+      "checks": {
+        "config_valid": true,
+        "final_improvement": true,
+        "hard_mean_noninferior": false,
+        "other9_noninferior": true,
+        "no_hard_class_compensation": false
+      },
+      "pass_proxy_gate": false,
+      "class_accuracy": [
+        97.56,
+        86.62,
+        84.75,
+        76.27,
+        96.97,
+        95.18,
+        92.96,
+        83.0,
+        92.48,
+        93.82,
+        91.6,
+        66.98
+      ]
+    }
+  },
+  "factorial_effects": {
+    "memory_effect_with_head_v1_minus_archived_v0": 0.2,
+    "memory_effect_without_head_v3_minus_v2": 0.17,
+    "head_effect_with_monotonic_v1_minus_v3": -0.15,
+    "head_effect_with_stable_archived_v0_minus_v2": -0.18
+  },
+  "best_overall_variant": "v3_monotonic_nohead",
+  "ranking_hint": "removing both interventions ranks first; both stable memory and the target head are suspect",
+  "passing_variant": null,
+  "next": "do not run a full-data structural variant; retain the official DUET VisDA path and redesign DCCL as a baseline-preserving conflict-only intervention"
+}

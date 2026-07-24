@@ -49,6 +49,7 @@ def refresh(coverage=94.0, precision=90.0, mix=88.0):
         "selected_count": round(total * coverage / 100.0),
         "total_count": total,
         "coverage": coverage,
+        "selected_source_label_precision": precision - 0.5,
         "pseudo_label_precision": precision,
         "mix_accuracy": mix,
     }
@@ -166,6 +167,8 @@ class VisdaStructuralAblationTest(unittest.TestCase):
                     f"{1000 + cycle}/2000; Accuracy = {90 + cycle:.2f}%"
                 )
                 + "\n"
+                + f"Mixed output with valid mask: {90.5 + cycle:.2f}%"
+                + "\n"
                 + f"all_mix_output Accuracy = {80 + cycle:.2f}%;"
                 for cycle in range(1, 5)
             ]
@@ -176,7 +179,8 @@ class VisdaStructuralAblationTest(unittest.TestCase):
         self.assertEqual(result["selected_count"], 1004)
         self.assertEqual(result["total_count"], 2000)
         self.assertAlmostEqual(result["coverage"], 50.2)
-        self.assertEqual(result["pseudo_label_precision"], 94.0)
+        self.assertEqual(result["selected_source_label_precision"], 94.0)
+        self.assertEqual(result["pseudo_label_precision"], 94.5)
         self.assertEqual(result["mix_accuracy"], 84.0)
 
 

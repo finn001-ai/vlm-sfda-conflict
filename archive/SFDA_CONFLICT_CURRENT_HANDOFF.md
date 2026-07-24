@@ -356,9 +356,9 @@ archive/sfda_conflict_visda_full_duet_control_2026-07-24/
   dual_view_precision_coverage_audit.md
 ```
 
-## Pending VisDA Structural Ablation
+## Completed VisDA Structural Ablation
 
-A compute-gated structural ablation now isolates the two interventions that
+A compute-gated structural ablation isolated the two interventions that
 activate when the VisDA gap first appears: stable/reversible pseudo-label
 memory and the adapted target head. It holds `both_prior`, all three base
 losses, and the deterministic 25% proxy fixed, disables GTR, and runs:
@@ -370,24 +370,37 @@ V3 = monotonic memory + no target head
 ```
 
 V0 (`stable + head`, GTR=0, final `87.83`) and the matched official-DUET proxy
-control (`87.93`) are archived references. The new job does not repeat V0.
-Run:
+control (`87.93`) are archived references. The completed results are:
 
-```bash
-cd duet-sfda-main
-bash tools/run_visda_structural_ablation_proxy25.sh
-```
+| Variant | Final | Delta vs DUET | Hard mean delta | Decision |
+|---|---:|---:|---:|---|
+| V1 monotonic + head | 88.03 | +0.10 | -1.6700 | fail |
+| V2 stable + no head | 88.01 | +0.08 | -0.6867 | fail |
+| V3 monotonic + no head | 88.18 | +0.25 | -0.3633 | fail |
 
-The unified gate requires at least `+0.15 pp` final macro improvement over the
-matched official-DUET proxy, no hard-class-mean regression, at most `0.10 pp`
-other-nine regression, and no individual car/person/truck regression greater
-than `0.50 pp`. Do not launch a full-data variant unless the gate JSON reports
-`pass_proxy_gate`; a pass permits only one matched full-data four-cycle
-preflight. The full contract is in:
+Monotonic memory improves final macro by `0.17-0.20 pp` relative to stable
+memory, while the target head lowers it by `0.15-0.18 pp`. Both interventions
+are harmful on this proxy. V3 ranks first but obtains its gain through
+car/person losses (`-4.15/-1.18 pp`) and a truck gain (`+4.24 pp`), so it
+fails the predeclared no-compensation gate. Do not run any full-data
+structural variant.
+
+The originally generated gate parsed the DUET selected source-label precision
+(`89.44%`) instead of its selected mixed-label precision (`90.36%`). The
+summarizer now records both. This diagnostic correction does not change any
+accuracy, class gate, or the `fail_proxy_gate` decision.
+
+The full contract and result are in:
 
 ```text
 VISDA_STRUCTURAL_ABLATION_STEP.md
+archive/sfda_conflict_visda_structural_ablation_2026-07-24/
 ```
+
+The structural transfer family is closed on VisDA. Keep the released DUET path
+as the safety baseline. A subsequent method must preserve that base and add a
+genuinely independent conflict signal; further recombination of the existing
+task, CLIP, calibration, and graph evidence is not supported.
 
 ## Instructions For A New Conversation
 

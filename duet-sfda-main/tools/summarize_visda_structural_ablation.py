@@ -29,6 +29,9 @@ PSEUDO_PATTERN = re.compile(
     r"Number of valid pseudo-labeled samples:\s*(\d+)/(\d+);\s*"
     r"Accuracy\s*=\s*([0-9.]+)%"
 )
+SELECTED_MIX_PATTERN = re.compile(
+    r"Mixed output with valid mask:\s*([0-9.]+)%"
+)
 MIX_PATTERN = re.compile(r"all_mix_output Accuracy\s*=\s*([0-9.]+)%")
 CONFIG_PATTERNS = {
     "calib_mode": re.compile(r"^\s+CALIB_MODE:\s*(\S+)\s*$", re.MULTILINE),
@@ -69,6 +72,7 @@ ARCHIVED_V0 = {
     "selected_count": 11309,
     "total_count": 13847,
     "coverage": 81.67,
+    "selected_source_label_precision": 94.16,
     "pseudo_label_precision": 94.16,
     "mix_accuracy": 87.60,
 }
@@ -106,19 +110,21 @@ def validate_records(records: list[dict], name: str) -> None:
 
 def parse_refresh_metrics(text: str) -> dict:
     pseudo = PSEUDO_PATTERN.findall(text)
+    selected_mix = SELECTED_MIX_PATTERN.findall(text)
     mix = MIX_PATTERN.findall(text)
-    if len(pseudo) != 4 or len(mix) != 4:
+    if len(pseudo) != 4 or len(selected_mix) != 4 or len(mix) != 4:
         raise ValueError(
-            "Expected four pseudo-label and mixed-output refresh records, "
-            f"found {len(pseudo)} and {len(mix)}"
+            "Expected four pseudo-label, selected-mix, and global-mix refresh "
+            f"records, found {len(pseudo)}, {len(selected_mix)}, and {len(mix)}"
         )
-    selected, total, precision = pseudo[-1]
+    selected, total, source_precision = pseudo[-1]
     return {
         "num_refreshes": 4,
         "selected_count": int(selected),
         "total_count": int(total),
         "coverage": 100.0 * int(selected) / int(total),
-        "pseudo_label_precision": float(precision),
+        "selected_source_label_precision": float(source_precision),
+        "pseudo_label_precision": float(selected_mix[-1]),
         "mix_accuracy": float(mix[-1]),
     }
 
@@ -216,6 +222,9 @@ def summarize_run(
         "selected_count": refresh["selected_count"],
         "total_count": refresh["total_count"],
         "coverage": round(refresh["coverage"], 4),
+        "selected_source_label_precision": refresh[
+            "selected_source_label_precision"
+        ],
         "pseudo_label_precision": refresh["pseudo_label_precision"],
         "mix_accuracy": refresh["mix_accuracy"],
         "checks": checks,
@@ -253,6 +262,9 @@ def summarize_ablation(
         "selected_count": control_refresh["selected_count"],
         "total_count": control_refresh["total_count"],
         "coverage": round(control_refresh["coverage"], 4),
+        "selected_source_label_precision": control_refresh[
+            "selected_source_label_precision"
+        ],
         "pseudo_label_precision": control_refresh["pseudo_label_precision"],
         "mix_accuracy": control_refresh["mix_accuracy"],
         "class_accuracy": control_classes,
@@ -397,6 +409,9 @@ def write_csv(path: Path, result: dict, class_names: list[str]) -> None:
             "hard_mean": control["hard_mean"],
             "other9_mean": control["other9_mean"],
             "coverage": control["coverage"],
+            "selected_source_label_precision": control[
+                "selected_source_label_precision"
+            ],
             "pseudo_label_precision": control["pseudo_label_precision"],
             "mix_accuracy": control["mix_accuracy"],
             "pass_proxy_gate": True,
@@ -414,6 +429,9 @@ def write_csv(path: Path, result: dict, class_names: list[str]) -> None:
             "hard_mean": v0["hard_mean"],
             "other9_mean": v0["other9_mean"],
             "coverage": v0["coverage"],
+            "selected_source_label_precision": v0[
+                "selected_source_label_precision"
+            ],
             "pseudo_label_precision": v0["pseudo_label_precision"],
             "mix_accuracy": v0["mix_accuracy"],
             "pass_proxy_gate": False,
@@ -431,6 +449,9 @@ def write_csv(path: Path, result: dict, class_names: list[str]) -> None:
                 "hard_mean": variant["hard_mean"],
                 "other9_mean": variant["other9_mean"],
                 "coverage": variant["coverage"],
+                "selected_source_label_precision": variant[
+                    "selected_source_label_precision"
+                ],
                 "pseudo_label_precision": variant["pseudo_label_precision"],
                 "mix_accuracy": variant["mix_accuracy"],
                 "pass_proxy_gate": variant["pass_proxy_gate"],
@@ -439,13 +460,13 @@ def write_csv(path: Path, result: dict, class_names: list[str]) -> None:
     fieldnames = list(rows[0])
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
 
     class_path = path.with_name(path.stem + "_per_class.csv")
     with class_path.open("w", newline="") as handle:
-        writer = csv.writer(handle)
+        writer = csv.writer(handle, lineterminator="\n")
         writer.writerow(["variant", "class", "final_accuracy"])
         writer.writerows(
             (
