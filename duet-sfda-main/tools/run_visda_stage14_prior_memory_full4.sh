@@ -10,7 +10,6 @@ current_method="temporal_precision_head_stage14_bothprior_stable_full4_seed2020"
 none_stable_method="temporal_precision_head_stage14_none_stable_full4_seed2020"
 both_monotonic_method="temporal_precision_head_stage14_bothprior_monotonic_full4_seed2020"
 none_monotonic_method="temporal_precision_head_stage14_none_monotonic_full4_seed2020"
-gpu_id=${GPU_ID:-0}
 
 for path in \
   data/VISDA-C/validation_list.txt \
@@ -85,7 +84,6 @@ run_control() {
   python image_target_of_oh_vs.py \
     --cfg cfgs/visda/plmatch.yaml \
     CKPT_DIR . SETTING.OUTPUT_SRC source \
-    GPU_ID "$gpu_id" \
     MODEL.METHOD "$control_method" \
     SETTING.SEED 2020 SETTING.S 0 SETTING.T 1 \
     ACTIVE.CYCLE 4 \
@@ -106,7 +104,6 @@ run_candidate() {
   python image_target_of_oh_vs.py \
     --cfg cfgs/visda/temporal_precision_head.yaml \
     CKPT_DIR . SETTING.OUTPUT_SRC source \
-    GPU_ID "$gpu_id" \
     MODEL.METHOD "$method" \
     SETTING.SEED 2020 SETTING.S 0 SETTING.T 1 \
     ACTIVE.CYCLE 4 \

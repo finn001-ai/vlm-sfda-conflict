@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 
 from tools.summarize_visda_stage14_prior_memory import (
     causal_conclusion,
@@ -183,6 +184,13 @@ class VisdaStage14PriorMemoryTest(unittest.TestCase):
         self.assertEqual(refresh["total_count"], 55388)
         self.assertEqual(refresh["selected_count"], 50004)
         validate_candidate_config(config, "both_prior_stable")
+
+    def test_single_gpu_runner_does_not_override_string_gpu_id(self):
+        script = Path(
+            "tools/run_visda_stage14_prior_memory_full4.sh"
+        ).read_text()
+
+        self.assertNotIn("GPU_ID ", script)
 
 
 if __name__ == "__main__":

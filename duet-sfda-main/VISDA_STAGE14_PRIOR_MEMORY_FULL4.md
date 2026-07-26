@@ -27,12 +27,6 @@ git pull
 bash tools/run_visda_stage14_prior_memory_full4.sh
 ```
 
-指定 GPU：
-
-```bash
-GPU_ID=1 bash tools/run_visda_stage14_prior_memory_full4.sh
-```
-
 脚本分成两阶段。第一阶段先运行 DUET 与当前 Stage14；只有当
 `Stage14 - DUET <= -0.15` 个百分点、即完整数据上的退化被复现时，才继续
 剩余三组。没有复现则以退出码 2 停止，避免继续消耗算力。
