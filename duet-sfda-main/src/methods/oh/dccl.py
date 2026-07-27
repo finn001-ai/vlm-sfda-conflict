@@ -65,6 +65,10 @@ from src.utils.three_view_noise_em import (
     three_view_class_conditional_em,
     weighted_soft_kl as weighted_three_view_em_kl,
 )
+from src.utils.pseudo_label_memory import (
+    dual_tier_supervision,
+    weighted_cross_entropy,
+)
 from src.utils.failure_audit import save_failure_audit_snapshot
 # from src.utils import loss, active_prompt, IID_losses
 # from proposed_method import *
@@ -1003,6 +1007,8 @@ def save_temporal_diagnostics(
     teacher_soft,
     target_label,
     task_features=None,
+    memory_weight=None,
+    pl_state=None,
 ):
     if not cfg.DCCL.TEMPORAL_DIAG:
         return
@@ -1023,6 +1029,21 @@ def save_temporal_diagnostics(
         teacher_prob=teacher_soft.cpu().numpy().astype(np.float32),
         target_label=target_label.cpu().numpy().astype(np.int64),
     )
+    if memory_weight is not None:
+        payload["memory_weight"] = (
+            memory_weight.cpu().numpy().astype(np.float32)
+        )
+    if pl_state is not None:
+        for state_name in (
+            "last_current_mask",
+            "last_stable_mask",
+            "last_pending_mask",
+            "last_conflict_mask",
+        ):
+            if state_name in pl_state:
+                payload[state_name.removeprefix("last_")] = (
+                    pl_state[state_name].cpu().numpy().astype(bool)
+                )
     if cfg.FAILURE_AUDIT.ENABLED:
         if task_features is None:
             raise ValueError("Failure audit requires DCCL task features")
@@ -1457,6 +1478,7 @@ def train_target(cfg):
         (
             mem_label,
             label_mask,
+            memory_weight,
             confi_imag,
             confi_dis,
             clip_soft,
@@ -1700,6 +1722,8 @@ def train_target(cfg):
             teacher_soft,
             target_label,
             task_features,
+            memory_weight=memory_weight,
+            pl_state=pl_state,
         )
         sample_idx = torch.arange(source_label.size(0))
         candidate_mass = model_soft[sample_idx, source_label] + model_soft[sample_idx, clip_label]
@@ -1944,10 +1968,23 @@ def train_target(cfg):
             )
 
         promoted_mask = conflict_state["promoted_label"] >= 0
-        hard_label = mem_label.clone()
-        hard_label[promoted_mask] = conflict_state["promoted_label"][promoted_mask]
-        hard_label[accd_hard_mask] = conflict_state["accd_resolved_label"][accd_hard_mask]
-        hard_mask = label_mask | promoted_mask | accd_hard_mask
+        if cfg.DCCL.PL_MEMORY == "dual_tier":
+            # Conflict is never allowed back into hard CE through a legacy
+            # promotion/resolution path in the three-state memory experiment.
+            hard_label = mem_label
+            hard_mask = label_mask
+            hard_weight = memory_weight
+        else:
+            hard_label = mem_label.clone()
+            hard_label[promoted_mask] = conflict_state["promoted_label"][
+                promoted_mask
+            ]
+            hard_label[accd_hard_mask] = conflict_state[
+                "accd_resolved_label"
+            ][accd_hard_mask]
+            hard_mask = label_mask | promoted_mask | accd_hard_mask
+            hard_weight = memory_weight.clone()
+            hard_weight[promoted_mask | accd_hard_mask] = 1.0
         candidate_mask = (
             (source_label != clip_label)
             & (~promoted_mask)
@@ -2013,6 +2050,7 @@ def train_target(cfg):
         if boundary_head is not None:
             boundary_source_label = boundary_source_label.cuda()
         candidate_weight = candidate_weight.cuda()
+        hard_weight = hard_weight.cuda()
         prev_label_mask = label_mask
 
         # clip_optimizer = train_clip_lr(cfg, clip_model, confi_imag, confi_dis, text_inputs, clip_optimizer, curr_cycle)
@@ -2125,7 +2163,18 @@ def train_target(cfg):
                 pred = mem_label[filtered_idx]
                 supervised_logits = weak_logits[hard_mask[tar_idx]]
                 if pred.size(0) != 0:
-                    stable_ce_loss = nn.CrossEntropyLoss()(supervised_logits, pred)
+                    if cfg.DCCL.PL_MEMORY == "dual_tier":
+                        selected_weight = hard_weight[filtered_idx]
+                        stable_ce_loss = weighted_cross_entropy(
+                            supervised_logits,
+                            pred,
+                            selected_weight,
+                            epsilon=cfg.DCCL.EPSILON,
+                        )
+                    else:
+                        stable_ce_loss = nn.CrossEntropyLoss()(
+                            supervised_logits, pred
+                        )
                     classifier_loss += stable_ce_loss * cfg.ACTIVE.CLS_PAR
                     record_loss_diagnostic(
                         loss_diagnostics,
@@ -2689,17 +2738,29 @@ def apply_pseudo_label_memory(
             label_mask = prev_label_mask | (~prev_label_mask & current_mask)
         else:
             label_mask = current_mask
-        return label_mask, all_mix_output_pred, pl_state
+        return (
+            label_mask,
+            all_mix_output_pred,
+            label_mask.float(),
+            pl_state,
+        )
 
     if mode == "current":
-        return current_mask, all_mix_output_pred, pl_state
+        return (
+            current_mask,
+            all_mix_output_pred,
+            current_mask.float(),
+            pl_state,
+        )
 
-    if mode != "stable":
+    if mode not in {"stable", "dual_tier"}:
         raise ValueError(f"Unknown DCCL.PL_MEMORY: {mode}")
     if cfg.DCCL.PL_STABLE_CYCLES <= 0:
         raise ValueError("DCCL.PL_STABLE_CYCLES must be positive")
     if cfg.DCCL.PL_STABLE_MEMORY not in {"persistent", "reversible"}:
         raise ValueError(f"Unknown DCCL.PL_STABLE_MEMORY: {cfg.DCCL.PL_STABLE_MEMORY}")
+    if not 0.0 <= float(cfg.DCCL.PL_PENDING_WEIGHT) <= 1.0:
+        raise ValueError("DCCL.PL_PENDING_WEIGHT must be in [0, 1]")
 
     if pl_state is None:
         pl_state = init_pseudo_label_state(all_mix_output_pred.numel())
@@ -2736,6 +2797,16 @@ def apply_pseudo_label_memory(
     if warmup:
         label_mask = current_mask
         memory_label = all_mix_output_pred
+    elif mode == "dual_tier":
+        # A sample must agree now to participate. Repeated agreement receives
+        # full CE, while a first/current-only agreement remains as weak CE.
+        # Unlike monotonic memory, an agreement conflict always has zero weight.
+        stable_mask = stable
+        memory_label = torch.where(
+            stable_mask,
+            pl_state["stable_label"],
+            all_mix_output_pred,
+        )
     else:
         label_mask = stable_mask
         memory_label = torch.where(
@@ -2743,6 +2814,31 @@ def apply_pseudo_label_memory(
             pl_state["stable_label"],
             all_mix_output_pred,
         )
+
+    if mode == "dual_tier":
+        stable_mask = stable
+        label_mask, pending_mask, memory_weight = dual_tier_supervision(
+            current_mask,
+            stable_mask,
+            mix_conf,
+            cfg.DCCL.PL_PENDING_WEIGHT,
+            warmup=warmup,
+        )
+        conflict_mask = ~matching_indices
+        pl_state["last_current_mask"] = current_mask.clone()
+        pl_state["last_stable_mask"] = stable_mask.clone()
+        pl_state["last_pending_mask"] = pending_mask.clone()
+        pl_state["last_conflict_mask"] = conflict_mask.clone()
+        pending_mean_weight = (
+            float(memory_weight[pending_mask].mean().item())
+            if pending_mask.any()
+            else 0.0
+        )
+    else:
+        pending_mask = torch.zeros_like(current_mask)
+        conflict_mask = ~matching_indices
+        memory_weight = label_mask.float()
+        pending_mean_weight = 0.0
 
     if cfg.DCCL.PL_CLASS_BALANCE and not warmup:
         budget = int(round(float(cfg.DCCL.PL_BALANCE_COVERAGE) * memory_label.numel()))
@@ -2770,19 +2866,41 @@ def apply_pseudo_label_memory(
             )
         )
         label_mask = balanced_mask
+        memory_weight = memory_weight * label_mask.float()
 
-    logging.info(
-        "DCCL pseudo-label memory: mode={}; stable_memory={}; warmup={}; "
-        "current={}; stable={}; selected={}".format(
-            cfg.DCCL.PL_MEMORY,
-            cfg.DCCL.PL_STABLE_MEMORY,
-            int(warmup),
-            int(current_mask.sum().item()),
-            int(stable_mask.sum().item()),
-            int(label_mask.sum().item()),
+    if mode == "dual_tier":
+        low_confidence_mask = matching_indices & ~confidence_mask
+        logging.info(
+            "DCCL pseudo-label memory: mode={}; stable_memory={}; warmup={}; "
+            "current={}; stable={}; pending={}; conflict={}; "
+            "low_confidence={}; selected={}; effective_weight={:.4f}; "
+            "pending_mean_weight={:.6f}".format(
+                cfg.DCCL.PL_MEMORY,
+                cfg.DCCL.PL_STABLE_MEMORY,
+                int(warmup),
+                int(current_mask.sum().item()),
+                int(stable_mask.sum().item()),
+                int(pending_mask.sum().item()),
+                int(conflict_mask.sum().item()),
+                int(low_confidence_mask.sum().item()),
+                int(label_mask.sum().item()),
+                float(memory_weight.sum().item()),
+                pending_mean_weight,
+            )
         )
-    )
-    return label_mask, memory_label, pl_state
+    else:
+        logging.info(
+            "DCCL pseudo-label memory: mode={}; stable_memory={}; warmup={}; "
+            "current={}; stable={}; selected={}".format(
+                cfg.DCCL.PL_MEMORY,
+                cfg.DCCL.PL_STABLE_MEMORY,
+                int(warmup),
+                int(current_mask.sum().item()),
+                int(stable_mask.sum().item()),
+                int(label_mask.sum().item()),
+            )
+        )
+    return label_mask, memory_label, memory_weight, pl_state
 
 
 def prior_calibrate(prob, power, eps):
@@ -3072,7 +3190,12 @@ def obtain_label(
     matching_indices = all_output_pred == clip_all_output_pred
 
     mix_conf, _ = torch.max(all_mix_output, dim=1)
-    label_mask, all_mix_output_pred, pl_state = apply_pseudo_label_memory(
+    (
+        label_mask,
+        all_mix_output_pred,
+        memory_weight,
+        pl_state,
+    ) = apply_pseudo_label_memory(
         cfg,
         prev_label_mask,
         matching_indices,
@@ -3082,7 +3205,16 @@ def obtain_label(
         pl_state,
         curr_cycle,
     )
-    label_mask = expand_pseudo_label_mask(cfg, label_mask, all_mix_output, all_mix_output_pred)
+    memory_label_mask = label_mask
+    label_mask = expand_pseudo_label_mask(
+        cfg, label_mask, all_mix_output, all_mix_output_pred
+    )
+    expanded_mask = label_mask & ~memory_label_mask
+    memory_weight = torch.where(
+        expanded_mask,
+        torch.ones_like(memory_weight),
+        memory_weight,
+    )
 
     # Filter predictions and labels based on the updated label mask
     valid_preds = all_mix_output_pred[label_mask]
@@ -3125,6 +3257,7 @@ def obtain_label(
     return (
         all_mix_output_pred,
         label_mask,
+        memory_weight,
         confi_imag,
         confi_dis,
         clip_all_output,

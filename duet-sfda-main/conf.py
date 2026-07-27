@@ -313,6 +313,8 @@ _C.DCCL.PL_STABLE_CYCLES = 2
 _C.DCCL.PL_STABLE_MEMORY = "reversible"
 _C.DCCL.PL_MEMORY_WARMUP_CYCLES = 1
 _C.DCCL.PL_MEMORY_MIN_CONF = 0.0
+# Weight multiplier for first-observation pseudo labels in dual-tier memory.
+_C.DCCL.PL_PENDING_WEIGHT = 0.5
 _C.DCCL.PL_CLASS_BALANCE = False
 _C.DCCL.PL_BALANCE_COVERAGE = 0.75
 _C.DCCL.PL_BALANCE_MIN_PER_CLASS = 1
