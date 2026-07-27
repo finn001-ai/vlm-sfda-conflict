@@ -1,0 +1,5 @@
+# 云端回传的实验原件保留原始字节（包括 CRLF/空字段尾随空格）。
+# 将这些文件视为不可规范化的归档，避免 Git 自动改写并使 SHA256 失效。
+archive/sfda_conflict_visda_stage14_prior_memory_2026-07-27/raw/*.txt -text -diff
+archive/sfda_conflict_visda_stage14_prior_memory_2026-07-27/*.csv -text -diff
+archive/sfda_conflict_visda_stage14_dual_tier_2026-07-27/*.csv -text -diff

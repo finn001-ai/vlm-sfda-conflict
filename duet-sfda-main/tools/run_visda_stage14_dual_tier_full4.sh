@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# 本脚本是“Stage14 + Pending 弱监督”的固定复现实验入口。
+# Stage14 基线 YAML 保持 PL_MEMORY=stable；以下命令行参数只在本实验中覆盖为
+# dual_tier，避免把 Pending 消融混入原始 Stage14 存档。
 repo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo_dir"
 
@@ -116,6 +119,8 @@ run_dual_tier() {
   fi
 
   echo "==> Running ${description}"
+  # Pending 的实际逐样本 CE 权重为 0.5 * mix_conf；
+  # Conflict 的 hard CE 权重保持为 0。
   python image_target_of_oh_vs.py \
     --cfg cfgs/visda/temporal_precision_head.yaml \
     CKPT_DIR . SETTING.OUTPUT_SRC source \

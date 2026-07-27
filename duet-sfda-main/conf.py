@@ -308,12 +308,17 @@ _C.DCCL.TOPO_TARGET_MIX = -1.0
 _C.DCCL.PL_EXPAND = "none"
 _C.DCCL.PL_TOPK_PER_CLASS = 0
 _C.DCCL.PL_MIN_CONF = 0.0
+# 伪标签记忆模式：
+# monotonic=一旦接纳就永久保留监督资格；
+# current=只使用当前 source/CLIP 一致样本；
+# stable=只使用连续稳定样本；
+# dual_tier=Stable 强监督、Pending 弱监督、Conflict 不进入 hard CE。
 _C.DCCL.PL_MEMORY = "monotonic"
 _C.DCCL.PL_STABLE_CYCLES = 2
 _C.DCCL.PL_STABLE_MEMORY = "reversible"
 _C.DCCL.PL_MEMORY_WARMUP_CYCLES = 1
 _C.DCCL.PL_MEMORY_MIN_CONF = 0.0
-# Weight multiplier for first-observation pseudo labels in dual-tier memory.
+# dual_tier 中 Pending 的系数；实际权重还要乘融合置信度 mix_conf。
 _C.DCCL.PL_PENDING_WEIGHT = 0.5
 _C.DCCL.PL_CLASS_BALANCE = False
 _C.DCCL.PL_BALANCE_COVERAGE = 0.75

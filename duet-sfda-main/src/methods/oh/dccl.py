@@ -1969,8 +1969,9 @@ def train_target(cfg):
 
         promoted_mask = conflict_state["promoted_label"] >= 0
         if cfg.DCCL.PL_MEMORY == "dual_tier":
-            # Conflict is never allowed back into hard CE through a legacy
-            # promotion/resolution path in the three-state memory experiment.
+            # 为保证 Dual-tier 消融只检验 Pending，本分支明确禁止旧的
+            # promotion/ACCD 路径把 Conflict 重新送回 hard CE。
+            # 这不是最终“利用冲突样本”的方案，而是当前实验的受控边界。
             hard_label = mem_label
             hard_mask = label_mask
             hard_weight = memory_weight
@@ -2144,6 +2145,8 @@ def train_target(cfg):
 
             weak_preds = nn.Softmax(dim=1)(weak_logits)
 
+            # 网络仍会对整个 batch 计算 weak/strong logits；hard_mask 只决定
+            # 哪些样本进入下面的伪标签分类 CE。mask=False 不代表跳过前向传播。
             filtered_idx = tar_idx[hard_mask[tar_idx]]
 
             con_loss = consistency_loss(
@@ -2165,6 +2168,8 @@ def train_target(cfg):
                 if pred.size(0) != 0:
                     if cfg.DCCL.PL_MEMORY == "dual_tier":
                         selected_weight = hard_weight[filtered_idx]
+                        # Stable 权重为 1；Pending 权重为
+                        # PL_PENDING_WEIGHT * mix_conf；Conflict 不在 filtered_idx。
                         stable_ce_loss = weighted_cross_entropy(
                             supervised_logits,
                             pred,
@@ -2712,6 +2717,11 @@ def expand_pseudo_label_mask(cfg, label_mask, all_mix_output, all_mix_output_pre
 
 
 def init_pseudo_label_state(num_samples):
+    """初始化逐样本时序状态。
+
+    pending_label/pending_count 只记录“当前双视角一致标签”连续出现的次数，
+    并不是标签正确次数；stable_label 则记录达到稳定轮数后的标签。
+    """
     return {
         "pending_label": torch.full((num_samples,), -1, dtype=torch.long),
         "pending_count": torch.zeros(num_samples, dtype=torch.long),
@@ -2729,8 +2739,15 @@ def apply_pseudo_label_memory(
     pl_state,
     curr_cycle,
 ):
+    """根据当前一致性与历史连续性生成 hard CE 的标签、掩码和权重。
+
+    matching_indices 表示当前 source/CLIP top-1 一致。当前 Dual-tier 的
+    Conflict（不一致）仍被排除在 hard CE 之外；该函数尚不负责判断冲突双方
+    谁更可信。样本仍可在训练主循环中参加一致性、KL 等其他目标。
+    """
     mode = cfg.DCCL.PL_MEMORY
     confidence_mask = mix_conf >= cfg.DCCL.PL_MEMORY_MIN_CONF
+    # 只有“当前双视角一致且达到最低置信度”的样本才会累计连续次数。
     current_mask = matching_indices & confidence_mask
 
     if mode == "monotonic":
@@ -2765,6 +2782,8 @@ def apply_pseudo_label_memory(
     if pl_state is None:
         pl_state = init_pseudo_label_state(all_mix_output_pred.numel())
 
+    # 若当前一致标签与上一 cycle 相同则连续计数加一；标签改变时从一开始；
+    # source/CLIP 冲突时计数清零。
     same_label = pl_state["pending_label"] == all_mix_output_pred
     pl_state["pending_count"] = torch.where(
         current_mask & same_label,
@@ -2798,9 +2817,9 @@ def apply_pseudo_label_memory(
         label_mask = current_mask
         memory_label = all_mix_output_pred
     elif mode == "dual_tier":
-        # A sample must agree now to participate. Repeated agreement receives
-        # full CE, while a first/current-only agreement remains as weak CE.
-        # Unlike monotonic memory, an agreement conflict always has zero weight.
+        # Dual-tier 仍要求“当前一致”才能进入 hard CE：
+        # 连续一致的 Stable 使用完整权重，首次/新标签一致的 Pending 弱监督；
+        # 当前冲突的样本权重为 0，不会被历史 Stable 身份自动保留。
         stable_mask = stable
         memory_label = torch.where(
             stable_mask,

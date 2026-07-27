@@ -1,0 +1,75 @@
+{
+  "decision": "gap_reproduced_run_factorial",
+  "metric": "VisDA mean per-class accuracy at cycle-4 final checkpoint",
+  "seed": 2020,
+  "adaptation_samples": 55388,
+  "reproduction_threshold": {
+    "stage14_minus_duet_must_be_at_most": -0.15
+  },
+  "gap_reproduced": true,
+  "observed_stage14_minus_duet": -0.34,
+  "duet": {
+    "final": 90.32,
+    "oracle_peak": 90.36,
+    "oracle_peak_cycle": 4,
+    "oracle_peak_iteration": 2598,
+    "selected_count": 53373,
+    "total_count": 55388,
+    "coverage": 96.362,
+    "selected_source_label_precision": 90.05,
+    "pseudo_label_precision": 90.41,
+    "mix_accuracy": 88.93,
+    "class_accuracy": [
+      98.44,
+      87.6,
+      89.0,
+      81.61,
+      97.78,
+      96.92,
+      95.26,
+      85.0,
+      93.89,
+      95.75,
+      93.18,
+      69.48
+    ],
+    "log": "output/uda/VISDA-C/TV/plmatch_stage14_prior_memory_full4_control_seed2020/plmatch_260726_065852.txt"
+  },
+  "current_stage14": {
+    "final": 89.98,
+    "oracle_peak": 90.14,
+    "oracle_peak_cycle": 4,
+    "oracle_peak_iteration": 1732,
+    "selected_count": 47387,
+    "total_count": 55388,
+    "coverage": 85.5546,
+    "selected_source_label_precision": 93.45,
+    "pseudo_label_precision": 93.45,
+    "mix_accuracy": 87.96,
+    "class_accuracy": [
+      98.49,
+      87.83,
+      89.08,
+      77.18,
+      97.31,
+      97.93,
+      94.91,
+      82.62,
+      95.34,
+      96.58,
+      94.1,
+      68.39
+    ],
+    "log": "output/uda/VISDA-C/TV/temporal_precision_head_stage14_bothprior_stable_full4_seed2020/temporal_precision_head_260726_081626.txt",
+    "config": {
+      "calib_mode": "both_prior",
+      "calib_power": 0.5,
+      "pl_memory": "stable",
+      "target_head": true,
+      "gtr_par": 0.05
+    },
+    "delta_final_vs_duet": -0.34,
+    "delta_coverage_vs_duet": -10.8074
+  },
+  "next": "run the remaining three prior/memory factorial arms"
+}

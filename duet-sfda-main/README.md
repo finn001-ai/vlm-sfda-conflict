@@ -11,6 +11,17 @@ This codebase is based on [tntek/source-free-domain-adaptation](https://github.c
 
 ---
 
+## 本项目 Stage14 代码入口
+
+- [Stage14 与 Dual-tier Pending 中文代码存档](STAGE14_CODE_ARCHIVE_ZH.md)
+- [VisDA 配置索引](cfgs/visda/README_ZH.md)
+
+其中 Stage14 stable 和最新 Pending 改动已使用独立 Git tag 固定。中文存档同时
+说明了 CE 权重、Stable/Pending/Conflict 状态以及当前尚未利用 Conflict 的代码
+边界。
+
+---
+
 ## 📌 Important Note on Notation
 
 In the graduate thesis version of this work, the KL-divergence terms in Eq. (10) and Eq. (11) contain a typographical sign error.  
