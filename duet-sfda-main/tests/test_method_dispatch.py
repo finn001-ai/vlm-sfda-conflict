@@ -69,6 +69,8 @@ class MethodDispatchTest(unittest.TestCase):
         ).read_text()
         self.assertIn("--cfg cfgs/visda/boundary_flip_duet.yaml", visda_script)
         self.assertIn("analyze_visda_boundary_flip_duet.py", visda_script)
+        self.assertIn('rm -rf -- "$run_dir"', visda_script)
+        self.assertNotIn("Move its output directory aside", visda_script)
 
 
 if __name__ == "__main__":

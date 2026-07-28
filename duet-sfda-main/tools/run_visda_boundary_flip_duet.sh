@@ -20,6 +20,12 @@ if [ "$run_control" != "0" ] && [ "$run_control" != "1" ]; then
   echo "RUN_CONTROL must be 0 or 1" >&2
   exit 1
 fi
+case "$seed" in
+  ""|*[!0-9]*)
+    echo "SEED must be a non-negative integer" >&2
+    exit 1
+    ;;
+esac
 
 for path in \
   data/VISDA-C/validation_list.txt \
@@ -58,38 +64,62 @@ if [ -n "$adaptation_list" ]; then
   adaptation_opts+=(DCCL.ADAPTATION_LIST "$adaptation_list")
 fi
 
+reset_incomplete_run() {
+  local method=$1
+  local reason=$2
+  local run_dir
+  if [ "$method" != "$control_method" ] && \
+    [ "$method" != "$candidate_method" ]; then
+    echo "Refusing to reset unexpected method: $method" >&2
+    exit 1
+  fi
+  run_dir="output/uda/VISDA-C/TV/${method}"
+  echo "${method}: ${reason}; automatically overwriting incomplete output" >&2
+  if [ -e "$run_dir" ]; then
+    rm -rf -- "$run_dir"
+  fi
+  return 1
+}
+
 validate_run() {
-  method=$1
+  local method=$1
+  local run_dir
+  local pattern
+  local path
+  local checkpoints
+  local refreshes
+  local -a logs=()
+  run_dir="output/uda/VISDA-C/TV/${method}"
   pattern="output/uda/VISDA-C/TV/${method}/*.txt"
-  logs=()
   while IFS= read -r path; do
     logs+=("$path")
   done < <(compgen -G "$pattern" || true)
   if [ "${#logs[@]}" -eq 0 ]; then
+    if [ -e "$run_dir" ]; then
+      reset_incomplete_run "$method" "output exists but contains no log"
+    fi
     return 1
   fi
   if [ "${#logs[@]}" -ne 1 ]; then
-    echo "${method}: expected exactly one log, found ${#logs[@]}" >&2
-    exit 1
+    reset_incomplete_run \
+      "$method" "expected exactly one log, found ${#logs[@]}"
   fi
   checkpoints=$(grep -c "Task: TV" "${logs[0]}" || true)
   refreshes=$(
     grep -c "Number of valid pseudo-labeled samples" "${logs[0]}" || true
   )
   if [ "$checkpoints" -ne 32 ] || [ "$refreshes" -ne 8 ]; then
-    echo "${method}: incomplete run (${checkpoints}/32 checkpoints, ${refreshes}/8 refreshes)" >&2
-    echo "Move its output directory aside, then rerun this script." >&2
-    exit 1
+    reset_incomplete_run "$method" \
+      "incomplete run (${checkpoints}/32 checkpoints, ${refreshes}/8 refreshes)"
   fi
   if ! grep -q "Cycle: 8/8" "${logs[0]}"; then
-    echo "${method}: log is not an eight-cycle run" >&2
-    exit 1
+    reset_incomplete_run "$method" "log is not an eight-cycle run"
   fi
   if ! grep -q \
     "Number of valid pseudo-labeled samples: [0-9]*/${expected_samples}" \
     "${logs[0]}"; then
-    echo "${method}: log does not match ${expected_samples} adaptation samples" >&2
-    exit 1
+    reset_incomplete_run \
+      "$method" "log does not match ${expected_samples} adaptation samples"
   fi
   return 0
 }

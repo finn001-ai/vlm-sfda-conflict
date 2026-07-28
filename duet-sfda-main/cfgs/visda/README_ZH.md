@@ -15,6 +15,8 @@
   Stage14 宿主实际启用项和 `BOUNDARY_FLIP` 参数。
 - `tools/run_visda_boundary_flip_duet.sh`：默认运行 matched Stage14 control
   与 Boundary-Flip candidate，并检查 active flip、非零 flip loss 和最终精度。
+- 同名实验若已完整结束则直接复用；若只有空日志或未完成结果，脚本会自动
+  删除该实验的输出目录并从头覆盖运行，不再要求手动移动目录。
 - 已有同 seed control 时可用
   `RUN_CONTROL=0 bash tools/run_visda_boundary_flip_duet.sh` 只跑 candidate；
   脚本会复用同名且完整的 control。若本地没有该 control，gate 会标记
