@@ -1129,6 +1129,19 @@ def build_graph_fused_teacher(cfg, task_features, clip_features, model_soft, cli
 
 
 def train_target(cfg):
+    """训练 DUET/Stage14 及其 Boundary-Flip 扩展。
+
+    中文主流程导航
+    --------------
+    1. 加载冻结的源分类器、可适配的特征提取器和 DUET 的 CLIP 分支；
+    2. 每个 cycle 全量刷新 task/CLIP 概率与稳定 agreement 伪标签；
+    3. Stage14 使用稳定伪标签训练 target head，并保留图时序残差（GTR）；
+    4. 若 ``BOUNDARY_FLIP.ENABLED``，仅从类别校准产生的稳定翻转中选出
+       方向性监督；该分支不会运行旧 DCCL promotion/candidate 路径；
+    5. minibatch 中把 flip loss 以较小权重并入原 DUET/Stage14 损失。
+
+    目标真实标签只用于日志和最终评估，不进入候选门控或训练损失。
+    """
     clip_model, preprocess, _ = clip.load(cfg.ACTIVE.ARCH)
     clip_model.float()
     text_inputs = clip_pre_text(cfg)
@@ -1710,7 +1723,9 @@ def train_target(cfg):
         )
         if conflict_state is None:
             conflict_state = init_conflict_state(source_label.size(0))
-        if not cfg.ACCD.ENABLED:
+        # Boundary-Flip 有独立的候选记忆，不再更新旧 DCCL 的
+        # promotion/rejection 状态，避免两套冲突决策互相污染。
+        if not cfg.ACCD.ENABLED and not cfg.BOUNDARY_FLIP.ENABLED:
             update_conflict_state(cfg, conflict_state, source_label, clip_label, model_soft)
         teacher_soft, graph_teacher, graph_weight, graph_anchors = build_graph_fused_teacher(
             cfg,
@@ -1723,6 +1738,9 @@ def train_target(cfg):
         )
         boundary_flip_result = None
         if cfg.BOUNDARY_FLIP.ENABLED:
+            # 中文阅读顺序：
+            # agreement anchors -> 类别频率/置信度统计 -> 动态校准翻转
+            # -> 视角/语义/时序门控 -> 类别对预算。
             boundary_flip_state, boundary_flip_result = (
                 update_boundary_flip_state(
                     model_soft,
@@ -1861,9 +1879,17 @@ def train_target(cfg):
             pl_state=pl_state,
             boundary_flip_result=boundary_flip_result,
         )
-        sample_idx = torch.arange(source_label.size(0))
-        candidate_mass = model_soft[sample_idx, source_label] + model_soft[sample_idx, clip_label]
-        candidate_weight = get_candidate_weight(cfg, candidate_mass)
+        if cfg.BOUNDARY_FLIP.ENABLED:
+            # Boundary-Flip 不再计算或搬运旧 candidate 的 mass/weight。
+            candidate_mass = None
+            candidate_weight = None
+        else:
+            sample_idx = torch.arange(source_label.size(0))
+            candidate_mass = (
+                model_soft[sample_idx, source_label]
+                + model_soft[sample_idx, clip_label]
+            )
+            candidate_weight = get_candidate_weight(cfg, candidate_mass)
         kl_base_soft = (
             teacher_soft
             if cfg.DCCL.GRAPH_TEACHER_FUSION and cfg.DCCL.GTF_APPLY_TO in {"both", "kl"}
@@ -2103,7 +2129,12 @@ def train_target(cfg):
                 )
             )
 
-        promoted_mask = conflict_state["promoted_label"] >= 0
+        if cfg.BOUNDARY_FLIP.ENABLED:
+            # 新方法明确关闭旧 promotion；真正进入训练的冲突样本只来自
+            # boundary_flip_result["active_mask"]。
+            promoted_mask = torch.zeros_like(label_mask)
+        else:
+            promoted_mask = conflict_state["promoted_label"] >= 0
         if cfg.DCCL.PL_MEMORY == "dual_tier":
             # 为保证 Dual-tier 消融只检验 Pending，本分支明确禁止旧的
             # promotion/ACCD 路径把 Conflict 重新送回 hard CE。
@@ -2122,23 +2153,30 @@ def train_target(cfg):
             hard_mask = label_mask | promoted_mask | accd_hard_mask
             hard_weight = memory_weight.clone()
             hard_weight[promoted_mask | accd_hard_mask] = 1.0
-        candidate_mask = (
-            (source_label != clip_label)
-            & (~promoted_mask)
-            & (~accd_hard_mask)
-            & (~conflict_state["rejected"])
-            & (candidate_mass >= cfg.DCCL.CAND_TAU)
-            & (curr_cycle >= cfg.DCCL.CAND_START_CYCLE)
-        )
-        logging.info(
-            "DCCL candidate gate: start_cycle={}; tau={:.3f}; weight={}; selected={}/{}".format(
-                int(cfg.DCCL.CAND_START_CYCLE),
-                float(cfg.DCCL.CAND_TAU),
-                cfg.DCCL.CAND_WEIGHT,
-                int(candidate_mask.sum().item()),
-                int((source_label != clip_label).sum().item()),
+        if cfg.BOUNDARY_FLIP.ENABLED:
+            # 旧 candidate loss 已由方向明确的 Boundary-Flip loss 取代。
+            candidate_mask = torch.zeros_like(label_mask)
+            logging.info(
+                "Boundary-Flip DUET: legacy DCCL promotion/candidate path disabled"
             )
-        )
+        else:
+            candidate_mask = (
+                (source_label != clip_label)
+                & (~promoted_mask)
+                & (~accd_hard_mask)
+                & (~conflict_state["rejected"])
+                & (candidate_mass >= cfg.DCCL.CAND_TAU)
+                & (curr_cycle >= cfg.DCCL.CAND_START_CYCLE)
+            )
+            logging.info(
+                "DCCL candidate gate: start_cycle={}; tau={:.3f}; weight={}; selected={}/{}".format(
+                    int(cfg.DCCL.CAND_START_CYCLE),
+                    float(cfg.DCCL.CAND_TAU),
+                    cfg.DCCL.CAND_WEIGHT,
+                    int(candidate_mask.sum().item()),
+                    int((source_label != clip_label).sum().item()),
+                )
+            )
 
         boundary_anchor_label = None
         boundary_anchor_mask = None
@@ -2200,7 +2238,8 @@ def train_target(cfg):
         clip_label = clip_label.cuda()
         if boundary_head is not None:
             boundary_source_label = boundary_source_label.cuda()
-        candidate_weight = candidate_weight.cuda()
+        if candidate_weight is not None:
+            candidate_weight = candidate_weight.cuda()
         hard_weight = hard_weight.cuda()
         prev_label_mask = label_mask
 
@@ -2360,6 +2399,9 @@ def train_target(cfg):
                     cfg.DCCL.CAND_PAR,
                 )
             if boundary_flip_active_mask is not None:
+                # 对每个稳定翻转同时执行：
+                #   (1) 提升 late label；(2) 抑制 early label。
+                # 它只作用于 active flip，不覆盖原有 teacher 或 hard CE。
                 batch_flip_mask = boundary_flip_active_mask[tar_idx]
                 if batch_flip_mask.any():
                     flip_positions = torch.nonzero(

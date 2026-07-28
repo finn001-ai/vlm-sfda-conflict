@@ -9,6 +9,17 @@
   `PL_MEMORY=stable`，不包含 Dual-tier 专用的 Pending 权重。
 - `tools/run_visda_temporal_precision_head.sh`：Stage14 常规运行入口。
 
+## Boundary-Flip DUET 主线
+
+- `boundary_flip_duet.yaml`：精简后的 VisDA-C 新方法配置，只保留
+  Stage14 宿主实际启用项和 `BOUNDARY_FLIP` 参数。
+- `tools/run_visda_boundary_flip_duet.sh`：默认运行 matched Stage14 control
+  与 Boundary-Flip candidate，并检查 active flip、非零 flip loss 和最终精度。
+- 已有同 seed control 时可用
+  `RUN_CONTROL=0 bash tools/run_visda_boundary_flip_duet.sh` 只跑 candidate；
+  脚本会复用同名且完整的 control。若本地没有该 control，gate 会标记
+  `control_pending`，不会宣称正式通过。
+
 ## 最新 Pending 改动
 
 - `src/utils/pseudo_label_memory.py`：Stable/Pending/Conflict 权重构造及加权 CE。

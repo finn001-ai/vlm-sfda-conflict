@@ -56,8 +56,11 @@ The logged active accuracy is explicitly an oracle diagnostic only.
 duet-sfda-main/src/utils/boundary_flip.py
 duet-sfda-main/src/methods/oh/boundary_flip_duet.py
 duet-sfda-main/cfgs/office-home/boundary_flip_duet.yaml
+duet-sfda-main/cfgs/visda/boundary_flip_duet.yaml
 duet-sfda-main/tools/run_office_home_boundary_flip_duet_preflight.sh
+duet-sfda-main/tools/run_visda_boundary_flip_duet.sh
 duet-sfda-main/tools/analyze_boundary_flip_duet.py
+duet-sfda-main/tools/analyze_visda_boundary_flip_duet.py
 duet-sfda-main/tests/test_boundary_flip_duet.py
 ```
 
@@ -102,3 +105,14 @@ the worst task delta is at least -0.30 pp
 Passing authorizes a fixed-hyperparameter all-12 Office-Home run. Failure with
 an active mechanism closes this exact configuration; target labels must not be
 used to tune the gates.
+
+## VisDA-C Full Test
+
+```bash
+cd /openbayes/home/vlm-sfda-conflict/duet-sfda-main
+bash tools/run_visda_boundary_flip_duet.sh
+```
+
+该脚本以完整 VisDA-C、8 cycles、seed 2020 运行 matched Stage14 control 和
+Boundary-Flip candidate。机制门控同时要求存在 active flip、非零 flip-loss
+batches 和正的 loss 记录；最终精度至少高于 matched control `+0.20 pp`。

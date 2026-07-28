@@ -1,6 +1,6 @@
 MODEL:
   ARCH: resnet101
-  METHOD: temporal_precision_head
+  METHOD: boundary_flip_duet
 SETTING:
   DATASET: VISDA-C
   S: 0
@@ -34,13 +34,10 @@ ACTIVE:
   KL_PAR: 0.4
   CON_PAR: 0.2
 DCCL:
-  # Stage14 主路径只显式保留会改变默认行为的项目。
-  # Proxy 实验可在命令行覆盖 ADAPTATION_LIST；完整训练保持为空。
+  # 与 VisDA Stage14 对照保持一致，只额外打开 Boundary-Flip。
   ADAPTATION_LIST: ""
-  CAND_PAR: 0.0
+  LOSS_DIAG: True
   CALIB_MODE: both_prior
-  # Stage14 原始稳定记忆：仅连续两轮当前一致的样本进入 hard CE。
-  # Dual-tier Pending 实验不修改本存档配置，而由专用运行脚本显式覆盖。
   PL_MEMORY: stable
   PL_STABLE_CYCLES: 2
   PL_STABLE_MEMORY: reversible
@@ -48,8 +45,20 @@ DCCL:
   TARGET_HEAD_ADAPT: True
   TARGET_HEAD_MIX: 0.3
   TARGET_HEAD_START_CYCLE: 1
-  PROMOTE_K: 999
   TEMPORAL_DIAG: True
   GRAPH_TEACHER_FUSION: True
   GTF_APPLY_TO: none
   GTR_PAR: 0.05
+BOUNDARY_FLIP:
+  ENABLED: True
+  START_CYCLE: 1
+  LOGIT_ALPHA: 0.15
+  MIN_ADJUSTED_CONFIDENCE: 0.25
+  MIN_MARGIN: 0.0
+  SEMANTIC_THRESHOLD: 0.0
+  STABLE_CYCLES: 2
+  MAX_SWITCHES: 0
+  MAX_PER_PAIR: 64
+  MIN_WEIGHT: 0.05
+  LOSS_PAR: 0.05
+  NEGATIVE_WEIGHT: 0.5

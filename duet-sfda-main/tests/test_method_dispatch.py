@@ -64,6 +64,11 @@ class MethodDispatchTest(unittest.TestCase):
             "--cfg cfgs/office-home/boundary_flip_duet.yaml", script
         )
         self.assertIn("analyze_boundary_flip_duet.py", script)
+        visda_script = Path(
+            "tools/run_visda_boundary_flip_duet.sh"
+        ).read_text()
+        self.assertIn("--cfg cfgs/visda/boundary_flip_duet.yaml", visda_script)
+        self.assertIn("analyze_visda_boundary_flip_duet.py", visda_script)
 
 
 if __name__ == "__main__":

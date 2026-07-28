@@ -41,12 +41,6 @@ def init_boundary_flip_state(
         "initial_label": torch.full(
             sample_shape, -1, dtype=torch.long, device=device
         ),
-        "initial_source_label": torch.full(
-            sample_shape, -1, dtype=torch.long, device=device
-        ),
-        "initial_clip_label": torch.full(
-            sample_shape, -1, dtype=torch.long, device=device
-        ),
         "pending_label": torch.full(
             sample_shape, -1, dtype=torch.long, device=device
         ),
@@ -255,13 +249,6 @@ def update_boundary_flip_state(
     state["initial_label"] = torch.where(
         uninitialized, base_label, state["initial_label"]
     )
-    state["initial_source_label"] = torch.where(
-        uninitialized, source_label, state["initial_source_label"]
-    )
-    state["initial_clip_label"] = torch.where(
-        uninitialized, clip_label, state["initial_clip_label"]
-    )
-
     view_agreement = source_label == clip_label
     agreement_confidence = torch.sqrt(
         (
@@ -279,7 +266,7 @@ def update_boundary_flip_state(
     class_mean_confidence = state["class_confidence_sum"] / state[
         "class_count"
     ].clamp_min(epsilon)
-    adjusted_probability, penalty = dynamic_logit_adjustment(
+    adjusted_probability, _ = dynamic_logit_adjustment(
         base_probability,
         state["class_count"],
         class_mean_confidence,
@@ -344,8 +331,6 @@ def update_boundary_flip_state(
         "base_label": base_label,
         "initial_label": initial_label.clone(),
         "adjusted_label": adjusted_label,
-        "adjusted_probability": adjusted_probability,
-        "penalty": penalty,
         "semantic_similarity": semantic_similarity,
         "flip_margin": flip_margin,
         "candidate_mask": eligible,
