@@ -746,6 +746,7 @@ def init_loss_diagnostics():
                 "gtr",
                 "pair_gtr",
                 "three_view_em",
+                "boundary_flip",
                 "boundary_margin",
                 "boundary_consistency",
                 "boundary_keep",
