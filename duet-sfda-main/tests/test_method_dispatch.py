@@ -51,6 +51,20 @@ class MethodDispatchTest(unittest.TestCase):
             self.assertIn("--cfg cfgs/", script)
             self.assertIn("reciprocal_boundary.yaml", script)
 
+    def test_boundary_flip_variants_use_dedicated_dispatch(self):
+        entrypoint = Path("image_target_of_oh_vs.py").read_text()
+        self.assertIn(
+            'cfg.MODEL.METHOD.startswith("boundary_flip_duet_")',
+            entrypoint,
+        )
+        script = Path(
+            "tools/run_office_home_boundary_flip_duet_preflight.sh"
+        ).read_text()
+        self.assertIn(
+            "--cfg cfgs/office-home/boundary_flip_duet.yaml", script
+        )
+        self.assertIn("analyze_boundary_flip_duet.py", script)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -70,6 +70,10 @@ from src.utils.pseudo_label_memory import (
     weighted_cross_entropy,
 )
 from src.utils.failure_audit import save_failure_audit_snapshot
+from src.utils.boundary_flip import (
+    boundary_flip_loss,
+    update_boundary_flip_state,
+)
 # from src.utils import loss, active_prompt, IID_losses
 # from proposed_method import *
 from torch.nn.functional import normalize
@@ -1009,6 +1013,7 @@ def save_temporal_diagnostics(
     task_features=None,
     memory_weight=None,
     pl_state=None,
+    boundary_flip_result=None,
 ):
     if not cfg.DCCL.TEMPORAL_DIAG:
         return
@@ -1044,6 +1049,25 @@ def save_temporal_diagnostics(
                 payload[state_name.removeprefix("last_")] = (
                     pl_state[state_name].cpu().numpy().astype(bool)
                 )
+    if boundary_flip_result is not None:
+        boundary_fields = {
+            "initial_label": np.int64,
+            "base_label": np.int64,
+            "adjusted_label": np.int64,
+            "candidate_mask": bool,
+            "stable_mask": bool,
+            "active_mask": bool,
+            "weight": np.float32,
+            "semantic_similarity": np.float32,
+            "flip_margin": np.float32,
+            "switch_count": np.int64,
+            "class_prior": np.float32,
+            "class_mean_confidence": np.float32,
+        }
+        for name, dtype in boundary_fields.items():
+            payload[f"boundary_flip_{name}"] = (
+                boundary_flip_result[name].detach().cpu().numpy().astype(dtype)
+            )
     if cfg.FAILURE_AUDIT.ENABLED:
         if task_features is None:
             raise ValueError("Failure audit requires DCCL task features")
@@ -1451,13 +1475,48 @@ def train_target(cfg):
             )
         )
 
+    if cfg.BOUNDARY_FLIP.ENABLED:
+        if cfg.BOUNDARY_FLIP.START_CYCLE < 1:
+            raise ValueError("BOUNDARY_FLIP.START_CYCLE must be at least 1")
+        if cfg.BOUNDARY_FLIP.STABLE_CYCLES <= 0:
+            raise ValueError("BOUNDARY_FLIP.STABLE_CYCLES must be positive")
+        if cfg.BOUNDARY_FLIP.MAX_PER_PAIR <= 0:
+            raise ValueError("BOUNDARY_FLIP.MAX_PER_PAIR must be positive")
+        if cfg.BOUNDARY_FLIP.LOSS_PAR <= 0:
+            raise ValueError("BOUNDARY_FLIP.LOSS_PAR must be positive")
+        logging.info(
+            "Boundary-Flip DUET enabled: start_cycle={}; alpha={:.4f}; "
+            "min_confidence={:.4f}; min_margin={:.4f}; semantic_threshold={:.4f}; "
+            "stable_cycles={}; max_switches={}; max_per_pair={}; "
+            "loss_par={:.4f}; negative_weight={:.4f}".format(
+                int(cfg.BOUNDARY_FLIP.START_CYCLE),
+                float(cfg.BOUNDARY_FLIP.LOGIT_ALPHA),
+                float(cfg.BOUNDARY_FLIP.MIN_ADJUSTED_CONFIDENCE),
+                float(cfg.BOUNDARY_FLIP.MIN_MARGIN),
+                float(cfg.BOUNDARY_FLIP.SEMANTIC_THRESHOLD),
+                int(cfg.BOUNDARY_FLIP.STABLE_CYCLES),
+                int(cfg.BOUNDARY_FLIP.MAX_SWITCHES),
+                int(cfg.BOUNDARY_FLIP.MAX_PER_PAIR),
+                float(cfg.BOUNDARY_FLIP.LOSS_PAR),
+                float(cfg.BOUNDARY_FLIP.NEGATIVE_WEIGHT),
+            )
+        )
+
     prev_label_mask = None
     pl_state = None
     proto_state = None
     conflict_state = None
     pair_flow_state = None
     boundary_state = None
+    boundary_flip_state = None
     text_features = None
+    boundary_flip_text_features = None
+    if cfg.BOUNDARY_FLIP.ENABLED:
+        with torch.no_grad():
+            text_features = F.normalize(
+                clip_model.encode_text(text_inputs), dim=1
+            ).detach()
+        boundary_flip_text_features = text_features.float().cpu()
     curr_cycle = 0
     # office-home : 1.0 / VisDA-C : 1.05
     q_value = cfg.ACTIVE.Q_VALUE
@@ -1661,6 +1720,81 @@ def train_target(cfg):
             source_label,
             clip_label,
         )
+        boundary_flip_result = None
+        if cfg.BOUNDARY_FLIP.ENABLED:
+            boundary_flip_state, boundary_flip_result = (
+                update_boundary_flip_state(
+                    model_soft,
+                    clip_soft,
+                    source_label,
+                    clip_label,
+                    label_mask,
+                    boundary_flip_text_features,
+                    boundary_flip_state,
+                    curr_cycle=curr_cycle,
+                    start_cycle=int(cfg.BOUNDARY_FLIP.START_CYCLE),
+                    alpha=float(cfg.BOUNDARY_FLIP.LOGIT_ALPHA),
+                    min_adjusted_confidence=float(
+                        cfg.BOUNDARY_FLIP.MIN_ADJUSTED_CONFIDENCE
+                    ),
+                    min_margin=float(cfg.BOUNDARY_FLIP.MIN_MARGIN),
+                    semantic_threshold=float(
+                        cfg.BOUNDARY_FLIP.SEMANTIC_THRESHOLD
+                    ),
+                    stable_cycles=int(cfg.BOUNDARY_FLIP.STABLE_CYCLES),
+                    max_switches=int(cfg.BOUNDARY_FLIP.MAX_SWITCHES),
+                    max_per_pair=int(cfg.BOUNDARY_FLIP.MAX_PER_PAIR),
+                    min_weight=float(cfg.BOUNDARY_FLIP.MIN_WEIGHT),
+                    epsilon=float(cfg.DCCL.EPSILON),
+                )
+            )
+            flip_active = boundary_flip_result["active_mask"]
+            flip_oracle_accuracy = (
+                float(
+                    (
+                        boundary_flip_result["adjusted_label"][flip_active]
+                        == target_label[flip_active]
+                    )
+                    .float()
+                    .mean()
+                    .item()
+                )
+                if flip_active.any()
+                else 0.0
+            )
+            active_pairs = torch.unique(
+                boundary_flip_result["initial_label"][flip_active] * cfg.class_num
+                + boundary_flip_result["adjusted_label"][flip_active]
+            )
+            logging.info(
+                "Boundary-Flip DUET proposals: cycle={}; changed_top1={}; "
+                "candidates={}; temporally_stable={}; active_after_pair_budget={}; "
+                "active_pairs={}; switched_or_interrupted={}; mean_weight={:.6f}; "
+                "oracle_active_accuracy={:.2f}%".format(
+                    curr_cycle + 1,
+                    int(
+                        (
+                            boundary_flip_result["base_label"]
+                            != boundary_flip_result["adjusted_label"]
+                        ).sum().item()
+                    ),
+                    int(boundary_flip_result["candidate_mask"].sum().item()),
+                    int(boundary_flip_result["stable_mask"].sum().item()),
+                    int(flip_active.sum().item()),
+                    int(active_pairs.numel()),
+                    int(
+                        (
+                            boundary_flip_result["switch_count"] > 0
+                        ).sum().item()
+                    ),
+                    float(
+                        boundary_flip_result["weight"][flip_active].mean().item()
+                    )
+                    if flip_active.any()
+                    else 0.0,
+                    flip_oracle_accuracy * 100.0,
+                )
+            )
         three_view_em_target = None
         three_view_em_weight = None
         three_view_em_diagnostics = None
@@ -1724,6 +1858,7 @@ def train_target(cfg):
             task_features,
             memory_weight=memory_weight,
             pl_state=pl_state,
+            boundary_flip_result=boundary_flip_result,
         )
         sample_idx = torch.arange(source_label.size(0))
         candidate_mass = model_soft[sample_idx, source_label] + model_soft[sample_idx, clip_label]
@@ -2037,6 +2172,20 @@ def train_target(cfg):
                 boundary_active_conflict | boundary_pair_anchor
             )
 
+        boundary_flip_active_mask = None
+        boundary_flip_early_label = None
+        boundary_flip_late_label = None
+        boundary_flip_weight = None
+        if boundary_flip_result is not None:
+            boundary_flip_active_mask = boundary_flip_result["active_mask"]
+            boundary_flip_early_label = boundary_flip_result[
+                "initial_label"
+            ].cuda()
+            boundary_flip_late_label = boundary_flip_result[
+                "adjusted_label"
+            ].cuda()
+            boundary_flip_weight = boundary_flip_result["weight"].cuda()
+
         clip_soft = clip_soft.cuda()
         kl_target = kl_target.cuda()
         kl_weight = kl_weight.cuda()
@@ -2072,6 +2221,8 @@ def train_target(cfg):
         pair_feature_gtr_loss_batches = 0
         three_view_em_loss_sum = 0.0
         three_view_em_loss_batches = 0
+        boundary_flip_loss_sum = 0.0
+        boundary_flip_loss_batches = 0
         loss_diagnostics = (
             init_loss_diagnostics() if cfg.DCCL.LOSS_DIAG else None
         )
@@ -2207,6 +2358,34 @@ def train_target(cfg):
                     candidate_loss,
                     cfg.DCCL.CAND_PAR,
                 )
+            if boundary_flip_active_mask is not None:
+                batch_flip_mask = boundary_flip_active_mask[tar_idx]
+                if batch_flip_mask.any():
+                    flip_positions = torch.nonzero(
+                        batch_flip_mask, as_tuple=False
+                    ).squeeze(1).cuda()
+                    flip_indices = tar_idx[batch_flip_mask].cuda()
+                    flip_loss = boundary_flip_loss(
+                        weak_logits[flip_positions],
+                        boundary_flip_early_label[flip_indices],
+                        boundary_flip_late_label[flip_indices],
+                        boundary_flip_weight[flip_indices],
+                        negative_weight=float(
+                            cfg.BOUNDARY_FLIP.NEGATIVE_WEIGHT
+                        ),
+                        epsilon=float(cfg.DCCL.EPSILON),
+                    )
+                    classifier_loss += (
+                        flip_loss * cfg.BOUNDARY_FLIP.LOSS_PAR
+                    )
+                    record_loss_diagnostic(
+                        loss_diagnostics,
+                        "boundary_flip",
+                        flip_loss,
+                        cfg.BOUNDARY_FLIP.LOSS_PAR,
+                    )
+                    boundary_flip_loss_sum += float(flip_loss.detach().item())
+                    boundary_flip_loss_batches += 1
             # pseudo_output = weak_preds[filtered_idx]
             kl_target_batch = kl_target[tar_idx]
             kl_weight_batch = kl_weight[tar_idx]
@@ -2556,6 +2735,29 @@ def train_target(cfg):
                         ),
                         three_view_em_loss_batches,
                     )
+                if boundary_flip_result is not None:
+                    log_str += (
+                        "; boundary_flip_candidates={}; "
+                        "boundary_flip_stable={}; boundary_flip_active={}; "
+                        "boundary_flip_loss={:.6f}; boundary_flip_batches={}"
+                    ).format(
+                        int(
+                            boundary_flip_result["candidate_mask"].sum().item()
+                        ),
+                        int(
+                            boundary_flip_result["stable_mask"].sum().item()
+                        ),
+                        int(
+                            boundary_flip_result["active_mask"].sum().item()
+                        ),
+                        (
+                            boundary_flip_loss_sum
+                            / boundary_flip_loss_batches
+                            if boundary_flip_loss_batches > 0
+                            else 0.0
+                        ),
+                        boundary_flip_loss_batches,
+                    )
                 if boundary_head is not None:
                     logging.info(
                         (
@@ -2592,6 +2794,8 @@ def train_target(cfg):
                 pair_feature_gtr_loss_batches = 0
                 three_view_em_loss_sum = 0.0
                 three_view_em_loss_batches = 0
+                boundary_flip_loss_sum = 0.0
+                boundary_flip_loss_batches = 0
                 if captured_trajectory_snapshot and len(trajectory_snapshots) >= 2:
                     trajectory_acc, _ = cal_acc_trajectory_ensemble(
                         dset_loaders['test'],

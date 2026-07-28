@@ -407,6 +407,23 @@ _C.DCCL.THREE_VIEW_EM_DIRICHLET = 5.0
 _C.DCCL.THREE_VIEW_EM_MIN_CLASS_ANCHORS = 3
 _C.DCCL.THREE_VIEW_EM_PAR = 0.05
 
+# ------------------------- Boundary-Flip DUET options ---------------------- #
+# Dynamic class statistics only generate proposals.  A proposal is supervised
+# after semantic, view-support, pair-budget, and temporal-stability gates pass.
+_C.BOUNDARY_FLIP = CfgNode()
+_C.BOUNDARY_FLIP.ENABLED = False
+_C.BOUNDARY_FLIP.START_CYCLE = 1
+_C.BOUNDARY_FLIP.LOGIT_ALPHA = 0.15
+_C.BOUNDARY_FLIP.MIN_ADJUSTED_CONFIDENCE = 0.25
+_C.BOUNDARY_FLIP.MIN_MARGIN = 0.0
+_C.BOUNDARY_FLIP.SEMANTIC_THRESHOLD = 0.0
+_C.BOUNDARY_FLIP.STABLE_CYCLES = 2
+_C.BOUNDARY_FLIP.MAX_SWITCHES = 0
+_C.BOUNDARY_FLIP.MAX_PER_PAIR = 64
+_C.BOUNDARY_FLIP.MIN_WEIGHT = 0.05
+_C.BOUNDARY_FLIP.LOSS_PAR = 0.05
+_C.BOUNDARY_FLIP.NEGATIVE_WEIGHT = 0.5
+
 # ------------------------------- ACCD options ----------------------------- #
 _C.ACCD = CfgNode()
 

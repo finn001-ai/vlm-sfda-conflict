@@ -21,6 +21,7 @@ import src.methods.oh.plmatch as PLMATCH
 import src.methods.oh.dccl as DCCL
 import src.methods.oh.accd as ACCD
 import src.methods.oh.plum as PLUM
+import src.methods.oh.boundary_flip_duet as BOUNDARY_FLIP_DUET
 
 from conf import cfg, load_cfg_from_args
 
@@ -104,6 +105,13 @@ if __name__ == "__main__":
     elif cfg.MODEL.METHOD == "source":
         print("training source model")
         acc = SOURCE.train_source(cfg)
+
+    elif (
+        cfg.MODEL.METHOD == "boundary_flip_duet"
+        or cfg.MODEL.METHOD.startswith("boundary_flip_duet_")
+    ):
+        print("using Boundary-Flip DUET method")
+        acc = BOUNDARY_FLIP_DUET.train_target(cfg)
 
     elif (
         cfg.MODEL.METHOD in {"plmatch", "plmatch_ref12"}
