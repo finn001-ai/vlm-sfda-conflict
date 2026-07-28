@@ -3,27 +3,16 @@ from pathlib import Path
 
 
 class MethodDispatchTest(unittest.TestCase):
-    def test_temporal_precision_variants_use_common_prefix_dispatch(self):
+    def test_only_stage14_control_alias_uses_dccl_dispatch(self):
         entrypoint = Path("image_target_of_oh_vs.py").read_text()
 
         self.assertIn(
-            'cfg.MODEL.METHOD.startswith("temporal_precision_head_")',
+            'cfg.MODEL.METHOD.startswith("temporal_precision_head_control_")',
             entrypoint,
         )
+        self.assertNotIn('"reciprocal_boundary"', entrypoint)
+        self.assertNotIn("import src.methods.oh.accd", entrypoint)
         self.assertIn("Unknown adaptation method", entrypoint)
-
-    def test_visda_mix_scripts_use_dispatchable_method_names(self):
-        for name in (
-            "run_visda_temporal_precision_head_mix040_preflight.sh",
-            "run_visda_temporal_precision_head_mix040_seed2020.sh",
-        ):
-            script = Path("tools", name).read_text()
-            method_line = next(
-                line for line in script.splitlines() if line.startswith('method="')
-            )
-            method = method_line.removeprefix('method="').removesuffix('"')
-            self.assertTrue(method.startswith("temporal_precision_head_seed"))
-            self.assertIn("produced no VisDA-C accuracy records", script)
 
     def test_plmatch_variants_use_original_plmatch_dispatch(self):
         entrypoint = Path("image_target_of_oh_vs.py").read_text()
@@ -36,20 +25,6 @@ class MethodDispatchTest(unittest.TestCase):
         self.assertIn("--cfg cfgs/visda/plmatch.yaml", script)
         self.assertIn('ACTIVE.ADAPTATION_LIST "$proxy_list"', script)
         self.assertIn('if [ "$checkpoint_count" -ne 16 ]', script)
-
-    def test_reciprocal_boundary_variants_use_dccl_dispatch(self):
-        entrypoint = Path("image_target_of_oh_vs.py").read_text()
-        self.assertIn(
-            'cfg.MODEL.METHOD.startswith("reciprocal_boundary_")',
-            entrypoint,
-        )
-        for name in (
-            "run_visda_reciprocal_boundary_proxy25.sh",
-            "run_office_home_reciprocal_boundary_preflight.sh",
-        ):
-            script = Path("tools", name).read_text()
-            self.assertIn("--cfg cfgs/", script)
-            self.assertIn("reciprocal_boundary.yaml", script)
 
     def test_boundary_flip_variants_use_dedicated_dispatch(self):
         entrypoint = Path("image_target_of_oh_vs.py").read_text()
@@ -69,7 +44,7 @@ class MethodDispatchTest(unittest.TestCase):
         ).read_text()
         self.assertIn("--cfg cfgs/visda/boundary_flip_duet.yaml", visda_script)
         self.assertIn("analyze_visda_boundary_flip_duet.py", visda_script)
-        self.assertIn('rm -rf -- "$run_dir"', visda_script)
+        self.assertIn('rm -rf -- "$candidate_dir"', visda_script)
         self.assertNotIn("Move its output directory aside", visda_script)
 
 

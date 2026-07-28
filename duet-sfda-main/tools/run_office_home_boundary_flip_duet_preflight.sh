@@ -6,7 +6,7 @@ set -euo pipefail
 
 seed="${SEED:-2020}"
 run_control="${RUN_CONTROL:-1}"
-control_method="temporal_precision_head_boundary_flip_control_seed${seed}"
+control_method="temporal_precision_head_control_boundary_flip_seed${seed}"
 candidate_method="boundary_flip_duet_preflight_seed${seed}"
 result_dir="output/uda/office-home/boundary_flip_duet_preflight_seed${seed}"
 

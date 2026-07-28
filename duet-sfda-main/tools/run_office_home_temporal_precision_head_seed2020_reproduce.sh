@@ -13,7 +13,7 @@ for task in "${TASKS[@]}"; do
   python image_target_of_oh_vs.py \
     --cfg cfgs/office-home/temporal_precision_head.yaml \
     CKPT_DIR . SETTING.OUTPUT_SRC source \
-    MODEL.METHOD temporal_precision_head_seed2020_reproduce \
+    MODEL.METHOD temporal_precision_head_control_seed2020_reproduce \
     SETTING.SEED 2020 SETTING.S "$s" SETTING.T "$t"
 done
 

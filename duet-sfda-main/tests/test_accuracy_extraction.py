@@ -1,170 +1,56 @@
-import unittest
 import csv
-import io
+import subprocess
 import sys
 import tempfile
-from contextlib import redirect_stdout
+import unittest
 from pathlib import Path
-from unittest.mock import patch
-
-from tools.extract_final_accuracy import (
-    TRAJECTORY_ACCURACY_PATTERN,
-    main,
-    select_final_and_peak,
-    select_primary,
-)
 
 
 class AccuracyExtractionTest(unittest.TestCase):
-    def test_keeps_final_as_primary_and_peak_as_diagnostic(self):
-        log = """
-Task: AC, Iter:10/40; Cycle: 1/4; Accuracy = 72.10%
-Task: AC, Iter:20/40; Cycle: 2/4; Accuracy = 74.20%
-Task: AC, Iter:40/40; Cycle: 4/4; Accuracy = 73.00%
-"""
-        final, peak = select_final_and_peak(log)
-
-        self.assertEqual(final[3:], ("4", "4", "73.00"))
-        self.assertEqual(peak[3:], ("2", "4", "74.20"))
-
-    def test_returns_empty_pair_without_task_accuracy(self):
-        self.assertEqual(select_final_and_peak("no accuracy here"), (None, None))
-
-    def test_peak_selection_populates_primary_accuracy(self):
-        final = ("AC", "40", "40", "4", "4", "73.00")
-        peak = ("AC", "20", "40", "2", "4", "74.20")
-
-        self.assertEqual(select_primary(final, peak, "peak"), peak)
-        self.assertEqual(select_primary(final, peak, "final"), final)
-
-    def test_trajectory_records_are_extracted_separately(self):
-        log = """
-Task: AC, Iter:40/40; Cycle: 4/4; Accuracy = 73.00%
-Trajectory Ensemble Task: AC, Iter:30/40; Cycle: 4/4; Accuracy = 74.10%; Members=2
-Trajectory Ensemble Task: AC, Iter:40/40; Cycle: 4/4; Accuracy = 73.90%; Members=3
-"""
-        final, peak = select_final_and_peak(log, TRAJECTORY_ACCURACY_PATTERN)
-        standard_final, standard_peak = select_final_and_peak(log)
-
-        self.assertEqual(final[5], "73.90")
-        self.assertEqual(peak[5], "74.10")
-        self.assertEqual(standard_final[5], "73.00")
-        self.assertEqual(standard_peak[5], "73.00")
-
-    def test_pair_flow_csv_columns_stay_aligned(self):
+    def test_extracts_final_peak_and_current_stage14_fields(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            method_dir = Path(tmpdir) / "AC" / "pair_flow_method"
+            method_dir = Path(tmpdir) / "TV" / "boundary_flip_duet_test"
             method_dir.mkdir(parents=True)
-            log_path = method_dir / "log.txt"
+            log_path = method_dir / "run.txt"
             log_path.write_text(
                 """
-TARGET_HEAD_VARIANT: pair_flow
-PAIR_FLOW_RANK: 16
-PAIR_FLOW_MIN_COUNT: 5
-PAIR_FLOW_MIN_CYCLES: 2
-PAIR_FLOW_MAX_GATE: 0.3
-PAIR_FLOW_GATE_INIT: -2.0
-PAIR_FEATURE_ADAPT: True
-PAIR_FEATURE_START_CYCLE: 1
-PAIR_FEATURE_LR_MULT: 1.0
-PAIR_FEATURE_MAX_GATE: 0.05
-PAIR_FEATURE_GATE_INIT: -2.0
-Task: AC, Iter:40/40; Cycle: 4/4; Accuracy = 74.10%; pair_flow_gate=0.041; pair_flow_active_rank=8
+DCCL:
+  CALIB_POWER: 0.5
+  PL_STABLE_CYCLES: 2
+  PL_MEMORY_WARMUP_CYCLES: 1
+  TARGET_HEAD_MIX: 0.3
+  TARGET_HEAD_START_CYCLE: 1
+  GTR_PAR: 0.05
+BOUNDARY_FLIP:
+  LOGIT_ALPHA: 0.15
+  LOSS_PAR: 0.05
+Task: TV, Iter:10/20; Cycle: 1/2; Accuracy = 70.20%; classifier_loss = 1.0
+Task: TV, Iter:20/20; Cycle: 2/2; Accuracy = 69.80%; classifier_loss = 1.0
 """
             )
-            stdout = io.StringIO()
-            argv = [
-                "extract_final_accuracy.py",
-                "--glob",
-                str(Path(tmpdir) / "*" / "*" / "*.txt"),
-                "--selection",
-                "peak",
-            ]
-            with patch.object(sys, "argv", argv), redirect_stdout(stdout):
-                main()
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "tools/extract_final_accuracy.py",
+                    "--glob",
+                    str(log_path),
+                    "--selection",
+                    "peak",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            rows = list(csv.DictReader(result.stdout.splitlines()))
 
-        rows = list(csv.DictReader(io.StringIO(stdout.getvalue())))
         self.assertEqual(len(rows), 1)
-        self.assertIsNone(rows[0].get(None))
-        self.assertEqual(rows[0]["target_head_variant"], "pair_flow")
-        self.assertEqual(rows[0]["pair_flow_active_rank"], "8")
-        self.assertEqual(rows[0]["pair_flow_gate_final"], "0.041")
-
-    def test_pair_feature_metrics_are_extracted(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            method_dir = Path(tmpdir) / "AC" / "pair_feature_method"
-            method_dir.mkdir(parents=True)
-            log_path = method_dir / "log.txt"
-            log_path.write_text(
-                """
-TARGET_HEAD_VARIANT: blend
-PAIR_FEATURE_ADAPT: True
-PAIR_FEATURE_START_CYCLE: 1
-PAIR_FEATURE_LR_MULT: 1.0
-PAIR_FEATURE_MIN_ACTIVE_RANK: 8
-PAIR_FEATURE_GRADIENT_MODE: gtr_only
-PAIR_FEATURE_MAX_GATE: 0.05
-PAIR_FEATURE_GATE_INIT: -2.0
-Task: AC, Iter:40/40; Cycle: 4/4; Accuracy = 74.20%; pair_feature_gate=0.0000; pair_feature_router_norm=0.0; pair_flow_active_rank=7; pair_feature_effective=False; pair_feature_gradient_mode=gtr_only; pair_feature_gtr_active=31; pair_feature_gtr_loss=0.123; pair_feature_gtr_batches=4
-"""
-            )
-            stdout = io.StringIO()
-            argv = [
-                "extract_final_accuracy.py",
-                "--glob",
-                str(Path(tmpdir) / "*" / "*" / "*.txt"),
-                "--selection",
-                "peak",
-            ]
-            with patch.object(sys, "argv", argv), redirect_stdout(stdout):
-                main()
-
-        rows = list(csv.DictReader(io.StringIO(stdout.getvalue())))
-        self.assertEqual(rows[0]["pair_feature_adapt"], "True")
-        self.assertEqual(rows[0]["pair_feature_min_active_rank"], "8")
-        self.assertEqual(rows[0]["pair_feature_gradient_mode"], "gtr_only")
-        self.assertEqual(rows[0]["pair_feature_gate_final"], "0.0000")
-        self.assertEqual(rows[0]["pair_feature_router_norm"], "0.0")
-        self.assertEqual(rows[0]["pair_flow_active_rank"], "7")
-        self.assertEqual(rows[0]["pair_feature_effective"], "False")
-        self.assertEqual(rows[0]["pair_feature_gtr_active"], "31")
-        self.assertEqual(rows[0]["pair_feature_gtr_loss"], "0.123")
-        self.assertEqual(rows[0]["pair_feature_gtr_batches"], "4")
-
-    def test_covariance_transport_metrics_are_extracted(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            method_dir = Path(tmpdir) / "AC" / "covariance_method"
-            method_dir.mkdir(parents=True)
-            log_path = method_dir / "log.txt"
-            log_path.write_text(
-                """
-TARGET_HEAD_VARIANT: blend
-COV_TRANSPORT_ADAPT: True
-COV_TRANSPORT_START_CYCLE: 1
-COV_TRANSPORT_MIN_ANCHORS: 8
-COV_TRANSPORT_RANK: 4
-COV_TRANSPORT_MAX_GATE: 0.05
-Task: AC, Iter:40/40; Cycle: 4/4; Accuracy = 74.20%; cov_transport_active_classes=42; cov_transport_coverage=0.71; cov_transport_mean_shift=0.04
-"""
-            )
-            stdout = io.StringIO()
-            argv = [
-                "extract_final_accuracy.py",
-                "--glob",
-                str(Path(tmpdir) / "*" / "*" / "*.txt"),
-                "--selection",
-                "peak",
-            ]
-            with patch.object(sys, "argv", argv), redirect_stdout(stdout):
-                main()
-
-        rows = list(csv.DictReader(io.StringIO(stdout.getvalue())))
-        self.assertIsNone(rows[0].get(None))
-        self.assertEqual(rows[0]["cov_transport_adapt"], "True")
-        self.assertEqual(rows[0]["cov_transport_rank"], "4")
-        self.assertEqual(rows[0]["cov_transport_active_classes"], "42")
-        self.assertEqual(rows[0]["cov_transport_coverage"], "0.71")
-        self.assertEqual(rows[0]["cov_transport_mean_shift"], "0.04")
+        self.assertEqual(rows[0]["method"], "boundary_flip_duet_test")
+        self.assertEqual(rows[0]["task"], "TV")
+        self.assertEqual(rows[0]["accuracy"], "70.20")
+        self.assertEqual(rows[0]["final_accuracy"], "69.80")
+        self.assertEqual(rows[0]["peak_accuracy"], "70.20")
+        self.assertEqual(rows[0]["target_head_mix"], "0.3")
+        self.assertEqual(rows[0]["boundary_flip_logit_alpha"], "0.15")
 
 
 if __name__ == "__main__":

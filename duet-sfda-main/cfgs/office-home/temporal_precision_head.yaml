@@ -34,18 +34,9 @@ ACTIVE:
   KL_PAR: 0.4
   CON_PAR: 0.2
 DCCL:
-  # Stage14 主路径只显式保留会改变默认行为的项目。
-  CAND_PAR: 0.0
-  CALIB_MODE: both_prior
-  PL_MEMORY: stable
+  # Stage14 control：其余参数直接使用 conf.py 的固定主线默认值。
   PL_STABLE_CYCLES: 2
-  PL_STABLE_MEMORY: reversible
   PL_MEMORY_WARMUP_CYCLES: 1
-  TARGET_HEAD_ADAPT: True
   TARGET_HEAD_MIX: 0.3
   TARGET_HEAD_START_CYCLE: 1
-  PROMOTE_K: 999
-  TEMPORAL_DIAG: True
-  GRAPH_TEACHER_FUSION: True
-  GTF_APPLY_TO: none
   GTR_PAR: 0.05

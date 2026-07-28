@@ -25,14 +25,14 @@ for task in "${TASKS[@]}"; do
   python image_target_of_oh_vs.py \
     --cfg cfgs/office-home/temporal_precision_head.yaml \
     CKPT_DIR . SETTING.OUTPUT_SRC source \
-    MODEL.METHOD temporal_precision_head_all \
+    MODEL.METHOD temporal_precision_head_control_office_home_all \
     SETTING.S "$s" SETTING.T "$t"
 done
 
 python tools/analyze_temporal_conflict_dynamics.py \
-  --glob 'output/uda/office-home/*/temporal_precision_head_all/temporal_diagnostics/*_cycle*.npz' \
+  --glob 'output/uda/office-home/*/temporal_precision_head_control_office_home_all/temporal_diagnostics/*_cycle*.npz' \
   --out output/uda/office-home/temporal_precision_head_all_dynamics_probe.json
 
 python tools/extract_final_accuracy.py \
-  --glob 'output/uda/office-home/*/temporal_precision_head_all/*.txt' \
+  --glob 'output/uda/office-home/*/temporal_precision_head_control_office_home_all/*.txt' \
   > output/uda/office-home/temporal_precision_head_all_accuracy.csv

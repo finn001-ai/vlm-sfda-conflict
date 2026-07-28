@@ -34,19 +34,12 @@ ACTIVE:
   KL_PAR: 0.4
   CON_PAR: 0.2
 DCCL:
-  # Boundary-Flip 复用 Stage14 宿主；旧 promotion/candidate 路径在代码中跳过。
+  # 与 Stage14 control 完全匹配；方法差异只在 BOUNDARY_FLIP 节。
   LOSS_DIAG: True
-  CALIB_MODE: both_prior
-  PL_MEMORY: stable
   PL_STABLE_CYCLES: 2
-  PL_STABLE_MEMORY: reversible
   PL_MEMORY_WARMUP_CYCLES: 1
-  TARGET_HEAD_ADAPT: True
   TARGET_HEAD_MIX: 0.3
   TARGET_HEAD_START_CYCLE: 1
-  TEMPORAL_DIAG: True
-  GRAPH_TEACHER_FUSION: True
-  GTF_APPLY_TO: none
   GTR_PAR: 0.05
 BOUNDARY_FLIP:
   ENABLED: True

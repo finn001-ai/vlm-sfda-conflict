@@ -1,105 +1,53 @@
-"""
-Builds upon: https://github.com/tim-learn/SHOT
-Corresponding paper: http://proceedings.mlr.press/v119/liang20a/liang20a.pdf
+"""Stage14 DUET 主循环，以及可选的 Boundary-Flip 扩展。
+
+当前文件只保留论文主线真正运行的组件：
+
+1. source/CLIP 双视角伪标签；
+2. both-prior 类别校准与稳定伪标签记忆；
+3. Stage14 blend target head；
+4. graph-temporal residual (GTR)；
+5. Boundary-Flip 候选和方向性监督。
+
+Stage15--23 与更早 DCCL 实验已由 Git 标签
+``archive/dccl-full-pre-prune-20260728`` 固定，不再混入主循环。
 """
 
+import logging
 import os
 import os.path as osp
+
+import clip
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-import matplotlib.pyplot as plt
-import clip
-import seaborn as sns
-
-from torchvision import transforms
-from src.utils import loss
-from src.models import network
-from torch.utils.data import DataLoader
-from src.data.data_list import ImageList, ImageList_idx
-from scipy.spatial.distance import cdist
+from PIL import Image
 from sklearn.metrics import confusion_matrix
-from src.utils.utils import *
-from src.data.data_list import *
-from src.utils import loss, prompt_tuning, IID_losses
-from src.utils.conflict_diffusion import (
-    adaptive_graph_teacher_fusion,
-    class_balanced_mask_by_prior,
-    class_intervention_route_multipliers,
-    conflict_diffusion_evidence,
-    dual_space_diffusion,
-    graph_temporal_residual_weights,
-    topology_prior_calibrate,
-    topology_target_prior_calibrate,
-    transport_candidate_mass,
-    update_temporal_resolution,
-)
-from src.utils.model_ema import update_model_ema
-from src.utils.target_head import bounded_residual_logits
-from src.utils.trajectory_ensemble import (
-    capture_trajectory_snapshot,
-    load_trajectory_snapshot,
-)
-from src.utils.class_pair_flow import (
-    ClassPairFlowAdapter,
-    update_class_pair_flow,
-    update_soft_class_pair_flow,
-)
-from src.utils.class_pair_feature_adapter import (
-    ClassPairFeatureAdapter,
-    weighted_graph_temporal_kl,
-)
-from src.utils.reciprocal_boundary import (
-    ReciprocalBoundaryHead,
-    reciprocal_boundary_consistency_loss,
-    reciprocal_boundary_margin_loss,
-    reciprocal_boundary_preservation_loss,
-    update_reciprocal_boundary_state,
-)
-from src.utils.consistency import prediction_consistency_kl
-from src.utils.agreement_covariance_transport import AgreementCovarianceTransport
-from src.utils.agreement_whitened_transport import AgreementWhitenedTransport
-from src.utils.three_view_noise_em import (
-    three_view_class_conditional_em,
-    weighted_soft_kl as weighted_three_view_em_kl,
-)
-from src.utils.pseudo_label_memory import (
-    dual_tier_supervision,
-    weighted_cross_entropy,
-)
-from src.utils.failure_audit import save_failure_audit_snapshot
+from torch.utils.data import DataLoader
+from torchvision import transforms
+
+from data.datautils_domain import build_dataset
+from data.domain_datasets import domain_datasets
+from src.data.data_list import GaussianBlur, ImageList_idx, NCropsTransform
+from src.models import network
+from src.utils import IID_losses, loss
 from src.utils.boundary_flip import (
     boundary_flip_loss,
     update_boundary_flip_state,
 )
-# from src.utils import loss, active_prompt, IID_losses
-# from proposed_method import *
-from torch.nn.functional import normalize
-from data.datautils_domain import build_dataset
-from data.cls_to_names import *
-from data.domain_datasets import domain_datasets
-from sklearn.metrics import confusion_matrix
-
-logger = logging.getLogger(__name__)
+from src.utils.conflict_diffusion import (
+    adaptive_graph_teacher_fusion,
+    dual_space_diffusion,
+    graph_temporal_residual_weights,
+    update_temporal_resolution,
+)
+from src.utils.consistency import prediction_consistency_kl
 
 
 def op_copy(optimizer):
     for param_group in optimizer.param_groups:
         param_group['lr0'] = param_group['lr']
-    return optimizer
-
-
-def lr_scheduler(cfg, optimizer, iter_num, max_iter, gamma=10, power=0.75):
-    decay = (1 + gamma * iter_num / max_iter) ** (-power)
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = param_group['lr0'] * decay
-        param_group['weight_decay'] = (
-            cfg.OPTIM.WD * param_group.get('weight_decay_scale', 1.0)
-        )
-        param_group['momentum'] = cfg.OPTIM.MOMENTUM
-        param_group['nesterov'] = cfg.OPTIM.NESTEROV
     return optimizer
 
 
@@ -199,21 +147,6 @@ def get_augmentation_versions(cfg):
     return transform
 
 
-def image_train(resize_size=256, crop_size=224, alexnet=False):
-    if not alexnet:
-        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                         std=[0.229, 0.224, 0.225])
-    #   else:
-    #     normalize = Normalize(meanfile='./ilsvrc_2012_mean.npy')
-    return transforms.Compose([
-        transforms.Resize((resize_size, resize_size)),
-        transforms.RandomCrop(crop_size),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        normalize
-    ])
-
-
 def image_test(resize_size=256, crop_size=224, alexnet=False):
     if not alexnet:
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
@@ -228,15 +161,8 @@ def image_test(resize_size=256, crop_size=224, alexnet=False):
     ])
 
 
-def create_white_image(resize_size=256, crop_size=224):
-    white_image = Image.new("RGB", (resize_size, resize_size), (255, 255, 255))
-    # white_image = Image.new("RGB", (resize_size, resize_size), (0, 0, 0))
-    transform_pipeline = image_test(resize_size, crop_size)
-    return transform_pipeline(white_image)
-
-
 def data_load(cfg):
-    ## prepare data
+    """建立 adaptation、伪标签刷新和完整评估三个 loader。"""
     dsets = {}
     dset_loaders = {}
     train_bs = cfg.TEST.BATCH_SIZE
@@ -292,167 +218,17 @@ def data_load(cfg):
     return dset_loaders
 
 
-def apply_target_prototype_logits(cfg, features, logits, proto_state):
-    if not cfg.DCCL.PROTO_ADAPT or proto_state is None:
-        return logits
-    prototypes = proto_state.get("prototypes")
-    proto_mask = proto_state.get("mask")
-    if prototypes is None or proto_mask is None or not proto_mask.any():
-        return logits
-    if cfg.DCCL.PROTO_MIX <= 0:
-        return logits
-    if cfg.DCCL.PROTO_TEMPERATURE <= 0:
-        raise ValueError("DCCL.PROTO_TEMPERATURE must be positive")
-
-    prototypes = prototypes.to(device=features.device, dtype=features.dtype)
-    proto_mask = proto_mask.to(device=features.device)
-    proto_logits = F.normalize(features.float(), dim=1) @ prototypes.t()
-    proto_logits = proto_logits / float(cfg.DCCL.PROTO_TEMPERATURE)
-    active_proto = proto_logits[:, proto_mask]
-    if active_proto.numel() == 0:
-        return logits
-
-    proto_center = active_proto.mean(dim=1, keepdim=True)
-    proto_scale = active_proto.std(dim=1, keepdim=True, unbiased=False).clamp_min(cfg.DCCL.EPSILON)
-    source_scale = logits.detach().float().std(dim=1, keepdim=True, unbiased=False).clamp_min(cfg.DCCL.EPSILON)
-    proto_delta = torch.zeros_like(logits.float())
-    proto_delta[:, proto_mask] = (
-        (active_proto - proto_center) / proto_scale * source_scale
-    ).to(proto_delta.dtype)
-    return logits + float(cfg.DCCL.PROTO_MIX) * proto_delta.to(logits.dtype)
-
-
-class SourceAnchoredResidualClassifier(nn.Module):
-    def __init__(self, cfg, source_head):
-        super().__init__()
-        self.type = source_head.type
-        self.max_gate = float(cfg.DCCL.TARGET_RESIDUAL_MAX_GATE)
-        self.epsilon = float(cfg.DCCL.EPSILON)
-        self.residual = network.feat_classifier(
-            type=source_head.type,
-            class_num=cfg.class_num,
-            bottleneck_dim=cfg.bottleneck,
-        ).cuda()
-        residual_device = next(self.residual.parameters()).device
-        self.gate_logit = nn.Parameter(torch.tensor(
-            float(cfg.DCCL.TARGET_RESIDUAL_GATE_INIT),
-            device=residual_device,
-        ))
-        with torch.no_grad():
-            if hasattr(self.residual.fc, "weight_g"):
-                self.residual.fc.weight_g.zero_()
-            else:
-                self.residual.fc.weight.zero_()
-            if self.residual.fc.bias is not None:
-                self.residual.fc.bias.zero_()
-
-    def effective_gate(self):
-        return self.max_gate * torch.sigmoid(self.gate_logit.detach())
-
-    def forward(self, features, source_logits):
-        residual_logits = self.residual(features)
-        return bounded_residual_logits(
-            source_logits,
-            residual_logits,
-            self.gate_logit,
-            self.max_gate,
-            self.epsilon,
-        )
-
-
 def apply_target_head_logits(cfg, features, source_logits, target_head, curr_cycle):
-    if (
-        not cfg.DCCL.TARGET_HEAD_ADAPT
-        or target_head is None
-        or curr_cycle < cfg.DCCL.TARGET_HEAD_START_CYCLE
-    ):
+    """Stage14 固定使用 source/target 两个分类头的线性 blend。"""
+    if target_head is None or curr_cycle < cfg.DCCL.TARGET_HEAD_START_CYCLE:
         return source_logits
-    if cfg.DCCL.TARGET_HEAD_VARIANT in {"residual", "pair_flow"}:
-        return target_head(features, source_logits)
-    if cfg.DCCL.TARGET_HEAD_VARIANT != "blend":
-        raise ValueError(
-            "DCCL.TARGET_HEAD_VARIANT must be blend, residual, or pair_flow"
-        )
     if not 0.0 <= cfg.DCCL.TARGET_HEAD_MIX <= 1.0:
         raise ValueError("DCCL.TARGET_HEAD_MIX must be in [0, 1]")
     target_logits = target_head(features)
     mix = float(cfg.DCCL.TARGET_HEAD_MIX)
     return (1.0 - mix) * source_logits + mix * target_logits
-
-
-def apply_pair_feature_adapter(cfg, features, adapter, curr_cycle):
-    if (
-        not cfg.DCCL.PAIR_FEATURE_ADAPT
-        or adapter is None
-        or curr_cycle < cfg.DCCL.PAIR_FEATURE_START_CYCLE
-    ):
-        return features
-    gradient_mode = cfg.DCCL.PAIR_FEATURE_GRADIENT_MODE
-    if gradient_mode not in {"joint", "gtr_only"}:
-        raise ValueError(
-            "DCCL.PAIR_FEATURE_GRADIENT_MODE must be joint or gtr_only"
-        )
-    return adapter(
-        features,
-        detach_delta=gradient_mode == "gtr_only" and torch.is_grad_enabled(),
-    )
-
-
-def apply_agreement_covariance_transport(
-    cfg, features, transport, curr_cycle, sample_indices
-):
-    if (
-        not cfg.DCCL.COV_TRANSPORT_ADAPT
-        or transport is None
-        or curr_cycle < cfg.DCCL.COV_TRANSPORT_START_CYCLE
-    ):
-        return features
-    if sample_indices is None:
-        raise ValueError("Agreement covariance transport requires sample indices")
-    return transport(features, sample_indices)
-
-
-def apply_reciprocal_boundary_logits(
-    cfg,
-    features,
-    base_logits,
-    boundary_head,
-    curr_cycle,
-    *,
-    detach_residual=False,
-):
-    if (
-        not cfg.DCCL.RECIPROCAL_BOUNDARY
-        or boundary_head is None
-        or curr_cycle < cfg.DCCL.BOUNDARY_START_CYCLE
-        or int(boundary_head.active_count.item()) == 0
-    ):
-        return base_logits
-    return boundary_head(
-        features,
-        base_logits,
-        detach_residual=detach_residual,
-    )
-
-
 def build_target_classifier_head(cfg, source_head):
-    if cfg.DCCL.TARGET_HEAD_VARIANT == "residual":
-        return SourceAnchoredResidualClassifier(cfg, source_head)
-    if cfg.DCCL.TARGET_HEAD_VARIANT == "pair_flow":
-        adapter = ClassPairFlowAdapter(
-            feature_dim=cfg.bottleneck,
-            num_classes=cfg.class_num,
-            rank=int(cfg.DCCL.PAIR_FLOW_RANK),
-            max_gate=float(cfg.DCCL.PAIR_FLOW_MAX_GATE),
-            gate_init=float(cfg.DCCL.PAIR_FLOW_GATE_INIT),
-            epsilon=float(cfg.DCCL.EPSILON),
-        ).cuda()
-        adapter.type = source_head.type
-        return adapter
-    if cfg.DCCL.TARGET_HEAD_VARIANT != "blend":
-        raise ValueError(
-            "DCCL.TARGET_HEAD_VARIANT must be blend, residual, or pair_flow"
-        )
+    """建立 Stage14 的可训练 target head，并从 source head 初始化。"""
     target_head = network.feat_classifier(
         type=source_head.type,
         class_num=cfg.class_num,
@@ -462,112 +238,26 @@ def build_target_classifier_head(cfg, source_head):
     return target_head
 
 
-def build_target_head_ema(cfg, target_head):
-    if cfg.DCCL.TARGET_HEAD_VARIANT != "blend":
-        raise ValueError("Target-head EMA currently supports only the blend variant")
-    ema_head = build_target_classifier_head(cfg, target_head)
-    ema_head.eval()
-    for parameter in ema_head.parameters():
-        parameter.requires_grad = False
-    return ema_head
-
-
-@torch.no_grad()
-def update_target_prototype_state(cfg, features, labels, mask, proto_state):
-    if not cfg.DCCL.PROTO_ADAPT:
-        return proto_state
-    if cfg.DCCL.PROTO_MIN_PER_CLASS <= 0:
-        raise ValueError("DCCL.PROTO_MIN_PER_CLASS must be positive")
-    if not 0.0 <= cfg.DCCL.PROTO_MOMENTUM < 1.0:
-        raise ValueError("DCCL.PROTO_MOMENTUM must be in [0, 1)")
-
-    features = F.normalize(features.float(), dim=1).cpu()
-    labels = labels.long().cpu()
-    mask = mask.bool().cpu()
-    num_classes = cfg.class_num
-    prototypes = torch.zeros(num_classes, features.size(1), dtype=torch.float)
-    proto_mask = torch.zeros(num_classes, dtype=torch.bool)
-    for class_idx in range(num_classes):
-        class_rows = mask & (labels == class_idx)
-        if int(class_rows.sum().item()) < int(cfg.DCCL.PROTO_MIN_PER_CLASS):
-            continue
-        proto = features[class_rows].mean(dim=0)
-        prototypes[class_idx] = F.normalize(proto.unsqueeze(0), dim=1).squeeze(0)
-        proto_mask[class_idx] = True
-
-    if proto_state is not None and proto_state.get("prototypes") is not None:
-        prev_proto = proto_state["prototypes"].float().cpu()
-        prev_mask = proto_state["mask"].bool().cpu()
-        keep_prev = prev_mask & (~proto_mask)
-        prototypes[keep_prev] = prev_proto[keep_prev]
-        proto_mask = proto_mask | keep_prev
-        update_mask = proto_mask & prev_mask & (~keep_prev)
-        if update_mask.any() and cfg.DCCL.PROTO_MOMENTUM > 0:
-            momentum = float(cfg.DCCL.PROTO_MOMENTUM)
-            blended = momentum * prev_proto[update_mask] + (1.0 - momentum) * prototypes[update_mask]
-            prototypes[update_mask] = F.normalize(blended, dim=1)
-
-    logging.info(
-        "DCCL target prototypes: active_classes={}/{}; min_per_class={}; mix={:.3f}; temp={:.3f}".format(
-            int(proto_mask.sum().item()),
-            int(num_classes),
-            int(cfg.DCCL.PROTO_MIN_PER_CLASS),
-            float(cfg.DCCL.PROTO_MIX),
-            float(cfg.DCCL.PROTO_TEMPERATURE),
-        )
-    )
-    return {"prototypes": prototypes, "mask": proto_mask}
-
-
 def cal_acc(
     loader,
     netF,
     netB,
     netC,
-    cfg=None,
-    proto_state=None,
+    cfg,
     target_head=None,
     curr_cycle=0,
-    pair_feature_adapter=None,
-    covariance_transport=None,
     flag=False,
-    boundary_head=None,
 ):
+    """使用 Stage14 blend head 评估完整目标域。"""
     start_test = True
     with torch.no_grad():
-        iter_test = iter(loader)
-        for i in range(len(loader)):
-            data = next(iter_test)
-            inputs = data[0]
+        for data in loader:
+            inputs = data[0].cuda()
             labels = data[1]
-            inputs = inputs.cuda()
-            feas = netB(netF(inputs))
-            adapted_feas = apply_pair_feature_adapter(
-                cfg, feas, pair_feature_adapter, curr_cycle
-            ) if cfg is not None else feas
-            if cfg is not None:
-                adapted_feas = apply_agreement_covariance_transport(
-                    cfg,
-                    adapted_feas,
-                    covariance_transport,
-                    curr_cycle,
-                    data[2],
-                )
-            outputs = netC(adapted_feas)
-            if cfg is not None:
-                outputs = apply_target_head_logits(
-                    cfg, adapted_feas, outputs, target_head, curr_cycle
-                )
-                outputs = apply_target_prototype_logits(
-                    cfg, adapted_feas, outputs, proto_state
-                )
-                outputs = apply_reciprocal_boundary_logits(
-                    cfg,
-                    adapted_feas,
-                    outputs,
-                    boundary_head,
-                    curr_cycle,
-                )
+            features = netB(netF(inputs))
+            outputs = apply_target_head_logits(
+                cfg, features, netC(features), target_head, curr_cycle
+            )
             if start_test:
                 all_output = outputs.float().cpu()
                 all_label = labels.float()
@@ -590,147 +280,8 @@ def cal_acc(
         return accuracy * 100, mean_ent
 
 
-def collect_final_failure_audit(
-    cfg,
-    loader,
-    netF,
-    netB,
-    netC,
-    target_head,
-    pair_feature_adapter,
-    covariance_transport,
-    boundary_head,
-    proto_state,
-    curr_cycle,
-):
-    """Collect deterministic full-target Stage14 features and head outputs."""
-    task_features = []
-    base_probabilities = []
-    effective_probabilities = []
-    target_labels = []
-    netF.eval()
-    netB.eval()
-    netC.eval()
-    if target_head is not None:
-        target_head.eval()
-    if pair_feature_adapter is not None:
-        pair_feature_adapter.eval()
-    if boundary_head is not None:
-        boundary_head.eval()
-
-    with torch.no_grad():
-        for data in loader:
-            inputs = data[0].cuda()
-            raw_feature = netB(netF(inputs))
-            base_logits = netC(raw_feature)
-            adapted_feature = apply_pair_feature_adapter(
-                cfg, raw_feature, pair_feature_adapter, curr_cycle
-            )
-            adapted_feature = apply_agreement_covariance_transport(
-                cfg,
-                adapted_feature,
-                covariance_transport,
-                curr_cycle,
-                data[2],
-            )
-            effective_logits = netC(adapted_feature)
-            effective_logits = apply_target_head_logits(
-                cfg,
-                adapted_feature,
-                effective_logits,
-                target_head,
-                curr_cycle,
-            )
-            effective_logits = apply_target_prototype_logits(
-                cfg, adapted_feature, effective_logits, proto_state
-            )
-            effective_logits = apply_reciprocal_boundary_logits(
-                cfg,
-                adapted_feature,
-                effective_logits,
-                boundary_head,
-                curr_cycle,
-            )
-            task_features.append(raw_feature.float().cpu())
-            base_probabilities.append(F.softmax(base_logits, dim=1).float().cpu())
-            effective_probabilities.append(
-                F.softmax(effective_logits, dim=1).float().cpu()
-            )
-            target_labels.append(data[1].long().cpu())
-
-    task_feature = torch.cat(task_features, dim=0)
-    base_task_prob = torch.cat(base_probabilities, dim=0)
-    task_prob = torch.cat(effective_probabilities, dim=0)
-    target_label = torch.cat(target_labels, dim=0)
-    return {
-        "target_label": target_label,
-        "task_feature": task_feature,
-        "base_task_prob": base_task_prob,
-        "task_prob": task_prob,
-        "source_label": task_prob.argmax(dim=1),
-    }
-
-
-def cal_acc_trajectory_ensemble(
-    loader,
-    netF,
-    netB,
-    netC,
-    cfg,
-    proto_state,
-    target_head,
-    curr_cycle,
-    snapshots,
-):
-    if len(snapshots) < 2:
-        raise ValueError("Trajectory ensemble requires at least two snapshots")
-
-    ensemble_output = None
-    all_label = None
-    for snapshot in snapshots:
-        load_trajectory_snapshot(snapshot, netF, netB, target_head)
-        member_outputs = []
-        member_labels = []
-        with torch.no_grad():
-            for data in loader:
-                inputs = data[0].cuda()
-                labels = data[1]
-                features = netB(netF(inputs))
-                outputs = netC(features)
-                outputs = apply_target_head_logits(
-                    cfg, features, outputs, target_head, curr_cycle
-                )
-                outputs = apply_target_prototype_logits(
-                    cfg, features, outputs, proto_state
-                )
-                member_outputs.append(outputs.float().cpu())
-                member_labels.append(labels.float())
-        member_output = torch.cat(member_outputs, dim=0)
-        member_label = torch.cat(member_labels, dim=0)
-        if ensemble_output is None:
-            ensemble_output = member_output
-            all_label = member_label
-        else:
-            if not torch.equal(all_label, member_label):
-                raise ValueError("Trajectory ensemble loader order changed")
-            ensemble_output += member_output
-
-    ensemble_output /= float(len(snapshots))
-    load_trajectory_snapshot(snapshots[-1], netF, netB, target_head)
-    predict = ensemble_output.argmax(dim=1)
-    accuracy = (predict.float() == all_label).float().mean().item() * 100.0
-    mean_ent = torch.mean(
-        loss.Entropy(nn.Softmax(dim=1)(ensemble_output))
-    ).cpu().item()
-    return accuracy, mean_ent
-
-
-def consistency_loss(weak_output, strong_output, stop_gradient=False):
-    return prediction_consistency_kl(
-        weak_output,
-        strong_output,
-        stop_gradient=stop_gradient,
-    )
+def consistency_loss(weak_output, strong_output):
+    return prediction_consistency_kl(weak_output, strong_output)
 
 
 def init_loss_diagnostics():
@@ -741,15 +292,9 @@ def init_loss_diagnostics():
             for name in (
                 "consistency",
                 "stable_ce",
-                "candidate",
                 "clip_kl",
                 "gtr",
-                "pair_gtr",
-                "three_view_em",
                 "boundary_flip",
-                "boundary_margin",
-                "boundary_consistency",
-                "boundary_keep",
             )
         },
     }
@@ -807,16 +352,9 @@ def log_loss_diagnostics(diagnostics, cycle):
 def train_clip(cfg, model, confi_imag, confi_dis, text_features, clip_optimizer, q_value):
     if cfg.SETTING.DATASET in domain_datasets:
         cfg.domain_name = cfg.domain[cfg.SETTING.T]
-        classnames = cfg.classname
-
-    if 'RN' in cfg.DIFO.ARCH:
-        data_transform = image_test_50()
-    else:
-        data_transform = image_test()
-        # data_transform = get_augmentation("plain")
 
     set_id = 'sfuda'
-    val_dataset = build_dataset(set_id, data_transform, confi_imag, confi_dis, cfg.DATA_DIR, cfg.domain_name,
+    val_dataset = build_dataset(set_id, image_test(), confi_imag, confi_dis, cfg.DATA_DIR, cfg.domain_name,
                                 mode='test')
     batchsize = cfg.TEST.BATCH_SIZE
     val_loader = torch.utils.data.DataLoader(
@@ -826,6 +364,7 @@ def train_clip(cfg, model, confi_imag, confi_dis, text_features, clip_optimizer,
 
     max_iter = len(val_loader)
     iter_num = 0
+    iter_test = iter(val_loader)
     total_corrects = 0
     total_samples = 0
     beta = cfg.ACTIVE.BETA
@@ -833,7 +372,7 @@ def train_clip(cfg, model, confi_imag, confi_dis, text_features, clip_optimizer,
     while iter_num < max_iter:
         try:
             images, target, pseudo_label, _ = next(iter_test)
-        except:
+        except StopIteration:
             iter_test = iter(val_loader)
             images, target, pseudo_label, _ = next(iter_test)
 
@@ -870,134 +409,13 @@ def train_clip(cfg, model, confi_imag, confi_dis, text_features, clip_optimizer,
     return clip_optimizer, q_value
 
 
-def spectral_entropy(text_features, EPS=1e-9):
-    corr_matrix = torch.corrcoef(text_features)
-    eigenvalues = torch.linalg.eigvalsh(corr_matrix)
-    eigenvalues = eigenvalues / eigenvalues.sum()
-    spectral_ent = - (eigenvalues * torch.log(eigenvalues + EPS)).sum().item()
-    return spectral_ent
-
-
-def init_conflict_state(num_samples):
+def init_gtr_state(num_samples):
+    """GTR 只需要三项时序状态，不再复用旧 candidate/ACCD 状态表。"""
     return {
-        "promoted_label": torch.full((num_samples,), -1, dtype=torch.long),
-        "candidate_side": torch.full((num_samples,), -1, dtype=torch.long),
-        "candidate_count": torch.zeros(num_samples, dtype=torch.long),
-        "rejected": torch.zeros(num_samples, dtype=torch.bool),
-        "accd_pending_label": torch.full((num_samples,), -1, dtype=torch.long),
-        "accd_pending_count": torch.zeros(num_samples, dtype=torch.long),
-        "accd_resolved_label": torch.full((num_samples,), -1, dtype=torch.long),
-        "accd_anchor_label": torch.full((num_samples,), -1, dtype=torch.long),
-        "gtr_pending_label": torch.full((num_samples,), -1, dtype=torch.long),
-        "gtr_pending_count": torch.zeros(num_samples, dtype=torch.long),
-        "gtr_stable_label": torch.full((num_samples,), -1, dtype=torch.long),
+        "pending_label": torch.full((num_samples,), -1, dtype=torch.long),
+        "pending_count": torch.zeros(num_samples, dtype=torch.long),
+        "stable_label": torch.full((num_samples,), -1, dtype=torch.long),
     }
-
-
-def update_conflict_state(cfg, state, source_label, clip_label, model_soft):
-    conflict_mask = source_label != clip_label
-    promoted_mask = state["promoted_label"] >= 0
-    sample_idx = torch.arange(source_label.size(0))
-
-    source_prob = model_soft[sample_idx, source_label]
-    clip_prob = model_soft[sample_idx, clip_label]
-    candidate_mass = source_prob + clip_prob
-    candidate_gap = torch.abs(source_prob - clip_prob)
-    preferred_side = torch.where(source_prob >= clip_prob, torch.zeros_like(source_label), torch.ones_like(source_label))
-
-    dominates = (
-        conflict_mask
-        & (~promoted_mask)
-        & (candidate_mass >= cfg.DCCL.TAU_HIGH)
-        & (candidate_gap >= cfg.DCCL.GAP_PROMOTE)
-    )
-    same_side = state["candidate_side"] == preferred_side
-    state["candidate_count"] = torch.where(
-        dominates & same_side,
-        state["candidate_count"] + 1,
-        torch.where(dominates, torch.ones_like(state["candidate_count"]), torch.zeros_like(state["candidate_count"])),
-    )
-    state["candidate_side"] = torch.where(dominates, preferred_side, state["candidate_side"])
-
-    promote_mask = dominates & (state["candidate_count"] >= cfg.DCCL.PROMOTE_K)
-    promoted = torch.where(preferred_side == 0, source_label, clip_label)
-    state["promoted_label"] = torch.where(promote_mask, promoted, state["promoted_label"])
-
-    # Rejection is re-evaluated every cycle so a sample can recover later.
-    state["rejected"] = conflict_mask & (state["promoted_label"] < 0) & (candidate_mass < cfg.DCCL.TAU_LOW)
-
-    logging.info(
-        "DCCL states: conflicts={}; promoted={}; rejected={}; candidates={}".format(
-            int(conflict_mask.sum().item()),
-            int((state["promoted_label"] >= 0).sum().item()),
-            int(state["rejected"].sum().item()),
-            int((conflict_mask & (state["promoted_label"] < 0) & (~state["rejected"])).sum().item()),
-        )
-    )
-
-
-def get_candidate_weight(cfg, candidate_mass):
-    if cfg.DCCL.CAND_WEIGHT == "none":
-        return torch.ones_like(candidate_mass)
-    if cfg.DCCL.CAND_WEIGHT == "mass":
-        return candidate_mass
-    if cfg.DCCL.CAND_WEIGHT == "ramp":
-        denom = max(float(1.0 - cfg.DCCL.CAND_TAU), float(cfg.DCCL.EPSILON))
-        return ((candidate_mass - cfg.DCCL.CAND_TAU) / denom).clamp(0.0, 1.0)
-    raise ValueError(f"Unknown DCCL.CAND_WEIGHT: {cfg.DCCL.CAND_WEIGHT}")
-
-
-def build_conflict_kl_target(cfg, clip_soft, source_label, clip_label, model_soft):
-    if cfg.DCCL.KL_MODE == "clip":
-        return clip_soft, torch.ones(source_label.size(0), dtype=torch.float)
-
-    conflict_mask = source_label != clip_label
-    if cfg.DCCL.KL_MODE == "non_conflict":
-        return clip_soft, (~conflict_mask).float()
-
-    if cfg.DCCL.KL_MODE != "candidate":
-        raise ValueError(f"Unknown DCCL.KL_MODE: {cfg.DCCL.KL_MODE}")
-
-    sample_idx = torch.arange(source_label.size(0))
-    candidate_target = torch.zeros_like(clip_soft)
-    if cfg.DCCL.KL_CANDIDATE == "balanced":
-        source_weight = torch.full_like(model_soft[sample_idx, source_label], 0.5)
-        clip_weight = torch.full_like(source_weight, 0.5)
-    elif cfg.DCCL.KL_CANDIDATE == "confidence":
-        source_weight = model_soft[sample_idx, source_label]
-        clip_weight = clip_soft[sample_idx, clip_label]
-        norm = (source_weight + clip_weight).clamp_min(cfg.DCCL.EPSILON)
-        source_weight = source_weight / norm
-        clip_weight = clip_weight / norm
-    else:
-        raise ValueError(f"Unknown DCCL.KL_CANDIDATE: {cfg.DCCL.KL_CANDIDATE}")
-
-    candidate_target[sample_idx, source_label] = source_weight
-    candidate_target[sample_idx, clip_label] += clip_weight
-    kl_target = torch.where(conflict_mask.unsqueeze(1), candidate_target, clip_soft)
-    return kl_target, torch.ones(source_label.size(0), dtype=torch.float)
-
-
-def update_accd_state(cfg, state, evidence, curr_cycle):
-    """Promote only graph-supported conflict labels stable across cycles."""
-    eligible = evidence["eligible"] & (curr_cycle >= cfg.ACCD.START_CYCLE)
-    (
-        state["accd_pending_label"],
-        state["accd_pending_count"],
-        state["accd_resolved_label"],
-        newly_resolved,
-        resolved_mask,
-        demoted,
-    ) = update_temporal_resolution(
-        state["accd_pending_label"],
-        state["accd_pending_count"],
-        state["accd_resolved_label"],
-        eligible,
-        evidence["graph_label"],
-        cfg.ACCD.STABLE_CYCLES,
-        cfg.ACCD.RESOLUTION_MEMORY,
-    )
-    return newly_resolved, resolved_mask, demoted
 
 
 def save_temporal_diagnostics(
@@ -1011,15 +429,11 @@ def save_temporal_diagnostics(
     model_soft,
     teacher_soft,
     target_label,
-    task_features=None,
     memory_weight=None,
     pl_state=None,
     boundary_flip_result=None,
 ):
-    if not cfg.DCCL.TEMPORAL_DIAG:
-        return
-
-    out_dir = osp.join(cfg.output_dir, cfg.DCCL.TEMPORAL_DIAG_DIR)
+    out_dir = osp.join(cfg.output_dir, "temporal_diagnostics")
     os.makedirs(out_dir, exist_ok=True)
     out_path = osp.join(out_dir, f"{cfg.name}_cycle{curr_cycle + 1:02d}.npz")
     payload = dict(
@@ -1043,7 +457,6 @@ def save_temporal_diagnostics(
         for state_name in (
             "last_current_mask",
             "last_stable_mask",
-            "last_pending_mask",
             "last_conflict_mask",
         ):
             if state_name in pl_state:
@@ -1069,28 +482,12 @@ def save_temporal_diagnostics(
             payload[f"boundary_flip_{name}"] = (
                 boundary_flip_result[name].detach().cpu().numpy().astype(dtype)
             )
-    if cfg.FAILURE_AUDIT.ENABLED:
-        if task_features is None:
-            raise ValueError("Failure audit requires DCCL task features")
-        feature_dtype = (
-            np.float16
-            if cfg.FAILURE_AUDIT.FEATURE_DTYPE == "float16"
-            else np.float32
-        )
-        payload["task_feature"] = (
-            task_features.cpu().numpy().astype(feature_dtype)
-        )
     np.savez_compressed(out_path, **payload)
     logging.info("DCCL temporal diagnostics wrote: {}".format(out_path))
 
 
 def build_graph_fused_teacher(cfg, task_features, clip_features, model_soft, clip_soft, source_label, clip_label):
-    if not cfg.DCCL.GRAPH_TEACHER_FUSION:
-        teacher_soft = (model_soft + clip_soft) / 2
-        return teacher_soft, None, None, None
-    if cfg.DCCL.GTF_APPLY_TO not in {"both", "clip", "kl", "none"}:
-        raise ValueError(f"Unknown DCCL.GTF_APPLY_TO: {cfg.DCCL.GTF_APPLY_TO}")
-
+    """构造 Stage14 GTR 使用的双空间图后验与融合 teacher。"""
     _, _, graph_post, anchors = dual_space_diffusion(
         task_features,
         clip_features,
@@ -1115,11 +512,10 @@ def build_graph_fused_teacher(cfg, task_features, clip_features, model_soft, cli
     )
     logging.info(
         "DCCL graph-teacher fusion: anchors={}; strength={:.3f}; "
-        "apply_to={}; mean_graph_weight={:.4f}; max_graph_weight={:.4f}; "
+        "mean_graph_weight={:.4f}; max_graph_weight={:.4f}; "
         "changed_top1={}".format(
             int(anchors.sum().item()),
             float(cfg.DCCL.GTF_STRENGTH),
-            cfg.DCCL.GTF_APPLY_TO,
             float(graph_weight.mean().item()),
             float(graph_weight.max().item()),
             int((base_teacher.argmax(dim=1) != teacher_soft.argmax(dim=1)).sum().item()),
@@ -1142,7 +538,7 @@ def train_target(cfg):
 
     目标真实标签只用于日志和最终评估，不进入候选门控或训练损失。
     """
-    clip_model, preprocess, _ = clip.load(cfg.ACTIVE.ARCH)
+    clip_model, _, _ = clip.load(cfg.ACTIVE.ARCH)
     clip_model.float()
     text_inputs = clip_pre_text(cfg)
 
@@ -1156,8 +552,6 @@ def train_target(cfg):
     netB = network.feat_bottleneck(type='bn', feature_dim=netF.in_features, bottleneck_dim=cfg.bottleneck).cuda()
     netC = network.feat_classifier(type='wn', class_num=cfg.class_num, bottleneck_dim=cfg.bottleneck).cuda()
 
-    iter_sample = iter(dset_loaders["target"])
-    inputs_sample, _, _ = next(iter_sample)
     netF.eval()
     netB.eval()
     netC.eval()
@@ -1173,12 +567,6 @@ def train_target(cfg):
         v.requires_grad = False
 
     param_group = []
-    target_head = None
-    target_head_ema = None
-    pair_feature_adapter = None
-    covariance_transport = None
-    boundary_head = None
-
     for k, v in netF.named_parameters():
         if cfg.OPTIM.LR_DECAY1 > 0:
             param_group += [{'params': v, 'lr': cfg.OPTIM.LR * cfg.OPTIM.LR_DECAY1}]
@@ -1189,257 +577,26 @@ def train_target(cfg):
             param_group += [{'params': v, 'lr': cfg.OPTIM.LR * cfg.OPTIM.LR_DECAY2}]
         else:
             v.requires_grad = False
-    if cfg.DCCL.TARGET_HEAD_ADAPT:
-        if cfg.DCCL.TARGET_HEAD_LR_MULT <= 0:
-            raise ValueError("DCCL.TARGET_HEAD_LR_MULT must be positive")
-        target_head = build_target_classifier_head(cfg, netC)
-        target_head.train()
-        for k, v in target_head.named_parameters():
-            v.requires_grad = True
-            group = {
-                'params': v,
-                'lr': cfg.OPTIM.LR * cfg.DCCL.TARGET_HEAD_LR_MULT,
-            }
-            if k == "gate_logit":
-                group['weight_decay_scale'] = 0.0
-            param_group.append(group)
-        logging.info(
-            "DCCL target head enabled: variant={}; mix={:.3f}; "
-            "start_cycle={}; lr_mult={:.3f}".format(
-                cfg.DCCL.TARGET_HEAD_VARIANT,
-                float(cfg.DCCL.TARGET_HEAD_MIX),
-                int(cfg.DCCL.TARGET_HEAD_START_CYCLE),
-                float(cfg.DCCL.TARGET_HEAD_LR_MULT),
-            )
-        )
-        if cfg.DCCL.TARGET_HEAD_EMA:
-            if not 0.0 <= cfg.DCCL.TARGET_HEAD_EMA_MOMENTUM < 1.0:
-                raise ValueError("DCCL.TARGET_HEAD_EMA_MOMENTUM must be in [0, 1)")
-            target_head_ema = build_target_head_ema(cfg, target_head)
-            logging.info(
-                "DCCL target-head EMA enabled: momentum={:.4f}; "
-                "teacher used for pseudo labels and evaluation".format(
-                    float(cfg.DCCL.TARGET_HEAD_EMA_MOMENTUM)
-                )
-            )
-
-    if cfg.DCCL.PAIR_FEATURE_ADAPT:
-        if not cfg.DCCL.TARGET_HEAD_ADAPT or cfg.DCCL.TARGET_HEAD_VARIANT != "blend":
-            raise ValueError(
-                "Pair-feature adaptation requires the Stage14 blend target head"
-            )
-        if cfg.DCCL.PAIR_FEATURE_LR_MULT <= 0:
-            raise ValueError("DCCL.PAIR_FEATURE_LR_MULT must be positive")
-        if cfg.DCCL.PAIR_FEATURE_GRADIENT_MODE not in {"joint", "gtr_only"}:
-            raise ValueError(
-                "DCCL.PAIR_FEATURE_GRADIENT_MODE must be joint or gtr_only"
-            )
-        if (
-            cfg.DCCL.PAIR_FEATURE_GRADIENT_MODE == "gtr_only"
-            and cfg.DCCL.GTR_PAR <= 0
-        ):
-            raise ValueError(
-                "gtr_only pair-feature training requires DCCL.GTR_PAR > 0"
-            )
-        pair_feature_adapter = ClassPairFeatureAdapter(
-            feature_dim=cfg.bottleneck,
-            rank=int(cfg.DCCL.PAIR_FLOW_RANK),
-            min_active_rank=int(cfg.DCCL.PAIR_FEATURE_MIN_ACTIVE_RANK),
-            max_gate=float(cfg.DCCL.PAIR_FEATURE_MAX_GATE),
-            gate_init=float(cfg.DCCL.PAIR_FEATURE_GATE_INIT),
-            epsilon=float(cfg.DCCL.EPSILON),
-        ).cuda()
-        pair_feature_adapter.train()
-        for name, parameter in pair_feature_adapter.named_parameters():
-            parameter.requires_grad = True
-            group = {
+    if cfg.DCCL.TARGET_HEAD_LR_MULT <= 0:
+        raise ValueError("DCCL.TARGET_HEAD_LR_MULT must be positive")
+    target_head = build_target_classifier_head(cfg, netC)
+    target_head.train()
+    for parameter in target_head.parameters():
+        parameter.requires_grad = True
+        param_group.append(
+            {
                 "params": parameter,
-                "lr": cfg.OPTIM.LR * cfg.DCCL.PAIR_FEATURE_LR_MULT,
+                "lr": cfg.OPTIM.LR * cfg.DCCL.TARGET_HEAD_LR_MULT,
             }
-            if (
-                name == "gate_logit"
-                or cfg.DCCL.PAIR_FEATURE_GRADIENT_MODE == "gtr_only"
-            ):
-                group["weight_decay_scale"] = 0.0
-            param_group.append(group)
-        logging.info(
-            "DCCL pair-feature adapter enabled: rank={}; min_active_rank={}; max_gate={:.4f}; "
-            "start_cycle={}; lr_mult={:.3f}; gradient_mode={}".format(
-                int(cfg.DCCL.PAIR_FLOW_RANK),
-                int(cfg.DCCL.PAIR_FEATURE_MIN_ACTIVE_RANK),
-                float(cfg.DCCL.PAIR_FEATURE_MAX_GATE),
-                int(cfg.DCCL.PAIR_FEATURE_START_CYCLE),
-                float(cfg.DCCL.PAIR_FEATURE_LR_MULT),
-                cfg.DCCL.PAIR_FEATURE_GRADIENT_MODE,
-            )
         )
-
-    if cfg.DCCL.COV_TRANSPORT_ADAPT:
-        if not cfg.DCCL.TARGET_HEAD_ADAPT or cfg.DCCL.TARGET_HEAD_VARIANT != "blend":
-            raise ValueError(
-                "Agreement covariance transport requires the Stage14 blend head"
-            )
-        if pair_feature_adapter is not None:
-            raise ValueError(
-                "Agreement covariance transport cannot use the learned pair adapter"
-            )
-        if cfg.DCCL.COV_TRANSPORT_MODE == "conditional":
-            covariance_transport = AgreementCovarianceTransport(
-                num_classes=cfg.class_num,
-                feature_dim=cfg.bottleneck,
-                rank=int(cfg.DCCL.COV_TRANSPORT_RANK),
-                min_anchors=int(cfg.DCCL.COV_TRANSPORT_MIN_ANCHORS),
-                max_gate=float(cfg.DCCL.COV_TRANSPORT_MAX_GATE),
-                epsilon=float(cfg.DCCL.EPSILON),
-            ).cuda()
-            logging.info(
-                "DCCL agreement covariance transport enabled: mode=conditional; "
-                "rank={}; min_anchors={}; max_gate={:.4f}; start_cycle={}".format(
-                    int(cfg.DCCL.COV_TRANSPORT_RANK),
-                    int(cfg.DCCL.COV_TRANSPORT_MIN_ANCHORS),
-                    float(cfg.DCCL.COV_TRANSPORT_MAX_GATE),
-                    int(cfg.DCCL.COV_TRANSPORT_START_CYCLE),
-                )
-            )
-        elif cfg.DCCL.COV_TRANSPORT_MODE == "global_whitened":
-            covariance_transport = AgreementWhitenedTransport(
-                num_classes=cfg.class_num,
-                feature_dim=cfg.bottleneck,
-                min_anchors=int(cfg.DCCL.COV_GLOBAL_MIN_ANCHORS),
-                shrinkage=float(cfg.DCCL.COV_GLOBAL_SHRINKAGE),
-                holdout_ratio=float(cfg.DCCL.COV_GLOBAL_HOLDOUT_RATIO),
-                max_gate=float(cfg.DCCL.COV_TRANSPORT_MAX_GATE),
-                min_improvement=float(cfg.DCCL.COV_GLOBAL_MIN_IMPROVEMENT),
-                epsilon=float(cfg.DCCL.EPSILON),
-            ).cuda()
-            logging.info(
-                "DCCL agreement-whitened transport enabled: min_anchors={}; "
-                "shrinkage={:.4f}; holdout_ratio={:.4f}; max_gate={:.4f}; "
-                "min_improvement={:.6f}; start_cycle={}".format(
-                    int(cfg.DCCL.COV_GLOBAL_MIN_ANCHORS),
-                    float(cfg.DCCL.COV_GLOBAL_SHRINKAGE),
-                    float(cfg.DCCL.COV_GLOBAL_HOLDOUT_RATIO),
-                    float(cfg.DCCL.COV_TRANSPORT_MAX_GATE),
-                    float(cfg.DCCL.COV_GLOBAL_MIN_IMPROVEMENT),
-                    int(cfg.DCCL.COV_TRANSPORT_START_CYCLE),
-                )
-            )
-        else:
-            raise ValueError(
-                "DCCL.COV_TRANSPORT_MODE must be conditional or global_whitened"
-            )
-
-    if cfg.DCCL.THREE_VIEW_EM:
-        if not cfg.DCCL.TARGET_HEAD_ADAPT or cfg.DCCL.TARGET_HEAD_VARIANT != "blend":
-            raise ValueError("Three-view EM requires the Stage14 blend target head")
-        if not cfg.DCCL.GRAPH_TEACHER_FUSION:
-            raise ValueError("Three-view EM requires graph teacher fusion diagnostics")
-        if cfg.DCCL.THREE_VIEW_EM_PAR <= 0:
-            raise ValueError("DCCL.THREE_VIEW_EM_PAR must be positive")
-        if cfg.DCCL.THREE_VIEW_EM_STEPS <= 0:
-            raise ValueError("DCCL.THREE_VIEW_EM_STEPS must be positive")
-        if cfg.DCCL.THREE_VIEW_EM_DIRICHLET <= 0:
-            raise ValueError("DCCL.THREE_VIEW_EM_DIRICHLET must be positive")
-        if cfg.DCCL.THREE_VIEW_EM_MIN_CLASS_ANCHORS <= 0:
-            raise ValueError(
-                "DCCL.THREE_VIEW_EM_MIN_CLASS_ANCHORS must be positive"
-            )
-        logging.info(
-            "DCCL three-view EM enabled: start_cycle={}; steps={}; "
-            "dirichlet={:.3f}; min_class_anchors={}; par={:.3f}; "
-            "gradient_scope=target_head_only".format(
-                int(cfg.DCCL.THREE_VIEW_EM_START_CYCLE),
-                int(cfg.DCCL.THREE_VIEW_EM_STEPS),
-                float(cfg.DCCL.THREE_VIEW_EM_DIRICHLET),
-                int(cfg.DCCL.THREE_VIEW_EM_MIN_CLASS_ANCHORS),
-                float(cfg.DCCL.THREE_VIEW_EM_PAR),
-            )
+    logging.info(
+        "Stage14 blend target head: mix={:.3f}; start_cycle={}; "
+        "lr_mult={:.3f}".format(
+            float(cfg.DCCL.TARGET_HEAD_MIX),
+            int(cfg.DCCL.TARGET_HEAD_START_CYCLE),
+            float(cfg.DCCL.TARGET_HEAD_LR_MULT),
         )
-
-    if cfg.DCCL.RECIPROCAL_BOUNDARY:
-        incompatible = []
-        for enabled, name in (
-            (cfg.DCCL.TARGET_HEAD_ADAPT, "TARGET_HEAD_ADAPT"),
-            (cfg.DCCL.PROTO_ADAPT, "PROTO_ADAPT"),
-            (cfg.DCCL.PAIR_FEATURE_ADAPT, "PAIR_FEATURE_ADAPT"),
-            (cfg.DCCL.COV_TRANSPORT_ADAPT, "COV_TRANSPORT_ADAPT"),
-            (cfg.DCCL.THREE_VIEW_EM, "THREE_VIEW_EM"),
-            (cfg.DCCL.TRAJECTORY_ENSEMBLE, "TRAJECTORY_ENSEMBLE"),
-            (cfg.DCCL.GRAPH_TEACHER_FUSION, "GRAPH_TEACHER_FUSION"),
-        ):
-            if enabled:
-                incompatible.append(name)
-        if cfg.DCCL.CALIB_MODE != "none":
-            incompatible.append("CALIB_MODE")
-        if cfg.DCCL.CAND_PAR > 0:
-            incompatible.append("CAND_PAR")
-        if cfg.DCCL.GTR_PAR > 0:
-            incompatible.append("GTR_PAR")
-        if incompatible:
-            raise ValueError(
-                "Reciprocal boundary preflight must isolate the new method; "
-                "disable {}".format(", ".join(incompatible))
-            )
-        if cfg.DCCL.BOUNDARY_START_CYCLE < 1:
-            raise ValueError("DCCL.BOUNDARY_START_CYCLE must be at least 1")
-        if cfg.DCCL.BOUNDARY_LR_MULT <= 0:
-            raise ValueError("DCCL.BOUNDARY_LR_MULT must be positive")
-        if (
-            cfg.DCCL.BOUNDARY_MAX_PAIRS <= 0
-            or cfg.DCCL.BOUNDARY_MIN_CONFLICTS <= 0
-            or cfg.DCCL.BOUNDARY_STABLE_CYCLES <= 0
-            or cfg.DCCL.BOUNDARY_MIN_ANCHORS_PER_SIDE <= 0
-            or cfg.DCCL.BOUNDARY_HIDDEN_DIM <= 0
-            or cfg.DCCL.BOUNDARY_MARGIN <= 0
-        ):
-            raise ValueError(
-                "DCCL reciprocal-boundary dimensions, support, and margin "
-                "values must be positive"
-            )
-        if (
-            cfg.DCCL.BOUNDARY_MARGIN_PAR <= 0
-            or cfg.DCCL.BOUNDARY_CONSISTENCY_PAR < 0
-            or cfg.DCCL.BOUNDARY_KEEP_PAR < 0
-        ):
-            raise ValueError("DCCL reciprocal-boundary loss weights are invalid")
-        boundary_head = ReciprocalBoundaryHead(
-            feature_dim=cfg.bottleneck,
-            num_classes=cfg.class_num,
-            hidden_dim=int(cfg.DCCL.BOUNDARY_HIDDEN_DIM),
-            max_pairs=int(cfg.DCCL.BOUNDARY_MAX_PAIRS),
-            max_shift=float(cfg.DCCL.BOUNDARY_MAX_SHIFT),
-            epsilon=float(cfg.DCCL.EPSILON),
-        ).cuda()
-        boundary_head.train()
-        for name, parameter in boundary_head.named_parameters():
-            parameter.requires_grad = True
-            group = {
-                "params": parameter,
-                "lr": cfg.OPTIM.LR * cfg.DCCL.BOUNDARY_LR_MULT,
-            }
-            if name.endswith("bias") or "project.1." in name:
-                group["weight_decay_scale"] = 0.0
-            param_group.append(group)
-        logging.info(
-            "DCCL reciprocal boundary enabled: start_cycle={}; max_pairs={}; "
-            "min_conflicts={}; stable_cycles={}; min_anchors_per_side={}; "
-            "hidden_dim={}; max_shift={:.3f}; lr_mult={:.3f}; "
-            "margin={:.3f}; loss_weights={:.3f}|{:.3f}|{:.3f}; "
-            "gradient_scope=boundary_head_only".format(
-                int(cfg.DCCL.BOUNDARY_START_CYCLE),
-                int(cfg.DCCL.BOUNDARY_MAX_PAIRS),
-                int(cfg.DCCL.BOUNDARY_MIN_CONFLICTS),
-                int(cfg.DCCL.BOUNDARY_STABLE_CYCLES),
-                int(cfg.DCCL.BOUNDARY_MIN_ANCHORS_PER_SIDE),
-                int(cfg.DCCL.BOUNDARY_HIDDEN_DIM),
-                float(cfg.DCCL.BOUNDARY_MAX_SHIFT),
-                float(cfg.DCCL.BOUNDARY_LR_MULT),
-                float(cfg.DCCL.BOUNDARY_MARGIN),
-                float(cfg.DCCL.BOUNDARY_MARGIN_PAR),
-                float(cfg.DCCL.BOUNDARY_CONSISTENCY_PAR),
-                float(cfg.DCCL.BOUNDARY_KEEP_PAR),
-            )
-        )
+    )
 
     optimizer = optim.SGD(param_group)
     optimizer = op_copy(optimizer)
@@ -1459,35 +616,7 @@ def train_target(cfg):
     clip_optimizer = op_copy(clip_optimizer)
 
     max_iter = cfg.TEST.MAX_EPOCH * len(dset_loaders["target"])
-    # max_iter = cfg.TEST.MAX_EPOCH * len(dset_loaders["target"]) * cfg.ACTIVE.CYCLE
     interval_iter = max_iter // cfg.TEST.INTERVAL
-
-    trajectory_snapshots = []
-    trajectory_intervals = [
-        int(value) for value in cfg.DCCL.TRAJECTORY_SNAPSHOT_INTERVALS
-    ]
-    if cfg.DCCL.TRAJECTORY_ENSEMBLE:
-        if target_head is None:
-            raise ValueError("Trajectory ensemble requires target-head adaptation")
-        if target_head_ema is not None:
-            raise ValueError("Trajectory ensemble cannot be combined with target-head EMA")
-        if pair_feature_adapter is not None:
-            raise ValueError("Trajectory ensemble cannot be combined with pair-feature adaptation")
-        if covariance_transport is not None:
-            raise ValueError("Trajectory ensemble cannot use covariance transport")
-        if len(trajectory_intervals) < 2:
-            raise ValueError("Trajectory ensemble requires at least two intervals")
-        if trajectory_intervals != sorted(set(trajectory_intervals)):
-            raise ValueError("Trajectory snapshot intervals must be sorted and unique")
-        if trajectory_intervals[0] < 1 or trajectory_intervals[-1] > cfg.TEST.INTERVAL:
-            raise ValueError("Trajectory snapshot interval is outside TEST.INTERVAL")
-        if trajectory_intervals[-1] != cfg.TEST.INTERVAL:
-            raise ValueError("Trajectory snapshots must include the final interval")
-        logging.info(
-            "DCCL trajectory ensemble enabled: final_cycle={}; intervals={}".format(
-                int(cfg.ACTIVE.CYCLE), trajectory_intervals
-            )
-        )
 
     if cfg.BOUNDARY_FLIP.ENABLED:
         if cfg.BOUNDARY_FLIP.START_CYCLE < 1:
@@ -1516,38 +645,22 @@ def train_target(cfg):
             )
         )
 
-    prev_label_mask = None
     pl_state = None
-    proto_state = None
-    conflict_state = None
-    pair_flow_state = None
-    boundary_state = None
+    gtr_state = None
     boundary_flip_state = None
-    text_features = None
-    boundary_flip_text_features = None
-    if cfg.BOUNDARY_FLIP.ENABLED:
-        with torch.no_grad():
-            text_features = F.normalize(
-                clip_model.encode_text(text_inputs), dim=1
-            ).detach()
-        boundary_flip_text_features = text_features.float().cpu()
+    with torch.no_grad():
+        text_features = F.normalize(
+            clip_model.encode_text(text_inputs), dim=1
+        ).detach()
+    boundary_flip_text_features = text_features.float().cpu()
     curr_cycle = 0
-    # office-home : 1.0 / VisDA-C : 1.05
     q_value = cfg.ACTIVE.Q_VALUE
-    print(f"train_clip")
     while curr_cycle < cfg.ACTIVE.CYCLE:
         iter_num = 0
 
         netF.eval()
         netB.eval()
-        if target_head is not None:
-            target_head.eval()
-        if pair_feature_adapter is not None:
-            pair_feature_adapter.eval()
-        if boundary_head is not None:
-            boundary_head.eval()
-        inference_head = target_head_ema if target_head_ema is not None else target_head
-        # netC.eval()
+        target_head.eval()
         (
             mem_label,
             label_mask,
@@ -1557,7 +670,6 @@ def train_target(cfg):
             clip_soft,
             source_label,
             clip_label,
-            boundary_source_label,
             model_soft,
             task_features,
             clip_features,
@@ -1565,169 +677,19 @@ def train_target(cfg):
             pl_state,
         ) = obtain_label(
             cfg,
-            dset_loaders['test_aug'], netF, netB, netC, inference_head,
-            pair_feature_adapter,
-            covariance_transport,
-            boundary_head,
-            text_inputs, text_features, clip_model, prev_label_mask,
-            proto_state, pl_state, curr_cycle,
+            dset_loaders['test_aug'],
+            netF,
+            netB,
+            netC,
+            target_head,
+            text_features,
+            clip_model,
+            pl_state,
+            curr_cycle,
         )
-        if boundary_head is not None:
-            was_frozen = bool(boundary_state and boundary_state["frozen"])
-            boundary_state = update_reciprocal_boundary_state(
-                boundary_source_label,
-                clip_label,
-                boundary_state,
-                num_classes=cfg.class_num,
-                max_pairs=int(cfg.DCCL.BOUNDARY_MAX_PAIRS),
-                min_conflicts=int(cfg.DCCL.BOUNDARY_MIN_CONFLICTS),
-                min_cycles=int(cfg.DCCL.BOUNDARY_STABLE_CYCLES),
-                min_anchors_per_side=int(
-                    cfg.DCCL.BOUNDARY_MIN_ANCHORS_PER_SIDE
-                ),
-            )
-            boundary_head.set_pairs(boundary_state["pairs"])
-            logging.info(
-                "DCCL reciprocal boundary state: cycle={}; conflicts={}; "
-                "stable_anchors={}; eligible_pairs={}; active_pairs={}; "
-                "active_conflicts={}; frozen={}; pairs={}".format(
-                    curr_cycle + 1,
-                    int(boundary_state["last_conflicts"]),
-                    int(boundary_state["last_stable_anchors"]),
-                    int(boundary_state["last_eligible_pairs"]),
-                    len(boundary_state["pairs"]),
-                    int(boundary_state["active_conflict_mask"].sum().item()),
-                    bool(boundary_state["frozen"]),
-                    boundary_state["pairs"],
-                )
-            )
-            if boundary_state["frozen"] and not was_frozen:
-                logging.info(
-                    "DCCL reciprocal boundary pairs frozen: pairs={}; "
-                    "anchor_counts={}".format(
-                        boundary_state["pairs"],
-                        boundary_state["pair_anchor_counts"].tolist(),
-                    )
-                )
-        if covariance_transport is not None and not bool(
-            covariance_transport.fitted.item()
-        ):
-            if isinstance(covariance_transport, AgreementWhitenedTransport):
-                transport_diagnostics = covariance_transport.fit(
-                    task_features,
-                    source_label,
-                    clip_label,
-                    netC.fc.weight,
-                    netC.fc.bias,
-                )
-                logging.info(
-                    "DCCL agreement-whitened geometry frozen: anchors={}; "
-                    "train_anchors={}; heldout_anchors={}; active_classes={}; "
-                    "selected_strength={:.6f}; heldout_loss_improvement={:.6f}; "
-                    "heldout_accuracy_delta={:.6f}; mean_relative_shift={:.6f}".format(
-                        transport_diagnostics["anchors"],
-                        transport_diagnostics["train_anchors"],
-                        transport_diagnostics["heldout_anchors"],
-                        transport_diagnostics["active_classes"],
-                        transport_diagnostics["selected_strength"],
-                        transport_diagnostics["heldout_loss_improvement"],
-                        transport_diagnostics["heldout_accuracy_delta"],
-                        transport_diagnostics["mean_relative_shift"],
-                    )
-                )
-            else:
-                transport_diagnostics = covariance_transport.fit(
-                    task_features,
-                    source_label,
-                    clip_label,
-                    confi_dis,
-                )
-                logging.info(
-                    "DCCL agreement covariance geometry frozen: anchors={}; "
-                    "active_classes={}; fixed_conflicts={}; eligible_conflicts={}; "
-                    "eligible_coverage={:.6f}; mean_relative_shift={:.6f}".format(
-                        transport_diagnostics["anchors"],
-                        transport_diagnostics["active_classes"],
-                        transport_diagnostics["fixed_conflicts"],
-                        transport_diagnostics["eligible_conflicts"],
-                        transport_diagnostics["eligible_coverage"],
-                        transport_diagnostics["mean_relative_shift"],
-                    )
-                )
-        if isinstance(target_head, ClassPairFlowAdapter):
-            was_frozen = bool(pair_flow_state and pair_flow_state["frozen"])
-            pair_flow_state = update_class_pair_flow(
-                source_label,
-                clip_label,
-                mem_label,
-                label_mask,
-                pair_flow_state,
-                num_classes=cfg.class_num,
-                rank=int(cfg.DCCL.PAIR_FLOW_RANK),
-                min_count=int(cfg.DCCL.PAIR_FLOW_MIN_COUNT),
-                min_cycles=int(cfg.DCCL.PAIR_FLOW_MIN_CYCLES),
-            )
-            target_head.set_basis(pair_flow_state["basis"])
-            logging.info(
-                "DCCL class-pair flow: cycle={}; active_rank={}; frozen={}; "
-                "resolved_flow_count={:.0f}".format(
-                    curr_cycle + 1,
-                    int(pair_flow_state["active_rank"]),
-                    bool(pair_flow_state["frozen"]),
-                    float(pair_flow_state["counts"].sum().item()),
-                )
-            )
-            if pair_flow_state["frozen"] and not was_frozen:
-                logging.info(
-                    "DCCL class-pair basis frozen: pairs={}".format(
-                        pair_flow_state["pairs"]
-                    )
-                )
-        if pair_feature_adapter is not None:
-            was_frozen = bool(pair_flow_state and pair_flow_state["frozen"])
-            pair_flow_state = update_soft_class_pair_flow(
-                source_label,
-                clip_label,
-                confi_dis,
-                pair_flow_state,
-                num_classes=cfg.class_num,
-                rank=int(cfg.DCCL.PAIR_FLOW_RANK),
-                min_count=int(cfg.DCCL.PAIR_FLOW_MIN_COUNT),
-                min_cycles=int(cfg.DCCL.PAIR_FLOW_MIN_CYCLES),
-                fixed_candidates=True,
-            )
-            if pair_flow_state["frozen"]:
-                pair_feature_adapter.set_pairs(
-                    pair_flow_state["pairs"], netC.fc.weight
-                )
-            logging.info(
-                "DCCL fixed-candidate pair flow: cycle={}; valid={}; "
-                "candidate_mass={:.2f}; active_rank={}; frozen={}; "
-                "resolved_flow_mass={:.2f}".format(
-                    curr_cycle + 1,
-                    int(pair_flow_state["last_valid_count"]),
-                    float(pair_flow_state["last_candidate_mass"]),
-                    int(pair_flow_state["active_rank"]),
-                    bool(pair_flow_state["frozen"]),
-                    float(pair_flow_state["counts"].sum().item()),
-                )
-            )
-            if pair_flow_state["frozen"] and not was_frozen:
-                logging.info(
-                    "DCCL pair-feature directions frozen: pairs={}".format(
-                        pair_flow_state["pairs"]
-                    )
-                )
-        proto_state = update_target_prototype_state(
-            cfg, task_features, mem_label, label_mask, proto_state
-        )
-        if conflict_state is None:
-            conflict_state = init_conflict_state(source_label.size(0))
-        # Boundary-Flip 有独立的候选记忆，不再更新旧 DCCL 的
-        # promotion/rejection 状态，避免两套冲突决策互相污染。
-        if not cfg.ACCD.ENABLED and not cfg.BOUNDARY_FLIP.ENABLED:
-            update_conflict_state(cfg, conflict_state, source_label, clip_label, model_soft)
-        teacher_soft, graph_teacher, graph_weight, graph_anchors = build_graph_fused_teacher(
+        if gtr_state is None:
+            gtr_state = init_gtr_state(source_label.size(0))
+        teacher_soft, graph_teacher, _, _ = build_graph_fused_teacher(
             cfg,
             task_features,
             clip_features,
@@ -1814,55 +776,6 @@ def train_target(cfg):
                     flip_oracle_accuracy * 100.0,
                 )
             )
-        three_view_em_target = None
-        three_view_em_weight = None
-        three_view_em_diagnostics = None
-        if (
-            cfg.DCCL.THREE_VIEW_EM
-            and curr_cycle >= cfg.DCCL.THREE_VIEW_EM_START_CYCLE
-        ):
-            if graph_teacher is None:
-                raise ValueError("Three-view EM requires a graph posterior")
-            em_anchor_mask = label_mask & (source_label == clip_label)
-            em_base_probability = (model_soft + clip_soft) / 2
-            (
-                three_view_em_target,
-                three_view_em_weight,
-                three_view_em_diagnostics,
-            ) = three_view_class_conditional_em(
-                model_soft,
-                clip_soft,
-                graph_teacher,
-                em_base_probability,
-                em_anchor_mask,
-                mem_label,
-                source_label != clip_label,
-                steps=int(cfg.DCCL.THREE_VIEW_EM_STEPS),
-                dirichlet=float(cfg.DCCL.THREE_VIEW_EM_DIRICHLET),
-                min_class_anchors=int(
-                    cfg.DCCL.THREE_VIEW_EM_MIN_CLASS_ANCHORS
-                ),
-                eps=float(cfg.DCCL.EPSILON),
-            )
-            logging.info(
-                "DCCL three-view EM consensus: cycle={}; anchors={}; "
-                "active_classes={}; conflicts={}; weighted_conflicts={}; "
-                "mean_conflict_weight={:.6f}; changed_top1={}; "
-                "source_diag={:.6f}; clip_diag={:.6f}; graph_diag={:.6f}".format(
-                    curr_cycle + 1,
-                    three_view_em_diagnostics["anchors"],
-                    three_view_em_diagnostics["active_classes"],
-                    three_view_em_diagnostics["conflicts"],
-                    three_view_em_diagnostics["weighted_conflicts"],
-                    three_view_em_diagnostics["mean_conflict_weight"],
-                    three_view_em_diagnostics["changed_top1"],
-                    three_view_em_diagnostics["source_transition_diagonal"],
-                    three_view_em_diagnostics["clip_transition_diagonal"],
-                    three_view_em_diagnostics["graph_transition_diagonal"],
-                )
-            )
-        if cfg.DCCL.GRAPH_TEACHER_FUSION and cfg.DCCL.GTF_APPLY_TO in {"both", "clip"}:
-            confi_dis = teacher_soft.detach()
         save_temporal_diagnostics(
             cfg,
             curr_cycle,
@@ -1874,33 +787,17 @@ def train_target(cfg):
             model_soft,
             teacher_soft,
             target_label,
-            task_features,
             memory_weight=memory_weight,
             pl_state=pl_state,
             boundary_flip_result=boundary_flip_result,
         )
-        if cfg.BOUNDARY_FLIP.ENABLED:
-            # Boundary-Flip 不再计算或搬运旧 candidate 的 mass/weight。
-            candidate_mass = None
-            candidate_weight = None
-        else:
-            sample_idx = torch.arange(source_label.size(0))
-            candidate_mass = (
-                model_soft[sample_idx, source_label]
-                + model_soft[sample_idx, clip_label]
-            )
-            candidate_weight = get_candidate_weight(cfg, candidate_mass)
-        kl_base_soft = (
-            teacher_soft
-            if cfg.DCCL.GRAPH_TEACHER_FUSION and cfg.DCCL.GTF_APPLY_TO in {"both", "kl"}
-            else clip_soft
-        )
-        kl_target, kl_weight = build_conflict_kl_target(cfg, kl_base_soft, source_label, clip_label, model_soft)
+        # DUET 主 KL 始终以当前 CLIP posterior 为 teacher。
+        kl_target = clip_soft
         gtr_target = teacher_soft
         gtr_weight = torch.zeros(source_label.size(0), dtype=torch.float)
         if cfg.DCCL.GTR_PAR > 0:
             if graph_teacher is None:
-                raise ValueError("DCCL.GTR_PAR requires DCCL.GRAPH_TEACHER_FUSION=True")
+                raise RuntimeError("Stage14 graph teacher construction failed")
             teacher_label = teacher_soft.argmax(dim=1)
             graph_label = graph_teacher.argmax(dim=1)
             gtr_eligible = (
@@ -1908,16 +805,16 @@ def train_target(cfg):
                 & (teacher_label == graph_label)
             )
             (
-                conflict_state["gtr_pending_label"],
-                conflict_state["gtr_pending_count"],
-                conflict_state["gtr_stable_label"],
+                gtr_state["pending_label"],
+                gtr_state["pending_count"],
+                gtr_state["stable_label"],
                 gtr_newly_stable,
                 gtr_stable_mask,
                 gtr_demoted,
             ) = update_temporal_resolution(
-                conflict_state["gtr_pending_label"],
-                conflict_state["gtr_pending_count"],
-                conflict_state["gtr_stable_label"],
+                gtr_state["pending_label"],
+                gtr_state["pending_count"],
+                gtr_state["stable_label"],
                 gtr_eligible,
                 teacher_label,
                 cfg.DCCL.GTR_STABLE_CYCLES,
@@ -1929,41 +826,11 @@ def train_target(cfg):
                 teacher_label,
                 source_label,
                 clip_label,
-                conflict_state["gtr_stable_label"],
+                gtr_state["stable_label"],
                 cfg.DCCL.GTR_MIN_GRAPH_CONF,
                 cfg.DCCL.GTR_MIN_DISAGREEMENT,
                 eps=cfg.DCCL.EPSILON,
             )
-            if cfg.DCCL.GTR_CLASS_ROUTING:
-                base_teacher_label = ((model_soft + clip_soft) / 2).argmax(dim=1)
-                gtr_weight_sum_before_routing = gtr_weight.sum().detach()
-                class_multipliers, class_intervention_rates, class_counts = (
-                    class_intervention_route_multipliers(
-                        teacher_label,
-                        base_teacher_label,
-                        gtr_weight,
-                        cfg.class_num,
-                        min_count=int(cfg.DCCL.GTR_CLASS_ROUTE_MIN_COUNT),
-                        floor=float(cfg.DCCL.GTR_CLASS_ROUTE_FLOOR),
-                        max_ratio=float(cfg.DCCL.GTR_CLASS_ROUTE_MAX_RATIO),
-                        eps=float(cfg.DCCL.EPSILON),
-                    )
-                )
-                gtr_weight = gtr_weight * class_multipliers[teacher_label]
-                logging.info(
-                    "DCCL class intervention routing: active_classes={}; "
-                    "weight_sum_ratio={:.6f}; rates={}; multipliers={}".format(
-                        int((class_counts >= int(cfg.DCCL.GTR_CLASS_ROUTE_MIN_COUNT)).sum().item()),
-                        float(
-                            (
-                                gtr_weight.sum()
-                                / gtr_weight_sum_before_routing.clamp_min(cfg.DCCL.EPSILON)
-                            ).item()
-                        ) if (gtr_weight > 0).any() else 0.0,
-                        "|".join(f"{value:.6f}" for value in class_intervention_rates.tolist()),
-                        "|".join(f"{value:.6f}" for value in class_multipliers.tolist()),
-                    )
-                )
             active_gtr = gtr_weight > 0
             logging.info(
                 "DCCL graph-temporal residual: eligible={}; newly_stable={}; "
@@ -1980,236 +847,9 @@ def train_target(cfg):
                 )
             )
 
-        accd_resolved_mask = torch.zeros_like(label_mask)
-        accd_hard_mask = torch.zeros_like(label_mask)
-        accd_transport_mask = torch.zeros_like(label_mask)
-        accd_shifted_mass = torch.zeros_like(kl_weight)
-        if cfg.ACCD.ENABLED:
-            if cfg.ACCD.ANCHOR_MEMORY == "dynamic":
-                fixed_anchor_mask = None
-                fixed_anchor_label = None
-            elif cfg.ACCD.ANCHOR_MEMORY == "frozen_initial":
-                fixed_anchor_mask = conflict_state["accd_anchor_label"] >= 0
-                if fixed_anchor_mask.any():
-                    fixed_anchor_label = conflict_state["accd_anchor_label"]
-                else:
-                    fixed_anchor_mask = None
-                    fixed_anchor_label = None
-            else:
-                raise ValueError(f"Unknown ACCD.ANCHOR_MEMORY: {cfg.ACCD.ANCHOR_MEMORY}")
-
-            task_graph, clip_graph, graph_posterior, anchor_mask = dual_space_diffusion(
-                task_features,
-                clip_features,
-                model_soft,
-                clip_soft,
-                source_label,
-                clip_label,
-                anchor_ratio=cfg.ACCD.ANCHOR_RATIO,
-                anchor_min_per_class=cfg.ACCD.ANCHOR_MIN_PER_CLASS,
-                k=cfg.ACCD.GRAPH_K,
-                temperature=cfg.ACCD.TEMPERATURE,
-                alpha=cfg.ACCD.ALPHA,
-                steps=cfg.ACCD.STEPS,
-                chunk_size=cfg.ACCD.CHUNK_SIZE,
-                anchor_mask=fixed_anchor_mask,
-                anchor_label=fixed_anchor_label,
-            )
-            if cfg.ACCD.ANCHOR_MEMORY == "frozen_initial" and fixed_anchor_mask is None:
-                conflict_state["accd_anchor_label"][anchor_mask] = source_label[anchor_mask]
-            evidence = conflict_diffusion_evidence(
-                task_graph,
-                clip_graph,
-                graph_posterior,
-                source_label,
-                clip_label,
-                candidate_mass_threshold=cfg.ACCD.CANDIDATE_MASS,
-                candidate_margin_threshold=cfg.ACCD.CANDIDATE_MARGIN,
-            )
-            resolution_evidence = dict(evidence)
-            if cfg.ACCD.RESOLUTION_TARGET == "source_only":
-                resolution_evidence["eligible"] = (
-                    evidence["eligible"] & (evidence["graph_label"] == source_label)
-                )
-            elif cfg.ACCD.RESOLUTION_TARGET != "both":
-                raise ValueError(f"Unknown ACCD.RESOLUTION_TARGET: {cfg.ACCD.RESOLUTION_TARGET}")
-            newly_resolved, accd_resolved_mask, demoted = update_accd_state(
-                cfg, conflict_state, resolution_evidence, curr_cycle
-            )
-            if cfg.ACCD.RESOLUTION_ACTION == "hard_label":
-                kl_target[accd_resolved_mask] = graph_posterior[accd_resolved_mask]
-                accd_hard_mask = accd_resolved_mask
-            elif cfg.ACCD.RESOLUTION_ACTION == "teacher_abstain":
-                kl_weight[accd_resolved_mask] = 0.0
-                accd_hard_mask = torch.zeros_like(accd_resolved_mask)
-            elif cfg.ACCD.RESOLUTION_ACTION == "candidate_transport":
-                accd_transport_mask = (
-                    accd_resolved_mask
-                    & resolution_evidence["eligible"]
-                    & (
-                        conflict_state["accd_resolved_label"]
-                        == evidence["graph_label"]
-                    )
-                )
-                kl_target, accd_shifted_mass = transport_candidate_mass(
-                    kl_target,
-                    graph_posterior,
-                    source_label,
-                    clip_label,
-                    accd_transport_mask,
-                )
-                accd_hard_mask = torch.zeros_like(accd_resolved_mask)
-            else:
-                raise ValueError(
-                    f"Unknown ACCD.RESOLUTION_ACTION: {cfg.ACCD.RESOLUTION_ACTION}"
-                )
-
-            eligible = evidence["eligible"]
-            resolved_correct = (
-                conflict_state["accd_resolved_label"][accd_resolved_mask]
-                == target_label[accd_resolved_mask]
-            )
-            eligible_correct = evidence["graph_label"][eligible] == target_label[eligible]
-            eligible_clip_correct = clip_label[eligible] == target_label[eligible]
-            resolution_eligible = resolution_evidence["eligible"]
-            resolution_correct = (
-                evidence["graph_label"][resolution_eligible]
-                == target_label[resolution_eligible]
-            )
-            resolution_clip_correct = (
-                clip_label[resolution_eligible] == target_label[resolution_eligible]
-            )
-            resolved_to_source = eligible & (evidence["graph_label"] == source_label)
-            resolved_to_clip = eligible & (evidence["graph_label"] == clip_label)
-            eligible_net_gain = int(eligible_correct.sum().item() - eligible_clip_correct.sum().item())
-            resolution_net_gain = int(
-                resolution_correct.sum().item() - resolution_clip_correct.sum().item()
-            )
-            logging.info(
-                "ACCD cycle: anchors={}; conflicts={}; cross_space={}; eligible={}; "
-                "outside_candidate={}; newly_resolved={}; demoted={}; resolved_active={}; "
-                "resolution_eligible={}; anchor_memory={}; resolution_memory={}; "
-                "resolution_target={}; resolution_action={}; teacher_abstained={}; "
-                "candidate_transported={}; mean_shifted_mass={:.4f}".format(
-                    int(anchor_mask.sum().item()),
-                    int(evidence["conflict"].sum().item()),
-                    int((evidence["conflict"] & evidence["cross_space_agreement"]).sum().item()),
-                    int(eligible.sum().item()),
-                    int(evidence["outside_candidate"].sum().item()),
-                    int(newly_resolved.sum().item()),
-                    int(demoted.sum().item()),
-                    int(accd_resolved_mask.sum().item()),
-                    int(resolution_evidence["eligible"].sum().item()),
-                    cfg.ACCD.ANCHOR_MEMORY,
-                    cfg.ACCD.RESOLUTION_MEMORY,
-                    cfg.ACCD.RESOLUTION_TARGET,
-                    cfg.ACCD.RESOLUTION_ACTION,
-                    int((kl_weight == 0).sum().item()),
-                    int(accd_transport_mask.sum().item()),
-                    float(accd_shifted_mass[accd_transport_mask].mean().item())
-                    if accd_transport_mask.any() else 0.0,
-                )
-            )
-            logging.info(
-                "ACCD oracle diagnostics only: eligible_accuracy={:.2f}%; clip_accuracy={:.2f}%; "
-                "net_gain={}; to_source={}; to_clip={}; resolution_accuracy={:.2f}%; "
-                "resolution_clip_accuracy={:.2f}%; resolution_net_gain={}; "
-                "resolved_accuracy={:.2f}%".format(
-                    float(eligible_correct.float().mean().item() * 100.0) if eligible.any() else 0.0,
-                    float(eligible_clip_correct.float().mean().item() * 100.0) if eligible.any() else 0.0,
-                    eligible_net_gain,
-                    int(resolved_to_source.sum().item()),
-                    int(resolved_to_clip.sum().item()),
-                    float(resolution_correct.float().mean().item() * 100.0)
-                    if resolution_eligible.any() else 0.0,
-                    float(resolution_clip_correct.float().mean().item() * 100.0)
-                    if resolution_eligible.any() else 0.0,
-                    resolution_net_gain,
-                    float(resolved_correct.float().mean().item() * 100.0) if accd_resolved_mask.any() else 0.0,
-                )
-            )
-
-        if cfg.BOUNDARY_FLIP.ENABLED:
-            # 新方法明确关闭旧 promotion；真正进入训练的冲突样本只来自
-            # boundary_flip_result["active_mask"]。
-            promoted_mask = torch.zeros_like(label_mask)
-        else:
-            promoted_mask = conflict_state["promoted_label"] >= 0
-        if cfg.DCCL.PL_MEMORY == "dual_tier":
-            # 为保证 Dual-tier 消融只检验 Pending，本分支明确禁止旧的
-            # promotion/ACCD 路径把 Conflict 重新送回 hard CE。
-            # 这不是最终“利用冲突样本”的方案，而是当前实验的受控边界。
-            hard_label = mem_label
-            hard_mask = label_mask
-            hard_weight = memory_weight
-        else:
-            hard_label = mem_label.clone()
-            hard_label[promoted_mask] = conflict_state["promoted_label"][
-                promoted_mask
-            ]
-            hard_label[accd_hard_mask] = conflict_state[
-                "accd_resolved_label"
-            ][accd_hard_mask]
-            hard_mask = label_mask | promoted_mask | accd_hard_mask
-            hard_weight = memory_weight.clone()
-            hard_weight[promoted_mask | accd_hard_mask] = 1.0
-        if cfg.BOUNDARY_FLIP.ENABLED:
-            # 旧 candidate loss 已由方向明确的 Boundary-Flip loss 取代。
-            candidate_mask = torch.zeros_like(label_mask)
-            logging.info(
-                "Boundary-Flip DUET: legacy DCCL promotion/candidate path disabled"
-            )
-        else:
-            candidate_mask = (
-                (source_label != clip_label)
-                & (~promoted_mask)
-                & (~accd_hard_mask)
-                & (~conflict_state["rejected"])
-                & (candidate_mass >= cfg.DCCL.CAND_TAU)
-                & (curr_cycle >= cfg.DCCL.CAND_START_CYCLE)
-            )
-            logging.info(
-                "DCCL candidate gate: start_cycle={}; tau={:.3f}; weight={}; selected={}/{}".format(
-                    int(cfg.DCCL.CAND_START_CYCLE),
-                    float(cfg.DCCL.CAND_TAU),
-                    cfg.DCCL.CAND_WEIGHT,
-                    int(candidate_mask.sum().item()),
-                    int((source_label != clip_label).sum().item()),
-                )
-            )
-
-        boundary_anchor_label = None
-        boundary_anchor_mask = None
-        boundary_pairs = None
-        boundary_pair_anchor_counts = None
-        boundary_active_conflict = None
-        boundary_preserve_mask = None
-        if boundary_state is not None:
-            boundary_anchor_label = boundary_state["anchor_label"].cuda()
-            boundary_anchor_mask = (
-                boundary_state["anchor_streak"]
-                >= int(cfg.DCCL.BOUNDARY_STABLE_CYCLES)
-            ).cuda()
-            boundary_pairs = boundary_head.active_pairs().detach().clone()
-            boundary_pair_anchor_counts = boundary_state[
-                "pair_anchor_counts"
-            ].cuda()
-            boundary_active_conflict = boundary_state[
-                "active_conflict_mask"
-            ].cuda()
-            if boundary_pairs.numel() > 0:
-                pair_classes = boundary_pairs.reshape(-1)
-                boundary_pair_anchor = boundary_anchor_mask & (
-                    boundary_anchor_label.unsqueeze(1)
-                    == pair_classes.unsqueeze(0)
-                ).any(dim=1)
-            else:
-                boundary_pair_anchor = torch.zeros_like(
-                    boundary_anchor_mask
-                )
-            boundary_preserve_mask = ~(
-                boundary_active_conflict | boundary_pair_anchor
-            )
+        # Stable agreement 是唯一 hard CE 来源；历史 promotion、candidate、
+        # ACCD 与 dual-tier 分支均已从当前主线删除。
+        hard_mask = label_mask
 
         boundary_flip_active_mask = None
         boundary_flip_early_label = None
@@ -2225,52 +865,34 @@ def train_target(cfg):
             ].cuda()
             boundary_flip_weight = boundary_flip_result["weight"].cuda()
 
-        clip_soft = clip_soft.cuda()
         kl_target = kl_target.cuda()
-        kl_weight = kl_weight.cuda()
         gtr_target = gtr_target.cuda()
         gtr_weight = gtr_weight.cuda()
-        if three_view_em_target is not None:
-            three_view_em_target = three_view_em_target.cuda()
-            three_view_em_weight = three_view_em_weight.cuda()
-        mem_label = hard_label.cuda()
-        source_label = source_label.cuda()
-        clip_label = clip_label.cuda()
-        if boundary_head is not None:
-            boundary_source_label = boundary_source_label.cuda()
-        if candidate_weight is not None:
-            candidate_weight = candidate_weight.cuda()
-        hard_weight = hard_weight.cuda()
-        prev_label_mask = label_mask
-
-        # clip_optimizer = train_clip_lr(cfg, clip_model, confi_imag, confi_dis, text_inputs, clip_optimizer, curr_cycle)
-        clip_optimizer, q_value = train_clip(cfg, clip_model, confi_imag, confi_dis, text_inputs, clip_optimizer,
-                                             q_value)
+        mem_label = mem_label.cuda()
+        clip_optimizer, q_value = train_clip(
+            cfg,
+            clip_model,
+            confi_imag,
+            confi_dis,
+            text_inputs,
+            clip_optimizer,
+            q_value,
+        )
 
         cfg.load = 'prompt_model.pt'
-        # mem_label = torch.from_numpy(mem_label).cuda()
         netF.train()
         netB.train()
-        if target_head is not None:
-            target_head.train()
-        if pair_feature_adapter is not None:
-            pair_feature_adapter.train()
-        if boundary_head is not None:
-            boundary_head.train()
-        pair_feature_gtr_loss_sum = 0.0
-        pair_feature_gtr_loss_batches = 0
-        three_view_em_loss_sum = 0.0
-        three_view_em_loss_batches = 0
+        target_head.train()
         boundary_flip_loss_sum = 0.0
         boundary_flip_loss_batches = 0
         loss_diagnostics = (
             init_loss_diagnostics() if cfg.DCCL.LOSS_DIAG else None
         )
-        # netC.train()
+        iter_test = iter(dset_loaders["target"])
         while iter_num < max_iter:
             try:
                 inputs_test, _, tar_idx = next(iter_test)
-            except:
+            except StopIteration:
                 iter_test = iter(dset_loaders["target"])
                 inputs_test, _, tar_idx = next(iter_test)
 
@@ -2285,66 +907,22 @@ def train_target(cfg):
                 loss_diagnostics["steps"] += 1
             optimizer = cosine_scheduler(cfg, optimizer, iter_num=iter_num, max_iter=max_iter)
 
-            weak_base_feas = netB(netF(weak_x))
-            strong_base_feas = netB(netF(strong_x))
-            weak_feas = apply_pair_feature_adapter(
-                cfg, weak_base_feas, pair_feature_adapter, curr_cycle
+            weak_feas = netB(netF(weak_x))
+            strong_feas = netB(netF(strong_x))
+            weak_logits = apply_target_head_logits(
+                cfg, weak_feas, netC(weak_feas), target_head, curr_cycle
             )
-            strong_feas = apply_pair_feature_adapter(
-                cfg, strong_base_feas, pair_feature_adapter, curr_cycle
-            )
-            weak_feas = apply_agreement_covariance_transport(
-                cfg, weak_feas, covariance_transport, curr_cycle, tar_idx
-            )
-            strong_feas = apply_agreement_covariance_transport(
-                cfg, strong_feas, covariance_transport, curr_cycle, tar_idx
+            strong_logits = apply_target_head_logits(
+                cfg, strong_feas, netC(strong_feas), target_head, curr_cycle
             )
 
-            weak_base_logits = netC(weak_feas)
-            strong_base_logits = netC(strong_feas)
-            weak_base_logits = apply_target_head_logits(
-                cfg, weak_feas, weak_base_logits, target_head, curr_cycle
-            )
-            strong_base_logits = apply_target_head_logits(
-                cfg, strong_feas, strong_base_logits, target_head, curr_cycle
-            )
-            weak_base_logits = apply_target_prototype_logits(
-                cfg, weak_feas, weak_base_logits, proto_state
-            )
-            strong_base_logits = apply_target_prototype_logits(
-                cfg, strong_feas, strong_base_logits, proto_state
-            )
-            weak_logits = apply_reciprocal_boundary_logits(
-                cfg,
-                weak_feas,
-                weak_base_logits,
-                boundary_head,
-                curr_cycle,
-                detach_residual=True,
-            )
-            strong_logits = apply_reciprocal_boundary_logits(
-                cfg,
-                strong_feas,
-                strong_base_logits,
-                boundary_head,
-                curr_cycle,
-                detach_residual=True,
-            )
-
-            # batch_cos = cal_cosine(weak_feas, strong_feas)
-            # weak_logits = weak_logits * batch_cos
-
-            weak_preds = nn.Softmax(dim=1)(weak_logits)
+            weak_preds = F.softmax(weak_logits, dim=1)
 
             # 网络仍会对整个 batch 计算 weak/strong logits；hard_mask 只决定
             # 哪些样本进入下面的伪标签分类 CE。mask=False 不代表跳过前向传播。
             filtered_idx = tar_idx[hard_mask[tar_idx]]
 
-            con_loss = consistency_loss(
-                weak_logits,
-                strong_logits,
-                stop_gradient=bool(cfg.DCCL.CONSISTENCY_STOP_GRAD),
-            )
+            con_loss = consistency_loss(weak_logits, strong_logits)
             classifier_loss = con_loss * cfg.ACTIVE.CON_PAR
             record_loss_diagnostic(
                 loss_diagnostics,
@@ -2357,20 +935,9 @@ def train_target(cfg):
                 pred = mem_label[filtered_idx]
                 supervised_logits = weak_logits[hard_mask[tar_idx]]
                 if pred.size(0) != 0:
-                    if cfg.DCCL.PL_MEMORY == "dual_tier":
-                        selected_weight = hard_weight[filtered_idx]
-                        # Stable 权重为 1；Pending 权重为
-                        # PL_PENDING_WEIGHT * mix_conf；Conflict 不在 filtered_idx。
-                        stable_ce_loss = weighted_cross_entropy(
-                            supervised_logits,
-                            pred,
-                            selected_weight,
-                            epsilon=cfg.DCCL.EPSILON,
-                        )
-                    else:
-                        stable_ce_loss = nn.CrossEntropyLoss()(
-                            supervised_logits, pred
-                        )
+                    stable_ce_loss = nn.CrossEntropyLoss()(
+                        supervised_logits, pred
+                    )
                     classifier_loss += stable_ce_loss * cfg.ACTIVE.CLS_PAR
                     record_loss_diagnostic(
                         loss_diagnostics,
@@ -2378,26 +945,6 @@ def train_target(cfg):
                         stable_ce_loss,
                         cfg.ACTIVE.CLS_PAR,
                     )
-            batch_candidate_mask = candidate_mask[tar_idx]
-            if cfg.DCCL.CAND_PAR > 0 and batch_candidate_mask.any():
-                candidate_positions = torch.nonzero(batch_candidate_mask, as_tuple=False).squeeze(1).cuda()
-                candidate_indices = tar_idx[batch_candidate_mask].cuda()
-                source_candidates = source_label[candidate_indices]
-                clip_candidates = clip_label[candidate_indices]
-                candidate_prob = (
-                    weak_preds[candidate_positions, source_candidates]
-                    + weak_preds[candidate_positions, clip_candidates]
-                ).clamp_min(cfg.DCCL.EPSILON)
-                candidate_losses = -torch.log(candidate_prob)
-                weights = candidate_weight[candidate_indices].clamp_min(cfg.DCCL.EPSILON)
-                candidate_loss = (candidate_losses * weights).sum() / weights.sum()
-                classifier_loss += candidate_loss * cfg.DCCL.CAND_PAR
-                record_loss_diagnostic(
-                    loss_diagnostics,
-                    "candidate",
-                    candidate_loss,
-                    cfg.DCCL.CAND_PAR,
-                )
             if boundary_flip_active_mask is not None:
                 # 对每个稳定翻转同时执行：
                 #   (1) 提升 late label；(2) 抑制 early label。
@@ -2429,21 +976,16 @@ def train_target(cfg):
                     )
                     boundary_flip_loss_sum += float(flip_loss.detach().item())
                     boundary_flip_loss_batches += 1
-            # pseudo_output = weak_preds[filtered_idx]
             kl_target_batch = kl_target[tar_idx]
-            kl_weight_batch = kl_weight[tar_idx]
-            # mixed_soft_batch = confi_dis[tar_idx].cuda()
-            # mi_loss = F.kl_div(weak_preds.log(), mixed_soft_batch, reduction="batchmean")
             per_sample_kl = F.kl_div(weak_preds.log(), kl_target_batch, reduction="none").sum(dim=1)
-            if kl_weight_batch.sum() > 0:
-                mi_loss = (per_sample_kl * kl_weight_batch).sum() / kl_weight_batch.sum()
-                classifier_loss += mi_loss * cfg.ACTIVE.KL_PAR
-                record_loss_diagnostic(
-                    loss_diagnostics,
-                    "clip_kl",
-                    mi_loss,
-                    cfg.ACTIVE.KL_PAR,
-                )
+            mi_loss = per_sample_kl.mean()
+            classifier_loss += mi_loss * cfg.ACTIVE.KL_PAR
+            record_loss_diagnostic(
+                loss_diagnostics,
+                "clip_kl",
+                mi_loss,
+                cfg.ACTIVE.KL_PAR,
+            )
             if cfg.DCCL.GTR_PAR > 0:
                 gtr_weight_batch = gtr_weight[tar_idx]
                 if gtr_weight_batch.sum() > 0:
@@ -2461,184 +1003,15 @@ def train_target(cfg):
                         gtr_loss,
                         cfg.DCCL.GTR_PAR,
                     )
-                    if (
-                        pair_feature_adapter is not None
-                        and cfg.DCCL.PAIR_FEATURE_GRADIENT_MODE == "gtr_only"
-                        and curr_cycle >= cfg.DCCL.PAIR_FEATURE_START_CYCLE
-                        and pair_feature_adapter.is_effective()
-                    ):
-                        pair_gtr_feas = pair_feature_adapter(
-                            weak_base_feas.detach(), detach_delta=False
-                        )
-                        pair_gtr_logits = netC(pair_gtr_feas)
-                        pair_gtr_loss = weighted_graph_temporal_kl(
-                            pair_gtr_logits,
-                            gtr_target_batch,
-                            gtr_weight_batch,
-                            cfg.DCCL.EPSILON,
-                        )
-                        classifier_loss += pair_gtr_loss * cfg.DCCL.GTR_PAR
-                        record_loss_diagnostic(
-                            loss_diagnostics,
-                            "pair_gtr",
-                            pair_gtr_loss,
-                            cfg.DCCL.GTR_PAR,
-                        )
-                        pair_feature_gtr_loss_sum += float(
-                            pair_gtr_loss.detach().item()
-                        )
-                        pair_feature_gtr_loss_batches += 1
-            if (
-                cfg.DCCL.THREE_VIEW_EM
-                and curr_cycle >= cfg.DCCL.THREE_VIEW_EM_START_CYCLE
-            ):
-                em_weight_batch = three_view_em_weight[tar_idx]
-                if em_weight_batch.sum() > 0:
-                    em_features = weak_feas.detach()
-                    em_source_logits = netC(em_features)
-                    em_logits = apply_target_head_logits(
-                        cfg,
-                        em_features,
-                        em_source_logits,
-                        target_head,
-                        curr_cycle,
-                    )
-                    em_loss = weighted_three_view_em_kl(
-                        em_logits,
-                        three_view_em_target[tar_idx],
-                        em_weight_batch,
-                        float(cfg.DCCL.EPSILON),
-                    )
-                    classifier_loss += em_loss * cfg.DCCL.THREE_VIEW_EM_PAR
-                    record_loss_diagnostic(
-                        loss_diagnostics,
-                        "three_view_em",
-                        em_loss,
-                        cfg.DCCL.THREE_VIEW_EM_PAR,
-                    )
-                    three_view_em_loss_sum += float(em_loss.detach().item())
-                    three_view_em_loss_batches += 1
-            if (
-                boundary_head is not None
-                and curr_cycle >= cfg.DCCL.BOUNDARY_START_CYCLE
-                and int(boundary_head.active_count.item()) > 0
-            ):
-                boundary_weak_logits = apply_reciprocal_boundary_logits(
-                    cfg,
-                    weak_feas.detach(),
-                    weak_base_logits.detach(),
-                    boundary_head,
-                    curr_cycle,
-                )
-                boundary_strong_logits = apply_reciprocal_boundary_logits(
-                    cfg,
-                    strong_feas.detach(),
-                    strong_base_logits.detach(),
-                    boundary_head,
-                    curr_cycle,
-                )
-                batch_indices = tar_idx.cuda()
-                boundary_margin_loss = reciprocal_boundary_margin_loss(
-                    boundary_weak_logits,
-                    weak_base_logits.detach(),
-                    boundary_anchor_label[batch_indices],
-                    boundary_anchor_mask[batch_indices],
-                    boundary_pairs,
-                    boundary_pair_anchor_counts,
-                    total_samples=boundary_anchor_label.numel(),
-                    margin=float(cfg.DCCL.BOUNDARY_MARGIN),
-                    epsilon=float(cfg.DCCL.EPSILON),
-                )
-                classifier_loss += (
-                    boundary_margin_loss * cfg.DCCL.BOUNDARY_MARGIN_PAR
-                )
-                record_loss_diagnostic(
-                    loss_diagnostics,
-                    "boundary_margin",
-                    boundary_margin_loss,
-                    cfg.DCCL.BOUNDARY_MARGIN_PAR,
-                )
-                if cfg.DCCL.BOUNDARY_CONSISTENCY_PAR > 0:
-                    boundary_consistency_loss = (
-                        reciprocal_boundary_consistency_loss(
-                            boundary_weak_logits,
-                            boundary_strong_logits,
-                            weak_base_logits.detach(),
-                            strong_base_logits.detach(),
-                            boundary_source_label[batch_indices],
-                            clip_label[batch_indices],
-                            boundary_pairs,
-                            epsilon=float(cfg.DCCL.EPSILON),
-                        )
-                    )
-                    classifier_loss += (
-                        boundary_consistency_loss
-                        * cfg.DCCL.BOUNDARY_CONSISTENCY_PAR
-                    )
-                    record_loss_diagnostic(
-                        loss_diagnostics,
-                        "boundary_consistency",
-                        boundary_consistency_loss,
-                        cfg.DCCL.BOUNDARY_CONSISTENCY_PAR,
-                    )
-                if cfg.DCCL.BOUNDARY_KEEP_PAR > 0:
-                    boundary_keep_loss = reciprocal_boundary_preservation_loss(
-                        boundary_weak_logits,
-                        weak_base_logits.detach(),
-                        boundary_preserve_mask[batch_indices],
-                        epsilon=float(cfg.DCCL.EPSILON),
-                    )
-                    classifier_loss += (
-                        boundary_keep_loss * cfg.DCCL.BOUNDARY_KEEP_PAR
-                    )
-                    record_loss_diagnostic(
-                        loss_diagnostics,
-                        "boundary_keep",
-                        boundary_keep_loss,
-                        cfg.DCCL.BOUNDARY_KEEP_PAR,
-                    )
 
             optimizer.zero_grad()
             classifier_loss.backward()
             optimizer.step()
-            if target_head_ema is not None:
-                update_model_ema(
-                    target_head_ema,
-                    target_head,
-                    float(cfg.DCCL.TARGET_HEAD_EMA_MOMENTUM),
-                )
 
             if iter_num % interval_iter == 0 or iter_num == max_iter:
                 netF.eval()
                 netB.eval()
-                if target_head is not None:
-                    target_head.eval()
-                if pair_feature_adapter is not None:
-                    pair_feature_adapter.eval()
-                if boundary_head is not None:
-                    boundary_head.eval()
-                captured_trajectory_snapshot = False
-                if cfg.DCCL.TRAJECTORY_ENSEMBLE and (
-                    curr_cycle == cfg.ACTIVE.CYCLE - 1
-                ):
-                    checkpoint_index = (
-                        cfg.TEST.INTERVAL
-                        if iter_num == max_iter
-                        else iter_num // interval_iter
-                    )
-                    if checkpoint_index in trajectory_intervals:
-                        trajectory_snapshots.append(
-                            capture_trajectory_snapshot(
-                                netF, netB, target_head, checkpoint_index
-                            )
-                        )
-                        captured_trajectory_snapshot = True
-                        logging.info(
-                            "DCCL trajectory snapshot captured: interval={}; members={}".format(
-                                int(checkpoint_index), len(trajectory_snapshots)
-                            )
-                        )
-                # netC.eval()
+                target_head.eval()
                 if cfg.SETTING.DATASET == 'VISDA-C':
                     acc_s_te, acc_list = cal_acc(
                         dset_loaders['test'],
@@ -2646,13 +1019,9 @@ def train_target(cfg):
                         netB,
                         netC,
                         cfg=cfg,
-                        proto_state=proto_state,
-                        target_head=inference_head,
+                        target_head=target_head,
                         curr_cycle=curr_cycle,
-                        pair_feature_adapter=pair_feature_adapter,
-                        covariance_transport=covariance_transport,
                         flag=True,
-                        boundary_head=boundary_head,
                     )
                     log_str = ('Task: {}, Iter:{}/{}; Cycle: {}/{}; '
                                'Accuracy = {:.2f}%; classifier_loss = {}').format(cfg.name, iter_num, max_iter,
@@ -2666,118 +1035,15 @@ def train_target(cfg):
                         netB,
                         netC,
                         cfg=cfg,
-                        proto_state=proto_state,
-                        target_head=inference_head,
+                        target_head=target_head,
                         curr_cycle=curr_cycle,
-                        pair_feature_adapter=pair_feature_adapter,
-                        covariance_transport=covariance_transport,
                         flag=False,
-                        boundary_head=boundary_head,
                     )
                     log_str = ('Task: {}, Iter:{}/{}; Cycle: {}/{}; '
                                'Accuracy = {:.2f}%; classifier_loss = {}').format(cfg.name, iter_num, max_iter,
                                                                                   curr_cycle + 1, cfg.ACTIVE.CYCLE,
                                                                                   acc_s_te, classifier_loss)
 
-                if isinstance(target_head, SourceAnchoredResidualClassifier):
-                    log_str += "; residual_gate={:.6f}".format(
-                        float(target_head.effective_gate().item())
-                    )
-                elif isinstance(target_head, ClassPairFlowAdapter):
-                    active_rank = (
-                        int(pair_flow_state["active_rank"])
-                        if pair_flow_state is not None
-                        else 0
-                    )
-                    log_str += (
-                        "; pair_flow_gate={:.6f}; pair_flow_active_rank={}"
-                    ).format(
-                        float(target_head.effective_gate().item()), active_rank
-                    )
-                if pair_feature_adapter is not None:
-                    active_rank = (
-                        int(pair_flow_state["active_rank"])
-                        if pair_flow_state is not None
-                        else 0
-                    )
-                    log_str += (
-                        "; pair_feature_gate={:.6f}; pair_feature_router_norm={:.6f}; "
-                        "pair_flow_active_rank={}; pair_feature_effective={}; "
-                        "pair_feature_gradient_mode={}; pair_feature_gtr_active={}; "
-                        "pair_feature_gtr_loss={:.6f}; pair_feature_gtr_batches={}"
-                    ).format(
-                        float(pair_feature_adapter.effective_gate().item()),
-                        float(pair_feature_adapter.router.weight.detach().norm().item()),
-                        active_rank,
-                        bool(pair_feature_adapter.is_effective()),
-                        cfg.DCCL.PAIR_FEATURE_GRADIENT_MODE,
-                        int(
-                            (gtr_weight > 0).sum().item()
-                            if (
-                                cfg.DCCL.PAIR_FEATURE_GRADIENT_MODE == "gtr_only"
-                                and curr_cycle >= cfg.DCCL.PAIR_FEATURE_START_CYCLE
-                                and pair_feature_adapter.is_effective()
-                            )
-                            else 0
-                        ),
-                        (
-                            pair_feature_gtr_loss_sum
-                            / pair_feature_gtr_loss_batches
-                            if pair_feature_gtr_loss_batches > 0
-                            else 0.0
-                        ),
-                        pair_feature_gtr_loss_batches,
-                    )
-                if covariance_transport is not None:
-                    transport_diagnostics = covariance_transport.diagnostics()
-                    if isinstance(
-                        covariance_transport, AgreementWhitenedTransport
-                    ):
-                        log_str += (
-                            "; cov_global_active_classes={}; "
-                            "cov_global_selected_strength={:.6f}; "
-                            "cov_global_heldout_improvement={:.6f}; "
-                            "cov_global_accuracy_delta={:.6f}; "
-                            "cov_global_mean_shift={:.6f}"
-                        ).format(
-                            transport_diagnostics["active_classes"],
-                            transport_diagnostics["selected_strength"],
-                            transport_diagnostics["heldout_loss_improvement"],
-                            transport_diagnostics["heldout_accuracy_delta"],
-                            transport_diagnostics["mean_relative_shift"],
-                        )
-                    else:
-                        log_str += (
-                            "; cov_transport_active_classes={}; "
-                            "cov_transport_coverage={:.6f}; "
-                            "cov_transport_mean_shift={:.6f}"
-                        ).format(
-                            transport_diagnostics["active_classes"],
-                            transport_diagnostics["eligible_coverage"],
-                            transport_diagnostics["mean_relative_shift"],
-                        )
-                if three_view_em_diagnostics is not None:
-                    log_str += (
-                        "; three_view_em_anchors={}; "
-                        "three_view_em_active_classes={}; "
-                        "three_view_em_weighted_conflicts={}; "
-                        "three_view_em_mean_weight={:.6f}; "
-                        "three_view_em_changed_top1={}; "
-                        "three_view_em_loss={:.6f}; "
-                        "three_view_em_batches={}"
-                    ).format(
-                        three_view_em_diagnostics["anchors"],
-                        three_view_em_diagnostics["active_classes"],
-                        three_view_em_diagnostics["weighted_conflicts"],
-                        three_view_em_diagnostics["mean_conflict_weight"],
-                        three_view_em_diagnostics["changed_top1"],
-                        (
-                            three_view_em_loss_sum / three_view_em_loss_batches
-                            if three_view_em_loss_batches > 0
-                            else 0.0
-                        ),
-                        three_view_em_loss_batches,
-                    )
                 if boundary_flip_result is not None:
                     log_str += (
                         "; boundary_flip_candidates={}; "
@@ -2801,174 +1067,21 @@ def train_target(cfg):
                         ),
                         boundary_flip_loss_batches,
                     )
-                if boundary_head is not None:
-                    logging.info(
-                        (
-                            "DCCL reciprocal boundary checkpoint: "
-                            "task={}; cycle={}; iteration={}; "
-                            "boundary_active_pairs={}; "
-                            "boundary_active_conflicts={}; "
-                            "boundary_coefficient_norm={:.6f}; "
-                            "boundary_frozen={}"
-                        ).format(
-                            cfg.name,
-                            curr_cycle + 1,
-                            iter_num,
-                            int(boundary_head.active_count.item()),
-                            int(
-                                boundary_state[
-                                    "active_conflict_mask"
-                                ].sum().item()
-                                if boundary_state is not None
-                                else 0
-                            ),
-                            float(
-                                boundary_head.coefficient.weight.detach().norm().item()
-                            ),
-                            bool(boundary_state and boundary_state["frozen"]),
-                        )
-                    )
-
-                # cfg.out_file.write(log_str + '\n')
-                # cfg.out_file.flush()
-                # print(log_str+'\n')
                 logging.info(log_str)
-                pair_feature_gtr_loss_sum = 0.0
-                pair_feature_gtr_loss_batches = 0
-                three_view_em_loss_sum = 0.0
-                three_view_em_loss_batches = 0
                 boundary_flip_loss_sum = 0.0
                 boundary_flip_loss_batches = 0
-                if captured_trajectory_snapshot and len(trajectory_snapshots) >= 2:
-                    trajectory_acc, _ = cal_acc_trajectory_ensemble(
-                        dset_loaders['test'],
-                        netF,
-                        netB,
-                        netC,
-                        cfg,
-                        proto_state,
-                        target_head,
-                        curr_cycle,
-                        trajectory_snapshots,
-                    )
-                    logging.info(
-                        "Trajectory Ensemble Task: {}, Iter:{}/{}; Cycle: {}/{}; "
-                        "Accuracy = {:.2f}%; Members={}".format(
-                            cfg.name,
-                            iter_num,
-                            max_iter,
-                            curr_cycle + 1,
-                            cfg.ACTIVE.CYCLE,
-                            trajectory_acc,
-                            len(trajectory_snapshots),
-                        )
-                    )
                 netF.train()
                 netB.train()
-                if target_head is not None:
-                    target_head.train()
-                if pair_feature_adapter is not None:
-                    pair_feature_adapter.train()
-                if boundary_head is not None:
-                    boundary_head.train()
-                # netC.train()
+                target_head.train()
         log_loss_diagnostics(loss_diagnostics, curr_cycle + 1)
         curr_cycle += 1
-
-    if cfg.FAILURE_AUDIT.ENABLED:
-        final_payload = collect_final_failure_audit(
-            cfg,
-            dset_loaders['test'],
-            netF,
-            netB,
-            netC,
-            target_head,
-            pair_feature_adapter,
-            covariance_transport,
-            boundary_head,
-            proto_state,
-            max(int(cfg.ACTIVE.CYCLE) - 1, 0),
-        )
-        save_failure_audit_snapshot(
-            cfg,
-            "final_full.npz",
-            cycle=np.array(cfg.ACTIVE.CYCLE, dtype=np.int64),
-            task=np.array(cfg.name),
-            phase=np.array("final_full"),
-            **final_payload,
-        )
-
-    # torch.save(netF.state_dict(), osp.join(cfg.output_dir, "target_F_" + cfg.MODEL.METHOD + ".pt"))
-    # torch.save(netB.state_dict(), osp.join(cfg.output_dir, "target_B_" + cfg.MODEL.METHOD + ".pt"))
-    # torch.save(netC.state_dict(), osp.join(cfg.output_dir, "target_C_" + cfg.MODEL.METHOD + ".pt"))
-
-    # if cfg.ISSAVE:
-    #     torch.save(netF.state_dict(), osp.join(cfg.output_dir, "target_F_" + cfg.SHOT.CLS_PAR + ".pt"))
-    #     torch.save(netB.state_dict(), osp.join(cfg.output_dir, "target_B_" + cfg.SHOT.CLS_PAR + ".pt"))
-    #     torch.save(netC.state_dict(), osp.join(cfg.output_dir, "target_C_" + cfg.SHOT.CLS_PAR + ".pt"))
 
     return netF, netB, netC
 
 
-def print_cfg(cfg):
-    s = "==========================================\n"
-    for arg, content in cfg.__dict__.items():
-        s += "{}:{}\n".format(arg, content)
-    return s
-
-
-def cal_cosine(weak_feas, strong_feas):
-    normalized_weak = F.normalize(weak_feas, p=2, dim=1)
-    normalized_strong = F.normalize(strong_feas, p=2, dim=1)
-
-    cos_sim = torch.sum(normalized_weak * normalized_strong, dim=1)
-    mean_cos = cos_sim.mean()
-    return mean_cos
-
-
-def expand_pseudo_label_mask(cfg, label_mask, all_mix_output, all_mix_output_pred):
-    if cfg.DCCL.PL_EXPAND == "none":
-        return label_mask
-    if cfg.DCCL.PL_EXPAND != "balanced_topk":
-        raise ValueError(f"Unknown DCCL.PL_EXPAND: {cfg.DCCL.PL_EXPAND}")
-    if cfg.DCCL.PL_TOPK_PER_CLASS <= 0:
-        return label_mask
-
-    expanded_mask = label_mask.clone()
-    mix_conf, _ = torch.max(all_mix_output, dim=1)
-    num_classes = all_mix_output.size(1)
-    for class_idx in range(num_classes):
-        class_mask = all_mix_output_pred == class_idx
-        class_candidates = torch.nonzero(class_mask & (mix_conf >= cfg.DCCL.PL_MIN_CONF), as_tuple=False).squeeze(1)
-        if class_candidates.numel() == 0:
-            continue
-        current_count = int((expanded_mask & class_mask).sum().item())
-        need = int(cfg.DCCL.PL_TOPK_PER_CLASS) - current_count
-        if need <= 0:
-            continue
-        topk = min(need, class_candidates.numel())
-        class_conf = mix_conf[class_candidates]
-        selected = class_candidates[torch.topk(class_conf, k=topk).indices]
-        expanded_mask[selected] = True
-
-    logging.info(
-        "DCCL pseudo-label expansion: mode={}; topk_per_class={}; min_conf={:.3f}; selected={}->{}".format(
-            cfg.DCCL.PL_EXPAND,
-            int(cfg.DCCL.PL_TOPK_PER_CLASS),
-            float(cfg.DCCL.PL_MIN_CONF),
-            int(label_mask.sum().item()),
-            int(expanded_mask.sum().item()),
-        )
-    )
-    return expanded_mask
-
 
 def init_pseudo_label_state(num_samples):
-    """初始化逐样本时序状态。
-
-    pending_label/pending_count 只记录“当前双视角一致标签”连续出现的次数，
-    并不是标签正确次数；stable_label 则记录达到稳定轮数后的标签。
-    """
+    """初始化逐样本的连续一致性状态。"""
     return {
         "pending_label": torch.full((num_samples,), -1, dtype=torch.long),
         "pending_count": torch.zeros(num_samples, dtype=torch.long),
@@ -2978,60 +1091,26 @@ def init_pseudo_label_state(num_samples):
 
 def apply_pseudo_label_memory(
     cfg,
-    prev_label_mask,
     matching_indices,
-    all_mix_output_pred,
-    all_mix_output,
-    mix_conf,
+    mixed_label,
+    mixed_confidence,
     pl_state,
     curr_cycle,
 ):
-    """根据当前一致性与历史连续性生成 hard CE 的标签、掩码和权重。
+    """把单轮双视角一致，提升为跨 cycle 连续一致的 hard CE 标签。
 
-    matching_indices 表示当前 source/CLIP top-1 一致。当前 Dual-tier 的
-    Conflict（不一致）仍被排除在 hard CE 之外；该函数尚不负责判断冲突双方
-    谁更可信。样本仍可在训练主循环中参加一致性、KL 等其他目标。
+    warmup 期间直接使用当前 agreement；之后只保留连续达到阈值的标签。
+    若本轮冲突或标签改变，stable 身份会撤销，避免旧伪标签永久污染训练。
     """
-    mode = cfg.DCCL.PL_MEMORY
-    confidence_mask = mix_conf >= cfg.DCCL.PL_MEMORY_MIN_CONF
-    # 只有“当前双视角一致且达到最低置信度”的样本才会累计连续次数。
-    current_mask = matching_indices & confidence_mask
-
-    if mode == "monotonic":
-        if prev_label_mask is not None:
-            label_mask = prev_label_mask | (~prev_label_mask & current_mask)
-        else:
-            label_mask = current_mask
-        return (
-            label_mask,
-            all_mix_output_pred,
-            label_mask.float(),
-            pl_state,
-        )
-
-    if mode == "current":
-        return (
-            current_mask,
-            all_mix_output_pred,
-            current_mask.float(),
-            pl_state,
-        )
-
-    if mode not in {"stable", "dual_tier"}:
-        raise ValueError(f"Unknown DCCL.PL_MEMORY: {mode}")
     if cfg.DCCL.PL_STABLE_CYCLES <= 0:
         raise ValueError("DCCL.PL_STABLE_CYCLES must be positive")
-    if cfg.DCCL.PL_STABLE_MEMORY not in {"persistent", "reversible"}:
-        raise ValueError(f"Unknown DCCL.PL_STABLE_MEMORY: {cfg.DCCL.PL_STABLE_MEMORY}")
-    if not 0.0 <= float(cfg.DCCL.PL_PENDING_WEIGHT) <= 1.0:
-        raise ValueError("DCCL.PL_PENDING_WEIGHT must be in [0, 1]")
-
+    current_mask = matching_indices & (
+        mixed_confidence >= cfg.DCCL.PL_MEMORY_MIN_CONF
+    )
     if pl_state is None:
-        pl_state = init_pseudo_label_state(all_mix_output_pred.numel())
+        pl_state = init_pseudo_label_state(mixed_label.numel())
 
-    # 若当前一致标签与上一 cycle 相同则连续计数加一；标签改变时从一开始；
-    # source/CLIP 冲突时计数清零。
-    same_label = pl_state["pending_label"] == all_mix_output_pred
+    same_label = pl_state["pending_label"] == mixed_label
     pl_state["pending_count"] = torch.where(
         current_mask & same_label,
         pl_state["pending_count"] + 1,
@@ -3043,289 +1122,59 @@ def apply_pseudo_label_memory(
     )
     pl_state["pending_label"] = torch.where(
         current_mask,
-        all_mix_output_pred,
+        mixed_label,
         torch.full_like(pl_state["pending_label"], -1),
     )
-    stable = current_mask & (pl_state["pending_count"] >= cfg.DCCL.PL_STABLE_CYCLES)
-    if cfg.DCCL.PL_STABLE_MEMORY == "persistent":
-        pl_state["stable_label"] = torch.where(
-            stable, all_mix_output_pred, pl_state["stable_label"]
-        )
-    else:
-        pl_state["stable_label"] = torch.where(
-            stable,
-            all_mix_output_pred,
-            torch.full_like(pl_state["stable_label"], -1),
-        )
+    newly_stable = current_mask & (
+        pl_state["pending_count"] >= cfg.DCCL.PL_STABLE_CYCLES
+    )
+    pl_state["stable_label"] = torch.where(
+        newly_stable,
+        mixed_label,
+        torch.full_like(pl_state["stable_label"], -1),
+    )
 
-    stable_mask = pl_state["stable_label"] >= 0
     warmup = curr_cycle < cfg.DCCL.PL_MEMORY_WARMUP_CYCLES
-    if warmup:
-        label_mask = current_mask
-        memory_label = all_mix_output_pred
-    elif mode == "dual_tier":
-        # Dual-tier 仍要求“当前一致”才能进入 hard CE：
-        # 连续一致的 Stable 使用完整权重，首次/新标签一致的 Pending 弱监督；
-        # 当前冲突的样本权重为 0，不会被历史 Stable 身份自动保留。
-        stable_mask = stable
-        memory_label = torch.where(
-            stable_mask,
-            pl_state["stable_label"],
-            all_mix_output_pred,
-        )
-    else:
-        label_mask = stable_mask
-        memory_label = torch.where(
-            stable_mask,
-            pl_state["stable_label"],
-            all_mix_output_pred,
-        )
+    stable_mask = pl_state["stable_label"] >= 0
+    label_mask = current_mask if warmup else stable_mask
+    memory_label = torch.where(
+        stable_mask, pl_state["stable_label"], mixed_label
+    )
+    memory_weight = label_mask.float()
+    pl_state["last_current_mask"] = current_mask.clone()
+    pl_state["last_stable_mask"] = stable_mask.clone()
+    pl_state["last_conflict_mask"] = (~matching_indices).clone()
 
-    if mode == "dual_tier":
-        stable_mask = stable
-        label_mask, pending_mask, memory_weight = dual_tier_supervision(
-            current_mask,
-            stable_mask,
-            mix_conf,
-            cfg.DCCL.PL_PENDING_WEIGHT,
-            warmup=warmup,
+    logging.info(
+        "DCCL pseudo-label memory: warmup={}; current={}; stable={}; selected={}".format(
+            int(warmup),
+            int(current_mask.sum().item()),
+            int(stable_mask.sum().item()),
+            int(label_mask.sum().item()),
         )
-        conflict_mask = ~matching_indices
-        pl_state["last_current_mask"] = current_mask.clone()
-        pl_state["last_stable_mask"] = stable_mask.clone()
-        pl_state["last_pending_mask"] = pending_mask.clone()
-        pl_state["last_conflict_mask"] = conflict_mask.clone()
-        pending_mean_weight = (
-            float(memory_weight[pending_mask].mean().item())
-            if pending_mask.any()
-            else 0.0
-        )
-    else:
-        pending_mask = torch.zeros_like(current_mask)
-        conflict_mask = ~matching_indices
-        memory_weight = label_mask.float()
-        pending_mean_weight = 0.0
-
-    if cfg.DCCL.PL_CLASS_BALANCE and not warmup:
-        budget = int(round(float(cfg.DCCL.PL_BALANCE_COVERAGE) * memory_label.numel()))
-        if budget <= 0:
-            budget = int(label_mask.sum().item())
-        target_prior = all_mix_output.mean(dim=0)
-        balanced_mask, quotas = class_balanced_mask_by_prior(
-            memory_label,
-            label_mask,
-            mix_conf,
-            target_prior,
-            budget,
-            min_per_class=cfg.DCCL.PL_BALANCE_MIN_PER_CLASS,
-            eps=cfg.DCCL.EPSILON,
-        )
-        logging.info(
-            "DCCL pseudo-label class balance: selected={}->{}; budget={}; "
-            "active_classes={}; quota_range=({},{})".format(
-                int(label_mask.sum().item()),
-                int(balanced_mask.sum().item()),
-                int(budget),
-                int((quotas > 0).sum().item()),
-                int(quotas[quotas > 0].min().item()) if (quotas > 0).any() else 0,
-                int(quotas.max().item()) if quotas.numel() else 0,
-            )
-        )
-        label_mask = balanced_mask
-        memory_weight = memory_weight * label_mask.float()
-
-    if mode == "dual_tier":
-        low_confidence_mask = matching_indices & ~confidence_mask
-        logging.info(
-            "DCCL pseudo-label memory: mode={}; stable_memory={}; warmup={}; "
-            "current={}; stable={}; pending={}; conflict={}; "
-            "low_confidence={}; selected={}; effective_weight={:.4f}; "
-            "pending_mean_weight={:.6f}".format(
-                cfg.DCCL.PL_MEMORY,
-                cfg.DCCL.PL_STABLE_MEMORY,
-                int(warmup),
-                int(current_mask.sum().item()),
-                int(stable_mask.sum().item()),
-                int(pending_mask.sum().item()),
-                int(conflict_mask.sum().item()),
-                int(low_confidence_mask.sum().item()),
-                int(label_mask.sum().item()),
-                float(memory_weight.sum().item()),
-                pending_mean_weight,
-            )
-        )
-    else:
-        logging.info(
-            "DCCL pseudo-label memory: mode={}; stable_memory={}; warmup={}; "
-            "current={}; stable={}; selected={}".format(
-                cfg.DCCL.PL_MEMORY,
-                cfg.DCCL.PL_STABLE_MEMORY,
-                int(warmup),
-                int(current_mask.sum().item()),
-                int(stable_mask.sum().item()),
-                int(label_mask.sum().item()),
-            )
-        )
+    )
     return label_mask, memory_label, memory_weight, pl_state
 
 
-def prior_calibrate(prob, power, eps):
-    prior = prob.mean(dim=0).clamp_min(eps)
-    calibrated = prob / prior.pow(power)
-    return calibrated / calibrated.sum(dim=1, keepdim=True).clamp_min(eps)
+def prior_calibrate(probability, power, epsilon):
+    """用预测类别先验做温和的长尾校准。"""
+    prior = probability.mean(dim=0).clamp_min(epsilon)
+    calibrated = probability / prior.pow(power)
+    return calibrated / calibrated.sum(dim=1, keepdim=True).clamp_min(epsilon)
 
 
-def apply_classwise_calibration_mode(cfg, source_prob, clip_prob, mode):
-    if mode == "none":
-        mix_prob = (source_prob + clip_prob) / 2
-        return source_prob, clip_prob, mix_prob
-
-    source_cal = source_prob
-    clip_cal = clip_prob
-    if mode in {"source_prior", "both_prior"}:
-        source_cal = prior_calibrate(source_cal, cfg.DCCL.CALIB_POWER, cfg.DCCL.EPSILON)
-    if mode in {"clip_prior", "both_prior"}:
-        clip_cal = prior_calibrate(clip_cal, cfg.DCCL.CALIB_POWER, cfg.DCCL.EPSILON)
-
-    mix_prob = (source_cal + clip_cal) / 2
-    if mode == "mix_prior":
-        mix_prob = prior_calibrate(mix_prob, cfg.DCCL.CALIB_POWER, cfg.DCCL.EPSILON)
-    elif mode not in {"source_prior", "clip_prior", "both_prior"}:
-        raise ValueError(f"Unknown DCCL.CALIB_MODE: {mode}")
-
-    return source_cal, clip_cal, mix_prob
-
-
-def score_calibration_candidate(cfg, source_prob, clip_prob, mix_prob):
-    _, source_pred = torch.max(source_prob, dim=1)
-    _, clip_pred = torch.max(clip_prob, dim=1)
-    agreement = source_pred == clip_pred
-    coverage = agreement.float().mean()
-    mix_conf, _ = torch.max(mix_prob, dim=1)
-    if agreement.any():
-        agreement_conf = mix_conf[agreement].mean()
-    else:
-        agreement_conf = torch.tensor(0.0)
-    score = coverage + float(cfg.DCCL.CALIB_AUTO_LAMBDA) * agreement_conf
-    return float(score.item()), float(coverage.item()), float(agreement_conf.item())
-
-
-def apply_classwise_calibration(cfg, source_prob, clip_prob, task_features=None, clip_features=None):
-    mode = cfg.DCCL.CALIB_MODE
-    selected_mode = mode
-    if mode == "topo_prior":
-        if task_features is None or clip_features is None:
-            raise ValueError("topo_prior calibration requires task and CLIP features")
-        raw_source_label = source_prob.argmax(dim=1)
-        raw_clip_label = clip_prob.argmax(dim=1)
-        source_cal, clip_cal, mix_prob, graph_prior, anchors = topology_prior_calibrate(
-            task_features,
-            clip_features,
-            source_prob,
-            clip_prob,
-            raw_source_label,
-            raw_clip_label,
-            power=cfg.DCCL.CALIB_POWER,
-            anchor_ratio=cfg.DCCL.TOPO_ANCHOR_RATIO,
-            anchor_min_per_class=cfg.DCCL.TOPO_ANCHOR_MIN_PER_CLASS,
-            k=cfg.DCCL.TOPO_GRAPH_K,
-            temperature=cfg.DCCL.TOPO_TEMPERATURE,
-            alpha=cfg.DCCL.TOPO_ALPHA,
-            steps=cfg.DCCL.TOPO_STEPS,
-            chunk_size=cfg.DCCL.TOPO_CHUNK_SIZE,
-            eps=cfg.DCCL.EPSILON,
-        )
-        logging.info(
-            "DCCL topology-prior calibration: anchors={}; graph_prior_range=({:.4f},{:.4f}); "
-            "graph_prior_entropy={:.4f}; k={}; alpha={:.3f}; steps={}".format(
-                int(anchors.sum().item()),
-                float(graph_prior.min().item()),
-                float(graph_prior.max().item()),
-                float(-(graph_prior * graph_prior.clamp_min(cfg.DCCL.EPSILON).log()).sum().item()),
-                int(cfg.DCCL.TOPO_GRAPH_K),
-                float(cfg.DCCL.TOPO_ALPHA),
-                int(cfg.DCCL.TOPO_STEPS),
-            )
-        )
-        return source_cal, clip_cal, mix_prob
-
-    if mode == "topo_target_prior":
-        if task_features is None or clip_features is None:
-            raise ValueError("topo_target_prior calibration requires task and CLIP features")
-        raw_source_label = source_prob.argmax(dim=1)
-        raw_clip_label = clip_prob.argmax(dim=1)
-        (
-            source_cal,
-            clip_cal,
-            mix_prob,
-            graph_prior,
-            target_prior,
-            anchors,
-            target_mix,
-        ) = topology_target_prior_calibrate(
-            task_features,
-            clip_features,
-            source_prob,
-            clip_prob,
-            raw_source_label,
-            raw_clip_label,
-            power=cfg.DCCL.CALIB_POWER,
-            target_mix=cfg.DCCL.TOPO_TARGET_MIX,
-            anchor_ratio=cfg.DCCL.TOPO_ANCHOR_RATIO,
-            anchor_min_per_class=cfg.DCCL.TOPO_ANCHOR_MIN_PER_CLASS,
-            k=cfg.DCCL.TOPO_GRAPH_K,
-            temperature=cfg.DCCL.TOPO_TEMPERATURE,
-            alpha=cfg.DCCL.TOPO_ALPHA,
-            steps=cfg.DCCL.TOPO_STEPS,
-            chunk_size=cfg.DCCL.TOPO_CHUNK_SIZE,
-            eps=cfg.DCCL.EPSILON,
-        )
-        logging.info(
-            "DCCL topology-target prior alignment: anchors={}; target_mix={:.4f}; "
-            "graph_prior_range=({:.4f},{:.4f}); target_prior_range=({:.4f},{:.4f}); "
-            "target_prior_entropy={:.4f}; k={}; alpha={:.3f}; steps={}".format(
-                int(anchors.sum().item()),
-                float(target_mix),
-                float(graph_prior.min().item()),
-                float(graph_prior.max().item()),
-                float(target_prior.min().item()),
-                float(target_prior.max().item()),
-                float(-(target_prior * target_prior.clamp_min(cfg.DCCL.EPSILON).log()).sum().item()),
-                int(cfg.DCCL.TOPO_GRAPH_K),
-                float(cfg.DCCL.TOPO_ALPHA),
-                int(cfg.DCCL.TOPO_STEPS),
-            )
-        )
-        return source_cal, clip_cal, mix_prob
-
-    if mode == "auto_agree":
-        candidate_modes = ["none", "source_prior", "clip_prior", "both_prior", "mix_prior"]
-        scored = []
-        for candidate_mode in candidate_modes:
-            candidate_source, candidate_clip, candidate_mix = apply_classwise_calibration_mode(
-                cfg, source_prob, clip_prob, candidate_mode
-            )
-            score, coverage, agreement_conf = score_calibration_candidate(
-                cfg, candidate_source, candidate_clip, candidate_mix
-            )
-            scored.append((score, coverage, agreement_conf, candidate_mode))
-        scored.sort(reverse=True)
-        selected_mode = scored[0][3]
-        logging.info(
-            "DCCL auto calibration scores: {}".format(
-                "; ".join(
-                    "{} score={:.4f} cov={:.4f} conf={:.4f}".format(name, score, coverage, conf)
-                    for score, coverage, conf, name in scored
-                )
-            )
-        )
-
-    source_cal, clip_cal, mix_prob = apply_classwise_calibration_mode(cfg, source_prob, clip_prob, selected_mode)
-
+def apply_both_prior_calibration(cfg, source_prob, clip_prob):
+    """Stage14 固定校准：source 与 CLIP 分别校准后等权融合。"""
+    source_calibrated = prior_calibrate(
+        source_prob, cfg.DCCL.CALIB_POWER, cfg.DCCL.EPSILON
+    )
+    clip_calibrated = prior_calibrate(
+        clip_prob, cfg.DCCL.CALIB_POWER, cfg.DCCL.EPSILON
+    )
+    mixed_prob = (source_calibrated + clip_calibrated) / 2
     logging.info(
-        "DCCL classwise calibration: requested_mode={}; selected_mode={}; power={:.3f}; source_prior_range=({:.4f},{:.4f}); clip_prior_range=({:.4f},{:.4f})".format(
-            mode,
-            selected_mode,
+        "DCCL both-prior calibration: power={:.3f}; "
+        "source_prior_range=({:.4f},{:.4f}); clip_prior_range=({:.4f},{:.4f})".format(
             float(cfg.DCCL.CALIB_POWER),
             float(source_prob.mean(dim=0).min().item()),
             float(source_prob.mean(dim=0).max().item()),
@@ -3333,7 +1182,7 @@ def apply_classwise_calibration(cfg, source_prob, clip_prob, task_features=None,
             float(clip_prob.mean(dim=0).max().item()),
         )
     )
-    return source_cal, clip_cal, mix_prob
+    return source_calibrated, clip_calibrated, mixed_prob
 
 
 def obtain_label(
@@ -3343,200 +1192,108 @@ def obtain_label(
     netB,
     netC,
     target_head,
-    pair_feature_adapter,
-    covariance_transport,
-    boundary_head,
-    text_inputs,
     text_features,
     clip_model,
-    prev_label_mask,
-    proto_state,
     pl_state,
     curr_cycle,
 ):
-    # class_logit_bias = get_class_bias(netF, netB, netC)
-    start_test = True
+    """生成 Stage14 双视角伪标签及 Boundary-Flip 所需的诊断量。"""
+    first_batch = True
     with torch.no_grad():
-        if text_features is None:
-            current_text_features = clip_model.encode_text(text_inputs)
-        else:
-            current_text_features = text_features
-        current_text_features = F.normalize(current_text_features, dim=1)
+        normalized_text = F.normalize(text_features, dim=1)
         clip_logit_scale = clip_model.logit_scale.exp()
-        iter_test = iter(loader)
-        for _ in range(len(loader)):
-            inputs_test, labels, sample_indices = next(iter_test)
+        for inputs_test, labels, _ in loader:
             weak_x = inputs_test[1].cuda()
-            # strong_x = inputs_test[2].cuda()
-
-            weak_feas = netB(netF(weak_x))
-            # strong_feas = netB(netF(strong_x))
-
-            adapted_weak_feas = apply_pair_feature_adapter(
-                cfg, weak_feas, pair_feature_adapter, curr_cycle
-            )
-            adapted_weak_feas = apply_agreement_covariance_transport(
+            task_features = netB(netF(weak_x))
+            source_logits = apply_target_head_logits(
                 cfg,
-                adapted_weak_feas,
-                covariance_transport,
-                curr_cycle,
-                sample_indices,
-            )
-            weak_outputs = netC(adapted_weak_feas)
-            weak_outputs = apply_target_head_logits(
-                cfg, adapted_weak_feas, weak_outputs, target_head, curr_cycle
-            )
-            weak_outputs = apply_target_prototype_logits(
-                cfg, adapted_weak_feas, weak_outputs, proto_state
-            )
-            boundary_base_outputs = weak_outputs
-            weak_outputs = apply_reciprocal_boundary_logits(
-                cfg,
-                adapted_weak_feas,
-                boundary_base_outputs,
-                boundary_head,
+                task_features,
+                netC(task_features),
+                target_head,
                 curr_cycle,
             )
-            # strong_outputs = netC(strong_feas)
+            clip_features = F.normalize(
+                clip_model.encode_image(weak_x), dim=1
+            )
+            clip_logits = (
+                clip_logit_scale * clip_features @ normalized_text.t()
+            )
 
-            clip_image_features = F.normalize(clip_model.encode_image(weak_x), dim=1)
-            clip_score = clip_logit_scale * clip_image_features @ current_text_features.t()
-
-            clip_score = clip_score.cpu()
-            if start_test:
-                all_output = weak_outputs.float().cpu()
-                all_boundary_base_output = boundary_base_outputs.float().cpu()
-                all_clip_score = clip_score.float().cpu()
-                all_task_features = weak_feas.float().cpu()
-                all_clip_features = clip_image_features.float().cpu()
-                all_label = labels.float()
-                start_test = False
+            if first_batch:
+                all_source_logits = source_logits.float().cpu()
+                all_clip_logits = clip_logits.float().cpu()
+                all_task_features = task_features.float().cpu()
+                all_clip_features = clip_features.float().cpu()
+                all_labels = labels.long().cpu()
+                first_batch = False
             else:
-                all_output = torch.cat((all_output, weak_outputs.float().cpu()), 0)
-                all_boundary_base_output = torch.cat(
-                    (
-                        all_boundary_base_output,
-                        boundary_base_outputs.float().cpu(),
-                    ),
-                    0,
+                all_source_logits = torch.cat(
+                    (all_source_logits, source_logits.float().cpu()), dim=0
                 )
-                all_label = torch.cat((all_label, labels.float()), 0)
-                all_clip_score = torch.cat((all_clip_score, clip_score.float()), 0)
-                all_task_features = torch.cat((all_task_features, weak_feas.float().cpu()), 0)
-                all_clip_features = torch.cat((all_clip_features, clip_image_features.float().cpu()), 0)
+                all_clip_logits = torch.cat(
+                    (all_clip_logits, clip_logits.float().cpu()), dim=0
+                )
+                all_task_features = torch.cat(
+                    (all_task_features, task_features.float().cpu()), dim=0
+                )
+                all_clip_features = torch.cat(
+                    (all_clip_features, clip_features.float().cpu()), dim=0
+                )
+                all_labels = torch.cat((all_labels, labels.long().cpu()), dim=0)
 
-    all_output = nn.Softmax(dim=1)(all_output)
-    all_boundary_base_output = nn.Softmax(dim=1)(all_boundary_base_output)
-    clip_all_output = nn.Softmax(dim=1)(all_clip_score).cpu()
-    all_output, clip_all_output, all_mix_output = apply_classwise_calibration(
-        cfg, all_output, clip_all_output, all_task_features, all_clip_features
+    source_prob = F.softmax(all_source_logits, dim=1)
+    clip_prob = F.softmax(all_clip_logits, dim=1)
+    source_prob, clip_prob, mixed_prob = apply_both_prior_calibration(
+        cfg, source_prob, clip_prob
     )
+    source_label = source_prob.argmax(dim=1)
+    clip_label = clip_prob.argmax(dim=1)
+    mixed_confidence, mixed_label = mixed_prob.max(dim=1)
+    matching_indices = source_label == clip_label
 
-    # Compute predictions for all_output and clip_all_output
-    _, all_output_pred = torch.max(all_output, dim=1)
-    _, boundary_source_pred = torch.max(all_boundary_base_output, dim=1)
-    _, clip_all_output_pred = torch.max(clip_all_output, dim=1)
-    if boundary_head is not None:
-        boundary_probability_l1 = (
-            all_output - all_boundary_base_output
-        ).abs().sum(dim=1)
-        logging.info(
-            "DCCL reciprocal boundary action: cycle={}; changed_top1={}; "
-            "mean_probability_l1={:.8f}; max_probability_l1={:.8f}".format(
-                curr_cycle + 1,
-                int((all_output_pred != boundary_source_pred).sum().item()),
-                float(boundary_probability_l1.mean().item()),
-                float(boundary_probability_l1.max().item()),
-            )
+    label_mask, memory_label, memory_weight, pl_state = (
+        apply_pseudo_label_memory(
+            cfg,
+            matching_indices,
+            mixed_label,
+            mixed_confidence,
+            pl_state,
+            curr_cycle,
         )
-
-    _, all_mix_output_pred = torch.max(all_mix_output, dim=1)
-
-    # Find indices where predictions match
-    matching_indices = all_output_pred == clip_all_output_pred
-
-    mix_conf, _ = torch.max(all_mix_output, dim=1)
-    (
-        label_mask,
-        all_mix_output_pred,
-        memory_weight,
-        pl_state,
-    ) = apply_pseudo_label_memory(
-        cfg,
-        prev_label_mask,
-        matching_indices,
-        all_mix_output_pred,
-        all_mix_output,
-        mix_conf,
-        pl_state,
-        curr_cycle,
-    )
-    memory_label_mask = label_mask
-    label_mask = expand_pseudo_label_mask(
-        cfg, label_mask, all_mix_output, all_mix_output_pred
-    )
-    expanded_mask = label_mask & ~memory_label_mask
-    memory_weight = torch.where(
-        expanded_mask,
-        torch.ones_like(memory_weight),
-        memory_weight,
     )
 
-    # Filter predictions and labels based on the updated label mask
-    valid_preds = all_mix_output_pred[label_mask]
-    valid_labels = all_label[label_mask]
-
-    # Calculate pseudo label accuracy
-    if len(valid_preds) > 0:
-        pseudo_label_accuracy = torch.sum(valid_preds == valid_labels).item() / float(len(valid_preds))
-        # plot_confusion_matrix(valid_labels, valid_preds, curr_cycle)
-        # breakpoint()
-    else:
-        pseudo_label_accuracy = 0.0
-
-    # Print accuracy and number of valid samples
-    log_str = "Number of valid pseudo-labeled samples: {}/{}; Accuracy = {:.2f}%".format(
-        len(valid_preds), len(all_output_pred), pseudo_label_accuracy * 100
+    selected_accuracy = (
+        float((memory_label[label_mask] == all_labels[label_mask]).float().mean().item())
+        if label_mask.any()
+        else 0.0
     )
-    logging.info(log_str)
-    valid_mixed = all_mix_output_pred[label_mask]
-    if len(valid_preds) > 0:
-        mixed_output_accuracy = torch.sum(valid_mixed == valid_labels).item() / float(len(valid_preds))
-    else:
-        mixed_output_accuracy = 0.0
-    log_str_valid = "Mixed output with valid mask: {:.2f}%".format(mixed_output_accuracy * 100)
-    logging.info(log_str_valid)
-
-    # _, all_mix_output_pred = torch.max(all_mix_output, dim=1)
-    mix_output_accuracy = torch.sum(all_mix_output_pred == all_label).item() / float(len(all_label))
-    clip_output_accuracy = torch.sum(clip_all_output_pred == all_label).item() / float(len(all_label))
-    pure_output_accuracy = torch.sum(all_output_pred == all_label).item() / float(len(all_label))
-
-    log_str_mix = ("all_mix_output Accuracy = {:.2f}%; clip_output_accuracy = {:.2f}%; "
-                   "pure_output_accuracy = {:.2f}%;").format(mix_output_accuracy * 100,
-                                                             clip_output_accuracy * 100, pure_output_accuracy * 100)
-    logging.info(log_str_mix)
-
-    confi_imag = loader.dataset.imgs
-    confi_dis = all_mix_output.detach()
+    logging.info(
+        "DCCL pseudo labels: selected={}/{}; oracle_accuracy={:.2f}%; "
+        "source_accuracy={:.2f}%; clip_accuracy={:.2f}%; mixed_accuracy={:.2f}%".format(
+            int(label_mask.sum().item()),
+            int(label_mask.numel()),
+            selected_accuracy * 100.0,
+            float((source_label == all_labels).float().mean().item()) * 100.0,
+            float((clip_label == all_labels).float().mean().item()) * 100.0,
+            float((mixed_label == all_labels).float().mean().item()) * 100.0,
+        )
+    )
 
     return (
-        all_mix_output_pred,
+        memory_label,
         label_mask,
         memory_weight,
-        confi_imag,
-        confi_dis,
-        clip_all_output,
-        all_output_pred,
-        clip_all_output_pred,
-        boundary_source_pred,
-        all_output,
+        loader.dataset.imgs,
+        mixed_prob.detach(),
+        clip_prob,
+        source_label,
+        clip_label,
+        source_prob,
         all_task_features,
         all_clip_features,
-        all_label.long(),
+        all_labels,
         pl_state,
     )
-
 
 def clip_pre_text(cfg):
     List_rd = []
@@ -3551,13 +1308,3 @@ def clip_pre_text(cfg):
     prompts = [prompt_prefix + " " + name + "." for name in classnames]
     tokenized_prompts = torch.cat([clip.tokenize(p) for p in prompts]).cuda()
     return tokenized_prompts
-
-
-def clip_text(model, text_features, inputs_test):
-    with torch.no_grad():
-        image_features = model.encode_image(inputs_test)
-    logit_scale = model.logit_scale.data
-    logit_scale = logit_scale.exp().cpu()
-    image_features = image_features / image_features.norm(dim=1, keepdim=True)
-    logits = logit_scale * image_features @ text_features.t()
-    return logits

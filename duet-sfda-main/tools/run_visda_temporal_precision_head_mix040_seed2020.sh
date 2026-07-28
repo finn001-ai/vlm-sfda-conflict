@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-method="temporal_precision_head_seed2020_visda_mix040"
+method="temporal_precision_head_control_visda_mix040"
 result_dir="output/uda/VISDA-C"
 gate="$result_dir/temporal_precision_head_visda_mix040_preflight_gate.json"
 

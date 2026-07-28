@@ -19,7 +19,6 @@ import src.methods.oh.adacontrast as ADACONTRAST
 import src.methods.oh.source as SOURCE
 import src.methods.oh.plmatch as PLMATCH
 import src.methods.oh.dccl as DCCL
-import src.methods.oh.accd as ACCD
 import src.methods.oh.plum as PLUM
 import src.methods.oh.boundary_flip_duet as BOUNDARY_FLIP_DUET
 
@@ -120,36 +119,12 @@ if __name__ == "__main__":
         print("using plmatch method")
         acc = PLMATCH.train_target(cfg)
 
-    elif cfg.MODEL.METHOD in {
-        "dccl",
-        "topo_prior",
-        "topo_target_prior",
-        "temporal_probe",
-        "graph_temporal",
-        "graph_temporal_kl_only",
-        "graph_temporal_residual",
-        "temporal_precision_residual",
-        "temporal_precision_proto",
-        "temporal_precision_balanced",
-        "temporal_precision_head",
-        "temporal_precision_head_all",
-        "temporal_precision_head_ema",
-        "temporal_precision_head_residual",
-        "temporal_precision_head_trajectory",
-        "temporal_precision_head_pair_flow",
-        "temporal_precision_head_pair_feature",
-        "temporal_precision_head_pair_feature_coverage",
-        "temporal_precision_head_covariance_transport",
-    } or cfg.MODEL.METHOD.startswith("temporal_precision_head_") or (
-        cfg.MODEL.METHOD == "reciprocal_boundary"
-        or cfg.MODEL.METHOD.startswith("reciprocal_boundary_")
+    elif (
+        cfg.MODEL.METHOD == "temporal_precision_head"
+        or cfg.MODEL.METHOD.startswith("temporal_precision_head_control_")
     ):
-        print("using dccl method")
+        print("using Stage14 temporal precision target head")
         acc = DCCL.train_target(cfg)
-
-    elif cfg.MODEL.METHOD in {"accd", "accd_v2", "accd_fp", "accd_fp12", "accd_sr", "accd_ta", "accd_ct"}:
-        print("using ACCD method")
-        acc = ACCD.train_target(cfg)
 
     elif cfg.MODEL.METHOD == "plum":
         print("using plum method")

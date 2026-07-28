@@ -1,26 +1,18 @@
 import unittest
 from pathlib import Path
+import re
 
 import yaml
 
 
 STAGE14_DCCL_KEYS = {
-    "CAND_PAR",
-    "CALIB_MODE",
-    "PL_MEMORY",
     "PL_STABLE_CYCLES",
-    "PL_STABLE_MEMORY",
     "PL_MEMORY_WARMUP_CYCLES",
-    "TARGET_HEAD_ADAPT",
     "TARGET_HEAD_MIX",
     "TARGET_HEAD_START_CYCLE",
-    "PROMOTE_K",
-    "TEMPORAL_DIAG",
-    "GRAPH_TEACHER_FUSION",
-    "GTF_APPLY_TO",
     "GTR_PAR",
 }
-BOUNDARY_DCCL_KEYS = STAGE14_DCCL_KEYS - {"CAND_PAR", "PROMOTE_K"} | {
+BOUNDARY_DCCL_KEYS = STAGE14_DCCL_KEYS | {
     "LOSS_DIAG"
 }
 BOUNDARY_FLIP_KEYS = {
@@ -69,17 +61,31 @@ class MainConfigCleanupTest(unittest.TestCase):
             set(boundary["BOUNDARY_FLIP"]), BOUNDARY_FLIP_KEYS
         )
 
-    def test_boundary_flip_skips_legacy_dccl_conflict_path(self):
+    def test_dccl_host_has_no_legacy_experimental_branches(self):
         training_host = Path("src/methods/oh/dccl.py").read_text()
+        self.assertLess(len(training_host.splitlines()), 1500)
+        for legacy_name in (
+            "TARGET_HEAD_VARIANT",
+            "ClassPairFlowAdapter",
+            "SourceAnchoredResidualClassifier",
+            "PAIR_FEATURE_ADAPT",
+            "COV_TRANSPORT_ADAPT",
+            "THREE_VIEW_EM",
+            "cfg.ACCD",
+            "RECIPROCAL_BOUNDARY",
+        ):
+            self.assertNotIn(legacy_name, training_host)
 
-        self.assertIn(
-            "not cfg.ACCD.ENABLED and not cfg.BOUNDARY_FLIP.ENABLED",
-            training_host,
+    def test_every_registered_dccl_option_is_used_by_mainline(self):
+        config_source = Path("conf.py").read_text()
+        training_host = Path("src/methods/oh/dccl.py").read_text()
+        registered = set(
+            re.findall(r"_C\.DCCL\.([A-Z0-9_]+)", config_source)
         )
-        self.assertIn("candidate_mass = None", training_host)
-        self.assertIn(
-            "candidate_mask = torch.zeros_like(label_mask)", training_host
+        referenced = set(
+            re.findall(r"cfg\.DCCL\.([A-Z0-9_]+)", training_host)
         )
+        self.assertEqual(registered, referenced)
 
 
 if __name__ == "__main__":

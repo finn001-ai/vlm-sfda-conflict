@@ -24,7 +24,7 @@ declare -a TASKS=(
 for seed in "${SEEDS[@]}"; do
   for task in "${TASKS[@]}"; do
     read -r task_name s t <<< "$task"
-    method="temporal_precision_head_seed${seed}"
+    method="temporal_precision_head_control_seed${seed}"
     echo "==> Temporal-precision target-head seed sweep: seed=${seed} task=${task_name}"
     python image_target_of_oh_vs.py \
       --cfg cfgs/office-home/temporal_precision_head.yaml \
@@ -36,7 +36,7 @@ for seed in "${SEEDS[@]}"; do
 done
 
 python tools/extract_final_accuracy.py \
-  --glob 'output/uda/office-home/*/temporal_precision_head_seed[0-9][0-9][0-9][0-9]/*.txt' \
+  --glob 'output/uda/office-home/*/temporal_precision_head_control_seed[0-9][0-9][0-9][0-9]/*.txt' \
   --selection peak \
   > output/uda/office-home/temporal_precision_head_seed_sweep_accuracy.csv
 

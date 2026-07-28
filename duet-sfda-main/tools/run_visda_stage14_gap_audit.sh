@@ -7,7 +7,7 @@ cd "$repo_dir"
 proxy_list="data/VISDA-C/validation_proxy25_seed2020_list.txt"
 result_dir="output/uda/VISDA-C/stage14_visda_gap_audit"
 duet_method="plmatch_stage14_gap_audit_proxy25_seed2020"
-stage14_method="temporal_precision_head_stage14_gap_audit_proxy25_seed2020"
+stage14_method="temporal_precision_head_control_gap_audit_proxy25_seed2020"
 
 for path in \
   data/VISDA-C/validation_list.txt \
@@ -105,7 +105,6 @@ else
     SETTING.SEED 2020 SETTING.S 0 SETTING.T 1 \
     ACTIVE.CYCLE 4 \
     DCCL.ADAPTATION_LIST "$proxy_list" \
-    DCCL.TEMPORAL_DIAG True \
     FAILURE_AUDIT.ENABLED True
   validate_run "$stage14_method" "temporal_diagnostics"
 fi

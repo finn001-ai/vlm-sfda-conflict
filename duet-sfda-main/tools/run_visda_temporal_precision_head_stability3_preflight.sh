@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-baseline_method="temporal_precision_head_seed2020_visda"
-method="temporal_precision_head_seed2020_visda_stability3_preflight"
+baseline_method="temporal_precision_head_control_visda_seed2020"
+method="temporal_precision_head_control_visda_stability3_preflight"
 result_dir="output/uda/VISDA-C"
 
 for path in \

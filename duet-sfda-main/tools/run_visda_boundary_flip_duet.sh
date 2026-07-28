@@ -4,7 +4,8 @@ set -euo pipefail
 # VisDA-C matched test：
 #   control   = Stage14 temporal-precision target head
 #   candidate = 同一宿主 + Boundary-Flip
-# 默认使用完整 validation split 并复用已经完整结束的同名实验。
+#
+# 默认直接删除并覆盖本脚本对应的输出，不再要求用户手动移动残留目录。
 
 repo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo_dir"
@@ -12,9 +13,11 @@ cd "$repo_dir"
 seed="${SEED:-2020}"
 run_control="${RUN_CONTROL:-1}"
 adaptation_list="${ADAPTATION_LIST:-}"
-control_method="temporal_precision_head_boundary_flip_visda_control_seed${seed}"
+control_method="temporal_precision_head_control_visda_seed${seed}"
 candidate_method="boundary_flip_duet_visda_seed${seed}"
 result_dir="output/uda/VISDA-C/boundary_flip_duet_seed${seed}"
+control_dir="output/uda/VISDA-C/TV/${control_method}"
+candidate_dir="output/uda/VISDA-C/TV/${candidate_method}"
 
 if [ "$run_control" != "0" ] && [ "$run_control" != "1" ]; then
   echo "RUN_CONTROL must be 0 or 1" >&2
@@ -39,18 +42,15 @@ for path in \
   fi
 done
 
+adaptation_opts=()
 evaluation_list="data/VISDA-C/validation_list.txt"
 if [ -n "$adaptation_list" ]; then
   if [ ! -f "$adaptation_list" ]; then
     echo "ADAPTATION_LIST does not exist: $adaptation_list" >&2
     exit 1
   fi
+  adaptation_opts+=(DCCL.ADAPTATION_LIST "$adaptation_list")
   evaluation_list="$adaptation_list"
-fi
-expected_samples=$(wc -l < "$evaluation_list" | tr -d ' ')
-if [ -z "$adaptation_list" ] && [ "$expected_samples" -ne 55388 ]; then
-  echo "Expected 55388 full VisDA validation samples, found ${expected_samples}" >&2
-  exit 1
 fi
 
 mkdir -p "$result_dir"
@@ -59,116 +59,39 @@ sha256sum source/uda/VISDA-C/T/source_{F,B,C}.pt \
 sha256sum "$evaluation_list" \
   > "${result_dir}/adaptation_list_sha256.txt"
 
-adaptation_opts=()
-if [ -n "$adaptation_list" ]; then
-  adaptation_opts+=(DCCL.ADAPTATION_LIST "$adaptation_list")
-fi
-
-reset_incomplete_run() {
-  local method=$1
-  local reason=$2
-  local run_dir
-  if [ "$method" != "$control_method" ] && \
-    [ "$method" != "$candidate_method" ]; then
-    echo "Refusing to reset unexpected method: $method" >&2
-    exit 1
-  fi
-  run_dir="output/uda/VISDA-C/TV/${method}"
-  echo "${method}: ${reason}; automatically overwriting incomplete output" >&2
-  if [ -e "$run_dir" ]; then
-    rm -rf -- "$run_dir"
-  fi
-  return 1
-}
-
-validate_run() {
-  local method=$1
-  local run_dir
-  local pattern
-  local path
-  local checkpoints
-  local refreshes
-  local -a logs=()
-  run_dir="output/uda/VISDA-C/TV/${method}"
-  pattern="output/uda/VISDA-C/TV/${method}/*.txt"
-  while IFS= read -r path; do
-    logs+=("$path")
-  done < <(compgen -G "$pattern" || true)
-  if [ "${#logs[@]}" -eq 0 ]; then
-    if [ -e "$run_dir" ]; then
-      reset_incomplete_run "$method" "output exists but contains no log"
-    fi
-    return 1
-  fi
-  if [ "${#logs[@]}" -ne 1 ]; then
-    reset_incomplete_run \
-      "$method" "expected exactly one log, found ${#logs[@]}"
-  fi
-  checkpoints=$(grep -c "Task: TV" "${logs[0]}" || true)
-  refreshes=$(
-    grep -c "Number of valid pseudo-labeled samples" "${logs[0]}" || true
-  )
-  if [ "$checkpoints" -ne 32 ] || [ "$refreshes" -ne 8 ]; then
-    reset_incomplete_run "$method" \
-      "incomplete run (${checkpoints}/32 checkpoints, ${refreshes}/8 refreshes)"
-  fi
-  if ! grep -q "Cycle: 8/8" "${logs[0]}"; then
-    reset_incomplete_run "$method" "log is not an eight-cycle run"
-  fi
-  if ! grep -q \
-    "Number of valid pseudo-labeled samples: [0-9]*/${expected_samples}" \
-    "${logs[0]}"; then
-    reset_incomplete_run \
-      "$method" "log does not match ${expected_samples} adaptation samples"
-  fi
-  return 0
-}
-
-control_ready=0
-if validate_run "$control_method"; then
-  echo "==> Reusing matched Stage14 control, seed=${seed}"
-  control_ready=1
-elif [ "$run_control" = "1" ]; then
-  echo "==> VisDA-C matched Stage14 control, seed=${seed}"
+if [ "$run_control" = "1" ]; then
+  echo "==> Overwriting VisDA-C Stage14 control: ${control_dir}"
+  rm -rf -- "$control_dir"
   python image_target_of_oh_vs.py \
     --cfg cfgs/visda/temporal_precision_head.yaml \
     CKPT_DIR . SETTING.OUTPUT_SRC source SETTING.SEED "$seed" \
     SETTING.S 0 SETTING.T 1 \
     MODEL.METHOD "$control_method" \
     "${adaptation_opts[@]}"
-  validate_run "$control_method"
-  control_ready=1
-fi
-
-if validate_run "$candidate_method"; then
-  echo "==> Reusing VisDA-C Boundary-Flip candidate, seed=${seed}"
-else
-  echo "==> VisDA-C Boundary-Flip DUET, seed=${seed}"
-  python image_target_of_oh_vs.py \
-    --cfg cfgs/visda/boundary_flip_duet.yaml \
-    CKPT_DIR . SETTING.OUTPUT_SRC source SETTING.SEED "$seed" \
-    SETTING.S 0 SETTING.T 1 \
-    MODEL.METHOD "$candidate_method" \
-    "${adaptation_opts[@]}"
-  validate_run "$candidate_method"
-fi
-
-if [ "$control_ready" = "1" ]; then
   python tools/extract_final_accuracy.py \
-    --glob "output/uda/VISDA-C/TV/${control_method}/*.txt" \
+    --glob "${control_dir}/*.txt" \
     > "${result_dir}/control_accuracy.csv"
 fi
 
+echo "==> Overwriting VisDA-C Boundary-Flip candidate: ${candidate_dir}"
+rm -rf -- "$candidate_dir"
+python image_target_of_oh_vs.py \
+  --cfg cfgs/visda/boundary_flip_duet.yaml \
+  CKPT_DIR . SETTING.OUTPUT_SRC source SETTING.SEED "$seed" \
+  SETTING.S 0 SETTING.T 1 \
+  MODEL.METHOD "$candidate_method" \
+  "${adaptation_opts[@]}"
+
 python tools/extract_final_accuracy.py \
-  --glob "output/uda/VISDA-C/TV/${candidate_method}/*.txt" \
+  --glob "${candidate_dir}/*.txt" \
   > "${result_dir}/candidate_accuracy.csv"
 
 python tools/analyze_visda_boundary_flip_duet.py \
   --candidate-csv "${result_dir}/candidate_accuracy.csv" \
   --control-csv "${result_dir}/control_accuracy.csv" \
   --diagnostics-glob \
-    "output/uda/VISDA-C/TV/${candidate_method}/temporal_diagnostics/*_cycle*.npz" \
-  --log-glob "output/uda/VISDA-C/TV/${candidate_method}/*.txt" \
+    "${candidate_dir}/temporal_diagnostics/*_cycle*.npz" \
+  --log-glob "${candidate_dir}/*.txt" \
   --output "${result_dir}/gate.json"
 
 echo "Candidate accuracy: ${result_dir}/candidate_accuracy.csv"

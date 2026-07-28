@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-baseline_method="temporal_precision_head_seed2020_visda"
+baseline_method="temporal_precision_head_control_visda_seed2020"
 diagnostic_glob="output/uda/VISDA-C/TV/${baseline_method}/temporal_diagnostics/*_cycle*.npz"
 result_dir="output/uda/VISDA-C"
 oracle="$result_dir/temporal_precision_head_visda_seed2020_classwise_conflicts.json"
