@@ -17,6 +17,7 @@ ACCURACY_PATTERN = re.compile(
 )
 
 CONFIG_PATTERNS = {
+    "duet_fcp_power": r"POWER",
     "calib_power": r"CALIB_POWER",
     "pl_stable_cycles": r"PL_STABLE_CYCLES",
     "pl_memory_warmup_cycles": r"PL_MEMORY_WARMUP_CYCLES",
@@ -25,8 +26,6 @@ CONFIG_PATTERNS = {
     "target_head_start_cycle": r"TARGET_HEAD_START_CYCLE",
     "target_head_lr_mult": r"TARGET_HEAD_LR_MULT",
     "gtr_par": r"GTR_PAR",
-    "boundary_flip_logit_alpha": r"LOGIT_ALPHA",
-    "boundary_flip_loss_par": r"LOSS_PAR",
 }
 
 FIELDS = [

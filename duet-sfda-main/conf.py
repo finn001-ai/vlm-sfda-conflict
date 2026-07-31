@@ -280,51 +280,10 @@ _C.FAILURE_AUDIT.ENABLED = False
 _C.FAILURE_AUDIT.DIR = "failure_audit"
 _C.FAILURE_AUDIT.FEATURE_DTYPE = "float16"
 
-# --------------------------------- DCCL options ----------------------------- #
-_C.DCCL = CfgNode()
-# 当前主分支只保留 Stage14 control 与 Boundary-Flip candidate 共用的配置。
-# 清理前的完整实验注册表见 Git 标签：
-# archive/dccl-full-pre-prune-20260728
-_C.DCCL.ADAPTATION_LIST = ""
-_C.DCCL.LOSS_DIAG = False
-_C.DCCL.CALIB_POWER = 0.5
-_C.DCCL.PL_STABLE_CYCLES = 2
-_C.DCCL.PL_MEMORY_WARMUP_CYCLES = 1
-_C.DCCL.PL_MEMORY_MIN_CONF = 0.0
-_C.DCCL.TARGET_HEAD_MIX = 0.3
-_C.DCCL.TARGET_HEAD_START_CYCLE = 1
-_C.DCCL.TARGET_HEAD_LR_MULT = 1.0
-_C.DCCL.EPSILON = 1e-6
-_C.DCCL.GTF_STRENGTH = 0.5
-_C.DCCL.GTF_GRAPH_K = 15
-_C.DCCL.GTF_TEMPERATURE = 0.07
-_C.DCCL.GTF_ALPHA = 0.9
-_C.DCCL.GTF_STEPS = 20
-_C.DCCL.GTF_CHUNK_SIZE = 512
-_C.DCCL.GTF_ANCHOR_RATIO = 0.5
-_C.DCCL.GTF_ANCHOR_MIN_PER_CLASS = 5
-_C.DCCL.GTR_PAR = 0.0
-_C.DCCL.GTR_STABLE_CYCLES = 2
-_C.DCCL.GTR_MEMORY = "reversible"
-_C.DCCL.GTR_MIN_GRAPH_CONF = 0.05
-_C.DCCL.GTR_MIN_DISAGREEMENT = 0.25
-
-# ------------------------- Boundary-Flip DUET options ---------------------- #
-# Dynamic class statistics only generate proposals.  A proposal is supervised
-# after semantic, view-support, pair-budget, and temporal-stability gates pass.
-_C.BOUNDARY_FLIP = CfgNode()
-_C.BOUNDARY_FLIP.ENABLED = False
-_C.BOUNDARY_FLIP.START_CYCLE = 1
-_C.BOUNDARY_FLIP.LOGIT_ALPHA = 0.15
-_C.BOUNDARY_FLIP.MIN_ADJUSTED_CONFIDENCE = 0.25
-_C.BOUNDARY_FLIP.MIN_MARGIN = 0.0
-_C.BOUNDARY_FLIP.SEMANTIC_THRESHOLD = 0.0
-_C.BOUNDARY_FLIP.STABLE_CYCLES = 2
-_C.BOUNDARY_FLIP.MAX_SWITCHES = 0
-_C.BOUNDARY_FLIP.MAX_PER_PAIR = 64
-_C.BOUNDARY_FLIP.MIN_WEIGHT = 0.05
-_C.BOUNDARY_FLIP.LOSS_PAR = 0.05
-_C.BOUNDARY_FLIP.NEGATIVE_WEIGHT = 0.5
+# --------------------------- DUET-FCP options ----------------------------- #
+_C.DUET_FCP = CfgNode()
+# source/CLIP 两路只在第 1 个 cycle 使用的 prior 强度。
+_C.DUET_FCP.POWER = 0.5
 
 # --------------------------------- TSD options ----------------------------- #
 _C.TSD = CfgNode()

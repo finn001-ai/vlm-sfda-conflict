@@ -82,15 +82,11 @@ python tools/extract_final_accuracy.py \
   --selection peak \
   > "$result_dir/plmatch_visda_proxy25_seed2020_accuracy.csv"
 
-python tools/summarize_visda_temporal_precision_head.py \
+python tools/summarize_visda_run.py \
   --glob "$log_glob" \
   --out "$result_dir/plmatch_visda_proxy25_seed2020_summary.json" \
   --csv-out "$result_dir/plmatch_visda_proxy25_seed2020_per_class.csv" \
   --class-names data/VISDA-C/classname.txt
 
-python tools/summarize_visda_plmatch_proxy_control.py \
-  --glob "$log_glob" \
-  --out "$result_dir/plmatch_visda_proxy25_seed2020_control.json"
-
 echo "==> Control complete"
-echo "Decision: $result_dir/plmatch_visda_proxy25_seed2020_control.json"
+echo "Summary: $result_dir/plmatch_visda_proxy25_seed2020_summary.json"

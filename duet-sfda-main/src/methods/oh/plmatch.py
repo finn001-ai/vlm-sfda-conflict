@@ -32,6 +32,7 @@ from data.domain_datasets import domain_datasets
 from sklearn.metrics import confusion_matrix
 from src.utils.adaptation_lists import load_adaptation_and_evaluation_rows
 from src.utils.failure_audit import save_failure_audit_snapshot
+from src.utils.first_cycle_prior import apply_first_cycle_prior
 
 logger = logging.getLogger(__name__)
 
@@ -355,7 +356,21 @@ def spectral_entropy(text_features, EPS=1e-9):
     return spectral_ent
 
 
-def train_target(cfg):
+def train_target(cfg, *, first_cycle_prior=False):
+    """训练原始 DUET，或仅增加首轮 prior 的 DUET-FCP。
+
+    ``first_cycle_prior=False`` 是发布版 DUET 的原始路径。DUET-FCP 入口只把
+    该参数设为 ``True``；stable memory、target head、graph teacher 和 GTR
+    均不在本文件中，因此不会混入候选。
+    """
+    if first_cycle_prior and cfg.DUET_FCP.POWER < 0:
+        raise ValueError("DUET_FCP.POWER must be non-negative")
+    logging.info(
+        "DUET first-cycle prior: enabled={}; power={:.3f}".format(
+            bool(first_cycle_prior),
+            float(cfg.DUET_FCP.POWER) if first_cycle_prior else 0.0,
+        )
+    )
     clip_model, preprocess, _ = clip.load(cfg.ACTIVE.ARCH)
     clip_model.float()
     text_inputs = clip_pre_text(cfg)
@@ -434,7 +449,13 @@ def train_target(cfg):
         # netC.eval()
         label_result = obtain_label(
             dset_loaders['test_aug'], netF, netB, netC, text_inputs, text_features, clip_model, prev_label_mask,
-            curr_cycle, return_diagnostics=cfg.FAILURE_AUDIT.ENABLED,
+            curr_cycle,
+            return_diagnostics=cfg.FAILURE_AUDIT.ENABLED,
+            first_cycle_prior=first_cycle_prior,
+            prior_power=(
+                float(cfg.DUET_FCP.POWER) if first_cycle_prior else 0.0
+            ),
+            prior_epsilon=float(cfg.ACTIVE.EPSILON),
         )
         if cfg.FAILURE_AUDIT.ENABLED:
             (
@@ -593,6 +614,9 @@ def obtain_label(
     prev_label_mask,
     curr_cycle,
     return_diagnostics=False,
+    first_cycle_prior=False,
+    prior_power=0.5,
+    prior_epsilon=1e-6,
 ):
     # class_logit_bias = get_class_bias(netF, netB, netC)
     start_test = True
@@ -633,6 +657,19 @@ def obtain_label(
 
     all_output = nn.Softmax(dim=1)(all_output)
     clip_all_output = nn.Softmax(dim=1)(all_clip_score).cpu()
+    if first_cycle_prior:
+        all_output, clip_all_output, prior_active = apply_first_cycle_prior(
+            all_output,
+            clip_all_output,
+            curr_cycle=curr_cycle,
+            power=prior_power,
+            epsilon=prior_epsilon,
+        )
+        logging.info(
+            "DUET first-cycle prior schedule: cycle={}; active={}".format(
+                curr_cycle + 1, prior_active
+            )
+        )
 
     # Compute predictions for all_output and clip_all_output
     _, all_output_pred = torch.max(all_output, dim=1)

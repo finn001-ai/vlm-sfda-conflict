@@ -1,6 +1,6 @@
 MODEL:
   ARCH: resnet101
-  METHOD: temporal_precision_head
+  METHOD: duet_first_cycle_prior
 SETTING:
   DATASET: VISDA-C
   S: 0
@@ -31,13 +31,8 @@ ACTIVE:
   FINE_LR: 1e-7
   Q_VALUE: 1.05
   BETA: 0.99
-  KL_PAR: 0.4
   CON_PAR: 0.2
-DCCL:
-  # Stage14 control；VisDA 完整训练保持 ADAPTATION_LIST 为空。
+  KL_PAR: 0.4
   ADAPTATION_LIST: ""
-  PL_STABLE_CYCLES: 2
-  PL_MEMORY_WARMUP_CYCLES: 1
-  TARGET_HEAD_MIX: 0.3
-  TARGET_HEAD_START_CYCLE: 1
-  GTR_PAR: 0.05
+DUET_FCP:
+  POWER: 0.5

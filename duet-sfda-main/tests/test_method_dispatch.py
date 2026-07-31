@@ -3,13 +3,18 @@ from pathlib import Path
 
 
 class MethodDispatchTest(unittest.TestCase):
-    def test_only_stage14_control_alias_uses_dccl_dispatch(self):
+    def test_duet_fcp_uses_dedicated_thin_wrapper(self):
         entrypoint = Path("image_target_of_oh_vs.py").read_text()
 
         self.assertIn(
-            'cfg.MODEL.METHOD.startswith("temporal_precision_head_control_")',
+            'cfg.MODEL.METHOD.startswith("duet_first_cycle_prior_")',
             entrypoint,
         )
+        self.assertIn(
+            "import src.methods.oh.duet_first_cycle_prior as DUET_FCP",
+            entrypoint,
+        )
+        self.assertNotIn("import src.methods.oh.dccl", entrypoint)
         self.assertNotIn('"reciprocal_boundary"', entrypoint)
         self.assertNotIn("import src.methods.oh.accd", entrypoint)
         self.assertIn("Unknown adaptation method", entrypoint)
@@ -26,26 +31,9 @@ class MethodDispatchTest(unittest.TestCase):
         self.assertIn('ACTIVE.ADAPTATION_LIST "$proxy_list"', script)
         self.assertIn('if [ "$checkpoint_count" -ne 16 ]', script)
 
-    def test_boundary_flip_variants_use_dedicated_dispatch(self):
+    def test_boundary_flip_dispatch_is_removed(self):
         entrypoint = Path("image_target_of_oh_vs.py").read_text()
-        self.assertIn(
-            'cfg.MODEL.METHOD.startswith("boundary_flip_duet_")',
-            entrypoint,
-        )
-        script = Path(
-            "tools/run_office_home_boundary_flip_duet_preflight.sh"
-        ).read_text()
-        self.assertIn(
-            "--cfg cfgs/office-home/boundary_flip_duet.yaml", script
-        )
-        self.assertIn("analyze_boundary_flip_duet.py", script)
-        visda_script = Path(
-            "tools/run_visda_boundary_flip_duet.sh"
-        ).read_text()
-        self.assertIn("--cfg cfgs/visda/boundary_flip_duet.yaml", visda_script)
-        self.assertIn("analyze_visda_boundary_flip_duet.py", visda_script)
-        self.assertIn('rm -rf -- "$candidate_dir"', visda_script)
-        self.assertNotIn("Move its output directory aside", visda_script)
+        self.assertNotIn("boundary_flip", entrypoint.lower())
 
 
 if __name__ == "__main__":

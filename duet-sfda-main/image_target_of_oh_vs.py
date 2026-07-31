@@ -18,9 +18,8 @@ import src.methods.oh.plue as PLUE
 import src.methods.oh.adacontrast as ADACONTRAST
 import src.methods.oh.source as SOURCE
 import src.methods.oh.plmatch as PLMATCH
-import src.methods.oh.dccl as DCCL
+import src.methods.oh.duet_first_cycle_prior as DUET_FCP
 import src.methods.oh.plum as PLUM
-import src.methods.oh.boundary_flip_duet as BOUNDARY_FLIP_DUET
 
 from conf import cfg, load_cfg_from_args
 
@@ -105,12 +104,6 @@ if __name__ == "__main__":
         print("training source model")
         acc = SOURCE.train_source(cfg)
 
-    elif (
-        cfg.MODEL.METHOD == "boundary_flip_duet"
-        or cfg.MODEL.METHOD.startswith("boundary_flip_duet_")
-    ):
-        print("using Boundary-Flip DUET method")
-        acc = BOUNDARY_FLIP_DUET.train_target(cfg)
 
     elif (
         cfg.MODEL.METHOD in {"plmatch", "plmatch_ref12"}
@@ -120,11 +113,11 @@ if __name__ == "__main__":
         acc = PLMATCH.train_target(cfg)
 
     elif (
-        cfg.MODEL.METHOD == "temporal_precision_head"
-        or cfg.MODEL.METHOD.startswith("temporal_precision_head_control_")
+        cfg.MODEL.METHOD == "duet_first_cycle_prior"
+        or cfg.MODEL.METHOD.startswith("duet_first_cycle_prior_")
     ):
-        print("using Stage14 temporal precision target head")
-        acc = DCCL.train_target(cfg)
+        print("using DUET with first-cycle prior")
+        acc = DUET_FCP.train_target(cfg)
 
     elif cfg.MODEL.METHOD == "plum":
         print("using plum method")

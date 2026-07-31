@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Extract VisDA-C mean-class and per-class Stage14 checkpoint results."""
+"""Extract generic VisDA-C mean-class and per-class checkpoint results."""
 
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ def parse_records(text: str) -> list[dict]:
             }
         )
     if not records:
-        raise ValueError("No VisDA-C Stage14 accuracy records found")
+        raise ValueError("No VisDA-C accuracy records found")
     return records
 
 
@@ -84,7 +84,7 @@ def summarize(records: list[dict], class_names: list[str]) -> dict:
     final = records[-1]
     peak = max(records, key=lambda item: item["accuracy"])
     return {
-        "decision": "visda_stage14_run_complete",
+        "decision": "visda_run_complete",
         "metric": "mean per-class accuracy",
         "selection_warning": "peak reads validation labels and is oracle-only",
         "num_checkpoints": len(records),

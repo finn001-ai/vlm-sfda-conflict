@@ -1,13 +1,13 @@
 import unittest
 
-from tools.summarize_visda_temporal_precision_head import (
+from tools.summarize_visda_run import (
     DEFAULT_CLASSES,
     parse_records,
     summarize,
 )
 
 
-class VisDAStage14SummaryTest(unittest.TestCase):
+class VisDARunSummaryTest(unittest.TestCase):
     def test_extracts_final_peak_and_per_class_accuracy(self):
         text = """
 Task: TV, Iter:10/40; Cycle: 8/8; Accuracy = 80.00%; classifier_loss = 1

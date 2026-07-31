@@ -1,5 +1,8 @@
 # Stage14 VisDA 完整数据因果消融
 
+> 历史报告：相关运行代码已从当前 `main` 删除，请从 Git 标签
+> `archive/dccl-full-pre-prune-20260728` 查阅。
+
 本实验保留 Stage14，不加入 DINO、CLIP 之外的新视觉模块，也不固定
 `car/truck` 等目标类别。它只回答两个问题：
 

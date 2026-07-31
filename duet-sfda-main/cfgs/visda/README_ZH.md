@@ -1,24 +1,18 @@
 # VisDA 当前研究入口
 
-本目录的 DCCL/Boundary-Flip 主线只保留两个 YAML：
+当前保留两个严格匹配的 YAML：
 
-- `temporal_precision_head.yaml`：Stage14 matched control；
-- `boundary_flip_duet.yaml`：相同宿主，仅额外启用 Boundary-Flip。
+- `plmatch.yaml`：原始 DUET；
+- `duet_first_cycle_prior.yaml`：原始 DUET 加且仅加首轮 prior。
 
-直接覆盖并运行 matched control 与 candidate：
-
-```bash
-bash tools/run_visda_boundary_flip_duet.sh
-```
-
-脚本只会删除它自己命名的两个实验输出目录，不会触碰其他结果。若已有可用
-control，可使用：
+先运行一次 25% DUET control，再运行候选：
 
 ```bash
-RUN_CONTROL=0 bash tools/run_visda_boundary_flip_duet.sh
+bash tools/run_visda_plmatch_proxy25_control.sh
+bash tools/run_visda_duet_first_cycle_prior_proxy25.sh
 ```
 
-清理前的实验 YAML、脚本和完整代码统一保存在 Git 标签：
+Stage14、Boundary-Flip 和更早实验统一保存在 Git 标签：
 
 ```text
 archive/dccl-full-pre-prune-20260728

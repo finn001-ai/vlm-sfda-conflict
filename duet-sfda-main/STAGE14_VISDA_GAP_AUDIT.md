@@ -1,5 +1,8 @@
 # VisDA Stage14 Gap Audit
 
+> 历史报告：相关运行代码已从当前 `main` 删除，请从 Git 标签
+> `archive/dccl-full-pre-prune-20260728` 查阅。
+
 This is not a Stage24 method. Stage14 remains the strongest DCCL version and is
 a positive Office-Home result. This audit only diagnoses why its gain reverses
 on VisDA-C. It compares Stage14 with a matched official DUET control and does

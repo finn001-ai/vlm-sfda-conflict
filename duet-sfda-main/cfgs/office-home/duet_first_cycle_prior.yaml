@@ -1,10 +1,10 @@
 MODEL:
   ARCH: resnet50
-  METHOD: temporal_precision_head
+  METHOD: duet_first_cycle_prior
 SETTING:
   DATASET: office-home
   S: 0
-  T: 1
+  T: 2
   SEED: 2020
   OUTPUT_SRC: source
 OPTIM:
@@ -33,10 +33,5 @@ ACTIVE:
   BETA: 0.99
   KL_PAR: 0.4
   CON_PAR: 0.2
-DCCL:
-  # Stage14 control：其余参数直接使用 conf.py 的固定主线默认值。
-  PL_STABLE_CYCLES: 2
-  PL_MEMORY_WARMUP_CYCLES: 1
-  TARGET_HEAD_MIX: 0.3
-  TARGET_HEAD_START_CYCLE: 1
-  GTR_PAR: 0.05
+DUET_FCP:
+  POWER: 0.5
