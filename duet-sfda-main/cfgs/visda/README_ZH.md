@@ -12,6 +12,20 @@ bash tools/run_visda_plmatch_proxy25_control.sh
 bash tools/run_visda_duet_first_cycle_prior_proxy25.sh
 ```
 
+直接运行完整 8-cycle DUET-FCP：
+
+```bash
+bash tools/run_visda_duet_first_cycle_prior_full8.sh
+```
+
+Office-Home 12 任务纯 DUET 完成后，统一表格写入
+`output/uda/benchmark_tables/`：
+
+```bash
+bash tools/run_office_home_plmatch_all.sh
+python tools/build_duet_benchmark_tables.py
+```
+
 Stage14、Boundary-Flip 和更早实验统一保存在 Git 标签：
 
 ```text

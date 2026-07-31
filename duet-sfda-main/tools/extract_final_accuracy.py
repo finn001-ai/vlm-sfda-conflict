@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""从训练日志提取最终/峰值精度和当前 Stage14 配置。"""
+"""从训练日志提取最终/峰值精度和当前方法配置。"""
 
 from __future__ import annotations
 
@@ -18,14 +18,6 @@ ACCURACY_PATTERN = re.compile(
 
 CONFIG_PATTERNS = {
     "duet_fcp_power": r"POWER",
-    "calib_power": r"CALIB_POWER",
-    "pl_stable_cycles": r"PL_STABLE_CYCLES",
-    "pl_memory_warmup_cycles": r"PL_MEMORY_WARMUP_CYCLES",
-    "pl_memory_min_conf": r"PL_MEMORY_MIN_CONF",
-    "target_head_mix": r"TARGET_HEAD_MIX",
-    "target_head_start_cycle": r"TARGET_HEAD_START_CYCLE",
-    "target_head_lr_mult": r"TARGET_HEAD_LR_MULT",
-    "gtr_par": r"GTR_PAR",
 }
 
 FIELDS = [

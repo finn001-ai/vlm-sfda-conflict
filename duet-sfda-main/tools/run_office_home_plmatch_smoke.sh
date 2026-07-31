@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Baseline smoke experiments matching the DCCL smoke split:
-# Art -> {Clipart, Product, RealWorld}.
+# Pure-DUET smoke experiments: Art -> {Clipart, Product, RealWorld}.
 
 for t in 1 2 3; do
   echo "==> PLMatch smoke run: S=0, T=${t}"
