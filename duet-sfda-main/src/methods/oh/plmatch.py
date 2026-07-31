@@ -623,15 +623,17 @@ def obtain_label(
     with torch.no_grad():
         iter_test = iter(loader)
         for _ in range(len(loader)):
-            inputs_test, labels, _ = next(iter_test)
+            inputs_test, labels, sample_index = next(iter_test)
             weak_x = inputs_test[1].cuda()
-            # strong_x = inputs_test[2].cuda()
 
             weak_feas = netB(netF(weak_x))
-            # strong_feas = netB(netF(strong_x))
 
             weak_outputs = netC(weak_feas)
-            # strong_outputs = netC(strong_feas)
+            if return_diagnostics:
+                # 审计模式额外记录 strong-view 预测，用于判断后期模型对
+                # 首轮伪标签的反对是否稳定；默认训练路径不会执行这次前向。
+                strong_x = inputs_test[2].cuda()
+                strong_outputs = netC(netB(netF(strong_x)))
 
             if text_features is not None:
                 clip_score = clip_text(clip_model, text_features, weak_x)
@@ -645,6 +647,8 @@ def obtain_label(
                 all_label = labels.float()
                 if return_diagnostics:
                     all_task_features = weak_feas.float().cpu()
+                    all_strong_output = strong_outputs.float().cpu()
+                    all_sample_index = sample_index.long().cpu()
                 start_test = False
             else:
                 all_output = torch.cat((all_output, weak_outputs.float().cpu()), 0)
@@ -654,9 +658,17 @@ def obtain_label(
                     all_task_features = torch.cat(
                         (all_task_features, weak_feas.float().cpu()), 0
                     )
+                    all_strong_output = torch.cat(
+                        (all_strong_output, strong_outputs.float().cpu()), 0
+                    )
+                    all_sample_index = torch.cat(
+                        (all_sample_index, sample_index.long().cpu()), 0
+                    )
 
     all_output = nn.Softmax(dim=1)(all_output)
     clip_all_output = nn.Softmax(dim=1)(all_clip_score).cpu()
+    if return_diagnostics:
+        strong_task_prob = nn.Softmax(dim=1)(all_strong_output)
     if first_cycle_prior:
         all_output, clip_all_output, prior_active = apply_first_cycle_prior(
             all_output,
@@ -740,8 +752,10 @@ def obtain_label(
         "clip_label": clip_all_output_pred.long(),
         "task_prob": all_output.float(),
         "clip_prob": clip_all_output.float(),
+        "strong_task_prob": strong_task_prob.float(),
         "target_label": all_label.long(),
         "task_feature": all_task_features.float(),
+        "sample_index": all_sample_index.long(),
     }
     return result + (audit_payload,)
 
