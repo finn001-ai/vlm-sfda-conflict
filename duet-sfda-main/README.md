@@ -63,6 +63,19 @@ After training the source model, modify `conf.py` to set `${CKPT_DIR}` to the di
 CUDA_VISIBLE_DEVICES=0 python image_target_of_oh_vs.py --cfg "cfgs/office-home/plmatch.yaml" SETTING.S 0 SETTING.T 1
 ```
 
+### CT-DUET VisDA-C 实验
+
+CT-DUET 保留发布版 DUET 的正伪标签、weak/strong consistency、CLIP KL、
+TMI 和 monotonic memory。对于尚未准入且 task/CLIP top-1 冲突的样本，
+它把候选对之外的 `C-2` 个类别作为互补标签；样本后续达成一致后自动
+转回原始 DUET 正标签训练。该路径不使用第三方视觉模型或额外分类头。
+
+脚本会直接覆盖它自己的固定输出目录：
+
+```bash
+bash tools/run_visda_ct_duet.sh
+```
+
 ### DomainNet-126
 
 ```bash
