@@ -121,6 +121,10 @@ def test_cloud_entrypoint_is_frozen_forward_only_and_locks_before_labels() -> No
     assert 'str(cfg.ACTIVE.ARCH) != "ViT-B/32"' in audit
     assert '"optimizer_steps": 0' in audit
     assert '"training_authorized": False' in audit
+    assert audit.index('replay_weak_x = inputs[1].to(device)') < audit.index(
+        'weak_x = replay_weak_x[positions]'
+    )
+    assert '"complete_loader_batch_before_pilot_selection": True' in audit
     assert audit.index("lock_path.write_text") < audit.rindex(
         "_parse_labels_after_lock("
     )

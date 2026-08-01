@@ -472,19 +472,29 @@ def main() -> None:
         ]
         if not positions:
             continue
-        weak_x = inputs[1][positions].to(device)
+        # Replay the complete loader batch before selecting pilot rows.  CUDA
+        # convolution reductions can differ slightly when the exact same image
+        # is evaluated in a smaller batch; comparing a selected sub-batch would
+        # therefore conflate batch-shape numerics with weak-view reproducibility.
+        replay_weak_x = inputs[1].to(device)
         rows = np.asarray(
             [index_to_row[int(batch_indices[position])] for position in positions],
             dtype=np.int64,
         )
         with torch.no_grad():
-            replay_task_logits = net_c(net_b(net_f(weak_x)))
-            replay_clip_features = F.normalize(clip_model.encode_image(weak_x), dim=1)
+            replay_task_logits = net_c(net_b(net_f(replay_weak_x)))
+            replay_clip_features = F.normalize(
+                clip_model.encode_image(replay_weak_x), dim=1
+            )
             replay_clip_logits = (
                 clip_model.logit_scale.exp() * replay_clip_features @ text_features.t()
             )
-            replay_task_probability = torch.softmax(replay_task_logits, dim=1).cpu().numpy()
-            replay_clip_probability = torch.softmax(replay_clip_logits, dim=1).cpu().numpy()
+            replay_task_probability = (
+                torch.softmax(replay_task_logits, dim=1)[positions].cpu().numpy()
+            )
+            replay_clip_probability = (
+                torch.softmax(replay_clip_logits, dim=1)[positions].cpu().numpy()
+            )
         task_error = float(
             np.max(np.abs(replay_task_probability - selected_task_probability[rows]))
         )
@@ -498,6 +508,7 @@ def main() -> None:
                 "Seeded weak-view replay changed the locked predictions: "
                 f"task_error={task_error}, clip_error={clip_error}"
             )
+        weak_x = replay_weak_x[positions]
         batch_task_masked, batch_clip_masked = _masked_probabilities(
             weak_x, mask_tensor, net_f, net_b, net_c, clip_model, text_features
         )
@@ -606,6 +617,7 @@ def main() -> None:
             "target_label_thresholds": False,
         },
         "weak_view_replay": {
+            "complete_loader_batch_before_pilot_selection": True,
             "max_task_probability_error": max_task_replay_error,
             "max_clip_probability_error": max_clip_replay_error,
             "maximum_allowed_error": REPRODUCTION_MAX_ERROR,
