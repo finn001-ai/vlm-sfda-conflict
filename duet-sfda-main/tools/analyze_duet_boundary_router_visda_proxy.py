@@ -22,6 +22,7 @@ def analyze(
     *,
     min_final_improvement=0.20,
     max_hard_mean_regression=0.0,
+    control_provenance="matched_current_output_hashes",
 ):
     control_final = control["final"]
     candidate_final = candidate["final"]
@@ -54,6 +55,12 @@ def analyze(
         "hard_mean_noninferior": hard_mean_delta >= -max_hard_mean_regression,
     }
     passed = all(checks.values())
+    provenance_limitations = []
+    if control_provenance == "archived_2026-07-23_source_and_list_hashes_unavailable":
+        provenance_limitations.append(
+            "The archived control preserves checksummed log/summary and its run "
+            "contract, but not the historical source-checkpoint or proxy-list hashes."
+        )
     return {
         "decision": (
             "pass_boundary_router_proxy_gate"
@@ -61,6 +68,8 @@ def analyze(
             else "fail_boundary_router_proxy_gate"
         ),
         "metric": "VisDA mean per-class accuracy at final checkpoint",
+        "control_provenance": control_provenance,
+        "control_provenance_limitations": provenance_limitations,
         "control_final": control_final["accuracy"],
         "candidate_final": candidate_final["accuracy"],
         "final_delta": round(final_delta, 4),
@@ -85,6 +94,14 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--control-summary", required=True)
     parser.add_argument("--candidate-summary", required=True)
+    parser.add_argument(
+        "--control-provenance",
+        choices=(
+            "matched_current_output_hashes",
+            "archived_2026-07-23_source_and_list_hashes_unavailable",
+        ),
+        default="matched_current_output_hashes",
+    )
     parser.add_argument("--out", required=True)
     return parser.parse_args()
 
@@ -93,7 +110,11 @@ def main():
     args = parse_args()
     control = json.loads(Path(args.control_summary).read_text())
     candidate = json.loads(Path(args.candidate_summary).read_text())
-    report = analyze(control, candidate)
+    report = analyze(
+        control,
+        candidate,
+        control_provenance=args.control_provenance,
+    )
     output = Path(args.out)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2) + "\n")

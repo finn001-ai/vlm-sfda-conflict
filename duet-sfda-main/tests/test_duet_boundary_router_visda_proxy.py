@@ -46,6 +46,21 @@ class DuetBoundaryRouterVisDAProxyTest(unittest.TestCase):
 
         self.assertFalse(result["checks"]["matched_contract"])
 
+    def test_archived_control_provenance_is_explicit_not_silently_dropped(self):
+        result = analyze(
+            self.control,
+            summary(88.20, [90.2] * 12),
+            control_provenance=(
+                "archived_2026-07-23_source_and_list_hashes_unavailable"
+            ),
+        )
+
+        self.assertEqual(
+            result["control_provenance"],
+            "archived_2026-07-23_source_and_list_hashes_unavailable",
+        )
+        self.assertEqual(len(result["control_provenance_limitations"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

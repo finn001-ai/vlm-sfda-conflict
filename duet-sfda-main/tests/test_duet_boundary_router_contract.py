@@ -38,6 +38,16 @@ class DuetBoundaryRouterContractTest(unittest.TestCase):
             self.assertIn(path, control_runner)
             self.assertIn(path, candidate_runner)
         self.assertIn('cmp -s "$current_contract_hash" "$control_contract_hash"', candidate_runner)
+        self.assertIn(
+            "sfda_conflict_visda_proxy_loss_audit_2026-07-23",
+            candidate_runner,
+        )
+        self.assertNotIn(
+            "Run once: bash tools/run_visda_plmatch_proxy25_control.sh",
+            candidate_runner,
+        )
+        self.assertIn("verify_archive_file", candidate_runner)
+        self.assertIn("historical_control_commit=\"91ef7df\"", candidate_runner)
 
 
 if __name__ == "__main__":

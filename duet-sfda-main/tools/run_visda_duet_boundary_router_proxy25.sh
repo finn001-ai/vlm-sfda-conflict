@@ -7,6 +7,11 @@ proxy_list="data/VISDA-C/validation_proxy25_seed2020_list.txt"
 candidate_dir="output/uda/VISDA-C/TV/${method}"
 result_dir="output/uda/VISDA-C"
 control_summary="${CONTROL_SUMMARY:-${result_dir}/plmatch_visda_proxy25_seed2020_summary.json}"
+archive_control_dir="${ARCHIVED_CONTROL_DIR:-../archive/sfda_conflict_visda_proxy_loss_audit_2026-07-23}"
+archive_control_summary="${archive_control_dir}/plmatch_visda_proxy25_seed2020_summary.json"
+archive_control_log="${archive_control_dir}/plmatch_proxy25_control_terminal_record.txt"
+archive_checksums="${archive_control_dir}/SHA256SUMS"
+historical_control_commit="91ef7df"
 candidate_summary="${result_dir}/duet_boundary_router_visda_proxy25_seed2020_summary.json"
 gate="${result_dir}/duet_boundary_router_visda_proxy25_seed2020_gate.json"
 control_source_hash="${result_dir}/plmatch_visda_proxy25_seed2020_source_sha256.txt"
@@ -15,6 +20,7 @@ control_contract_hash="${result_dir}/plmatch_visda_proxy25_seed2020_contract_sha
 candidate_source_hash="${result_dir}/duet_boundary_router_visda_proxy25_seed2020_source_sha256.txt"
 candidate_proxy_hash="${result_dir}/duet_boundary_router_visda_proxy25_seed2020_proxy_sha256.txt"
 candidate_contract_hash="${result_dir}/duet_boundary_router_visda_proxy25_seed2020_contract_sha256.txt"
+control_provenance="matched_current_output_hashes"
 
 for path in \
   data/VISDA-C/validation_list.txt \
@@ -28,23 +34,91 @@ for path in \
   fi
 done
 
-for path in \
-  "$control_summary" \
-  "$control_source_hash" \
-  "$control_proxy_hash" \
-  "$control_contract_hash"; do
-  if [ ! -f "$path" ]; then
-    echo "Missing matched DUET control artifact: $path" >&2
-    echo "Run once: bash tools/run_visda_plmatch_proxy25_control.sh" >&2
-    exit 1
-  fi
-done
-
 expected_proxy=$(mktemp)
 current_source_hash=$(mktemp)
 current_proxy_hash=$(mktemp)
 current_contract_hash=$(mktemp)
-trap 'rm -f "$expected_proxy" "$current_source_hash" "$current_proxy_hash" "$current_contract_hash"' EXIT
+historical_plmatch=$(mktemp)
+trap 'rm -f "$expected_proxy" "$current_source_hash" "$current_proxy_hash" "$current_contract_hash" "$historical_plmatch"' EXIT
+
+current_control_complete=true
+for artifact in \
+  "$control_summary" \
+  "$control_source_hash" \
+  "$control_proxy_hash" \
+  "$control_contract_hash"; do
+  if [ ! -f "$artifact" ]; then
+    current_control_complete=false
+  fi
+done
+
+if [ "$current_control_complete" = false ]; then
+  for artifact in \
+    "$archive_control_summary" \
+    "$archive_control_log" \
+    "$archive_checksums"; do
+    if [ ! -f "$artifact" ]; then
+      echo "Missing archived DUET control evidence: $artifact" >&2
+      exit 1
+    fi
+  done
+
+  verify_archive_file() {
+    local filename="$1"
+    local expected_sha
+    local actual_sha
+    expected_sha=$(awk -v filename="$filename" '$2 == filename {print $1}' "$archive_checksums")
+    actual_sha=$(sha256sum "${archive_control_dir}/${filename}" | awk '{print $1}')
+    if [ -z "$expected_sha" ] || [ "$actual_sha" != "$expected_sha" ]; then
+      echo "Archived control checksum failed: $filename" >&2
+      exit 1
+    fi
+  }
+  verify_archive_file "plmatch_visda_proxy25_seed2020_summary.json"
+  verify_archive_file "plmatch_proxy25_control_terminal_record.txt"
+
+  python - "$archive_control_summary" <<'PY'
+import json
+import sys
+
+summary = json.load(open(sys.argv[1]))
+final = summary.get("final", {})
+if not (
+    summary.get("num_checkpoints") == 16
+    and final.get("cycle") == 4
+    and final.get("accuracy") == 87.93
+):
+    raise SystemExit("Archived DUET control contract is not the predeclared 87.93 run")
+PY
+  if [ "$(grep -c "Task: TV" "$archive_control_log")" -ne 16 ]; then
+    echo "Archived DUET control log does not contain 16 checkpoints" >&2
+    exit 1
+  fi
+  if ! grep -q \
+    "PLMatch adaptation proxy list: data/VISDA-C/validation_proxy25_seed2020_list.txt; adaptation_samples=13847; full_evaluation_samples=55388" \
+    "$archive_control_log"; then
+    echo "Archived DUET control does not match the 25% proxy/full-evaluation contract" >&2
+    exit 1
+  fi
+  if ! git show \
+    "${historical_control_commit}:duet-sfda-main/src/methods/oh/plmatch.py" \
+    > "$historical_plmatch"; then
+    echo "Cannot audit historical DUET control commit: $historical_control_commit" >&2
+    exit 1
+  fi
+  if ! grep -Fq \
+    "all_mix_output = (all_output + clip_all_output) / 2" \
+    "$historical_plmatch"; then
+    echo "Historical DUET control was not arithmetic probability fusion" >&2
+    exit 1
+  fi
+
+  control_summary="$archive_control_summary"
+  control_provenance="archived_2026-07-23_source_and_list_hashes_unavailable"
+  echo "==> Reusing archived arithmetic-DUET proxy control: final=87.93"
+  echo "    Provenance note: historical source/list byte hashes were not archived"
+fi
+
 python tools/prepare_visda_proxy_subset.py \
   --input data/VISDA-C/validation_list.txt \
   --output "$expected_proxy" \
@@ -72,17 +146,19 @@ sha256sum \
   src/methods/oh/plmatch.py \
   src/utils/conflict_boundary.py \
   > "$current_contract_hash"
-if ! cmp -s "$current_source_hash" "$control_source_hash"; then
-  echo "Source checkpoint hashes differ from the matched control" >&2
-  exit 1
-fi
-if ! cmp -s "$current_proxy_hash" "$control_proxy_hash"; then
-  echo "Proxy-list hash differs from the matched control" >&2
-  exit 1
-fi
-if ! cmp -s "$current_contract_hash" "$control_contract_hash"; then
-  echo "DUET code/config hashes differ from the matched control" >&2
-  exit 1
+if [ "$current_control_complete" = true ]; then
+  if ! cmp -s "$current_source_hash" "$control_source_hash"; then
+    echo "Source checkpoint hashes differ from the matched control" >&2
+    exit 1
+  fi
+  if ! cmp -s "$current_proxy_hash" "$control_proxy_hash"; then
+    echo "Proxy-list hash differs from the matched control" >&2
+    exit 1
+  fi
+  if ! cmp -s "$current_contract_hash" "$control_contract_hash"; then
+    echo "DUET code/config hashes differ from the matched control" >&2
+    exit 1
+  fi
 fi
 
 if [ -d "$candidate_dir" ]; then
@@ -90,6 +166,7 @@ if [ -d "$candidate_dir" ]; then
   exit 1
 fi
 
+mkdir -p "$result_dir"
 cp "$current_source_hash" "$candidate_source_hash"
 cp "$current_proxy_hash" "$candidate_proxy_hash"
 cp "$current_contract_hash" "$candidate_contract_hash"
@@ -140,6 +217,7 @@ python tools/summarize_visda_run.py \
 python tools/analyze_duet_boundary_router_visda_proxy.py \
   --control-summary "$control_summary" \
   --candidate-summary "$candidate_summary" \
+  --control-provenance "$control_provenance" \
   --out "$gate"
 
 echo "==> Gate: $gate"
