@@ -37,6 +37,11 @@ from src.utils.conflict_boundary import (
 )
 from src.utils.failure_audit import save_failure_audit_snapshot
 from src.utils.first_cycle_prior import apply_first_cycle_prior
+from src.utils.attribute_reliability import (
+    entropy_anchored_attribute_target,
+    pairwise_attribute_margin,
+)
+from src.utils.pairwise_attribute_audit import build_visda_attribute_prompt_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -360,7 +365,13 @@ def spectral_entropy(text_features, EPS=1e-9):
     return spectral_ent
 
 
-def train_target(cfg, *, first_cycle_prior=False, boundary_router=False):
+def train_target(
+    cfg,
+    *,
+    first_cycle_prior=False,
+    boundary_router=False,
+    attribute_reliability_kl=False,
+):
     """训练原始 DUET，或启用一个明确隔离的候选改动。
 
     ``first_cycle_prior=False`` 是发布版 DUET 的原始路径。DUET-FCP 入口只把
@@ -370,14 +381,28 @@ def train_target(cfg, *, first_cycle_prior=False, boundary_router=False):
     ``boundary_router=True`` 仅在首轮未准入冲突中，将固定 top fraction 的
     算术融合软分布替换为局部边界距离更大的完整 task 或 CLIP 分布。硬 CE
     mask、consistency、KL 和所有优化器均保持发布版 DUET 不变。
+
+    ``attribute_reliability_kl=True`` 只在首轮未准入冲突中，将原本的 CLIP
+    KL 软目标替换为离线审计锁定的属性可靠性后验。agreement、硬 CE mask、
+    consistency、损失权重和优化器均保持发布版 DUET 不变。
     """
-    if first_cycle_prior and boundary_router:
-        raise ValueError("first_cycle_prior and boundary_router are separate candidates")
+    candidate_count = sum(
+        bool(value)
+        for value in (first_cycle_prior, boundary_router, attribute_reliability_kl)
+    )
+    if candidate_count > 1:
+        raise ValueError("DUET candidate interventions must be run separately")
     if first_cycle_prior and cfg.DUET_FCP.POWER < 0:
         raise ValueError("DUET_FCP.POWER must be non-negative")
     boundary_fraction = float(cfg.DUET_BOUNDARY.TOP_FRACTION)
     if boundary_router and not 0.0 < boundary_fraction <= 1.0:
         raise ValueError("DUET_BOUNDARY.TOP_FRACTION must be in (0, 1]")
+    if attribute_reliability_kl and (
+        cfg.SETTING.DATASET != "VISDA-C" or str(cfg.ACTIVE.ARCH) != "ViT-B/32"
+    ):
+        raise ValueError(
+            "attribute-reliability KL is locked to VisDA-C with CLIP ViT-B/32"
+        )
     logging.info(
         "DUET first-cycle prior: enabled={}; power={:.3f}".format(
             bool(first_cycle_prior),
@@ -389,6 +414,10 @@ def train_target(cfg, *, first_cycle_prior=False, boundary_router=False):
             bool(boundary_router),
             boundary_fraction,
         )
+    )
+    logging.info(
+        "DUET attribute reliability KL: enabled={}; first_cycle_only=True; "
+        "target=unresolved_conflicts".format(bool(attribute_reliability_kl))
     )
     clip_model, preprocess, _ = clip.load(cfg.ACTIVE.ARCH)
     clip_model.float()
@@ -456,6 +485,39 @@ def train_target(cfg, *, first_cycle_prior=False, boundary_router=False):
 
     prev_label_mask = None
     text_features = None
+    attribute_text_features = None
+    if attribute_reliability_kl:
+        with open(cfg.name_file) as handle:
+            class_names = [
+                line.strip().replace("_", " ") for line in handle if line.strip()
+            ]
+        prompt_manifest = build_visda_attribute_prompt_manifest(class_names)
+        device = next(clip_model.parameters()).device
+        attribute_tokens = torch.cat(
+            [clip.tokenize(prompt) for prompt in prompt_manifest["flat_prompts"]]
+        ).to(device)
+        with torch.no_grad():
+            text_features = F.normalize(
+                clip_model.encode_text(text_inputs), dim=1
+            ).detach()
+            attribute_text_features = F.normalize(
+                clip_model.encode_text(attribute_tokens), dim=1
+            ).detach()
+        class_count, template_count, family_count = prompt_manifest["shape"]
+        attribute_text_features = attribute_text_features.reshape(
+            class_count,
+            template_count,
+            family_count,
+            -1,
+        )
+        logging.info(
+            "DUET attribute text contract: classes={}; templates={}; families={}; "
+            "target_labels=False; fitted_thresholds=False".format(
+                class_count,
+                template_count,
+                family_count,
+            )
+        )
     curr_cycle = 0
     # office-home : 1.0 / VisDA-C : 1.05
     q_value = cfg.ACTIVE.Q_VALUE
@@ -477,6 +539,8 @@ def train_target(cfg, *, first_cycle_prior=False, boundary_router=False):
             prior_epsilon=float(cfg.ACTIVE.EPSILON),
             boundary_router=boundary_router,
             boundary_top_fraction=boundary_fraction,
+            attribute_reliability_kl=attribute_reliability_kl,
+            attribute_text_features=attribute_text_features,
         )
         if cfg.FAILURE_AUDIT.ENABLED:
             (
@@ -484,7 +548,7 @@ def train_target(cfg, *, first_cycle_prior=False, boundary_router=False):
                 label_mask,
                 confi_imag,
                 confi_dis,
-                clip_soft,
+                kl_soft,
                 audit_payload,
             ) = label_result
             save_failure_audit_snapshot(
@@ -496,8 +560,8 @@ def train_target(cfg, *, first_cycle_prior=False, boundary_router=False):
                 **audit_payload,
             )
         else:
-            mem_label, label_mask, confi_imag, confi_dis, clip_soft = label_result
-        clip_soft = clip_soft.cuda()
+            mem_label, label_mask, confi_imag, confi_dis, kl_soft = label_result
+        kl_soft = kl_soft.cuda()
         mem_label = mem_label.cuda()
         prev_label_mask = label_mask
 
@@ -548,7 +612,7 @@ def train_target(cfg, *, first_cycle_prior=False, boundary_router=False):
                 if pred.size(0) != 0:
                     classifier_loss += nn.CrossEntropyLoss()(supervised_logits, pred) * cfg.ACTIVE.CLS_PAR
             # pseudo_output = weak_preds[filtered_idx]
-            clip_soft_batch = clip_soft[tar_idx]
+            clip_soft_batch = kl_soft[tar_idx]
             # mixed_soft_batch = confi_dis[tar_idx].cuda()
             # mi_loss = F.kl_div(weak_preds.log(), mixed_soft_batch, reduction="batchmean")
             mi_loss = F.kl_div(weak_preds.log(), clip_soft_batch, reduction="batchmean")
@@ -640,10 +704,15 @@ def obtain_label(
     prior_epsilon=1e-6,
     boundary_router=False,
     boundary_top_fraction=0.2,
+    attribute_reliability_kl=False,
+    attribute_text_features=None,
 ):
     # class_logit_bias = get_class_bias(netF, netB, netC)
     start_test = True
     collect_boundary = bool(boundary_router and curr_cycle == 0)
+    collect_attribute = bool(attribute_reliability_kl and curr_cycle == 0)
+    if collect_attribute and (text_features is None or attribute_text_features is None):
+        raise ValueError("attribute-reliability KL requires fixed text features")
     with torch.no_grad():
         iter_test = iter(loader)
         for _ in range(len(loader)):
@@ -659,7 +728,22 @@ def obtain_label(
                 strong_x = inputs_test[2].cuda()
                 strong_outputs = netC(netB(netF(strong_x)))
 
-            if text_features is not None:
+            if collect_attribute:
+                clip_image_feature = F.normalize(
+                    clip_model.encode_image(weak_x), dim=1
+                )
+                clip_score = (
+                    clip_model.logit_scale.exp()
+                    * clip_image_feature
+                    @ text_features.t()
+                )
+                batch_attribute_margin = pairwise_attribute_margin(
+                    clip_image_feature,
+                    attribute_text_features,
+                    weak_outputs.argmax(dim=1),
+                    clip_score.argmax(dim=1),
+                )
+            elif text_features is not None:
                 clip_score = clip_text(clip_model, text_features, weak_x)
             else:
                 clip_score, _ = clip_model(weak_x, text_inputs)
@@ -716,6 +800,8 @@ def obtain_label(
                 if collect_boundary:
                     all_task_radius = batch_task_radius.cpu()
                     all_clip_radius = batch_clip_radius.cpu()
+                if collect_attribute:
+                    all_attribute_margin = batch_attribute_margin.float().cpu()
                 if return_diagnostics:
                     all_task_features = weak_feas.float().cpu()
                     all_strong_output = strong_outputs.float().cpu()
@@ -731,6 +817,14 @@ def obtain_label(
                     )
                     all_clip_radius = torch.cat(
                         (all_clip_radius, batch_clip_radius.cpu()), 0
+                    )
+                if collect_attribute:
+                    all_attribute_margin = torch.cat(
+                        (
+                            all_attribute_margin,
+                            batch_attribute_margin.float().cpu(),
+                        ),
+                        0,
                     )
                 if return_diagnostics:
                     all_task_features = torch.cat(
@@ -773,6 +867,48 @@ def obtain_label(
         label_mask = prev_label_mask | (~prev_label_mask & matching_indices)
     else:
         label_mask = matching_indices
+
+    kl_soft_output = clip_all_output
+    if collect_attribute:
+        active_conflict = (~label_mask) & (~matching_indices)
+        conflict_count = int(active_conflict.sum().item())
+        if conflict_count <= 0:
+            raise RuntimeError("attribute-reliability KL found no active conflicts")
+        reliability = entropy_anchored_attribute_target(
+            all_output[active_conflict],
+            clip_all_output[active_conflict],
+            all_output_pred[active_conflict].long(),
+            clip_all_output_pred[active_conflict].long(),
+            all_attribute_margin[active_conflict],
+            clip_logit_scale=float(
+                clip_model.logit_scale.exp().detach().cpu().item()
+            ),
+        )
+        kl_soft_output = clip_all_output.clone()
+        kl_soft_output[active_conflict] = reliability["probability"]
+        changed_top1 = int(
+            (
+                reliability["probability"].argmax(dim=1)
+                != clip_all_output_pred[active_conflict]
+            )
+            .sum()
+            .item()
+        )
+        logging.info(
+            "DUET attribute reliability KL applied: cycle=1; "
+            "active_conflicts={}; changed_top1={}; mean_weight={:.6f}; "
+            "target_labels=False; fitted_thresholds=False".format(
+                conflict_count,
+                changed_top1,
+                float(reliability["attribute_weight"].mean().item()),
+            )
+        )
+    elif attribute_reliability_kl:
+        logging.info(
+            "DUET attribute reliability KL applied: cycle={}; "
+            "active_conflicts=0; changed_top1=0; mean_weight=0.000000; "
+            "first_cycle_only=True".format(curr_cycle + 1)
+        )
 
     # Filter predictions and labels based on the updated label mask
     valid_preds = all_output_pred[label_mask]
@@ -857,7 +993,7 @@ def obtain_label(
         label_mask,
         confi_imag,
         confi_dis,
-        clip_all_output,
+        kl_soft_output,
     )
     if not return_diagnostics:
         return result
@@ -924,8 +1060,7 @@ def clip_pre_text(cfg):
 def clip_text(model, text_features, inputs_test):
     with torch.no_grad():
         image_features = model.encode_image(inputs_test)
-    logit_scale = model.logit_scale.data
-    logit_scale = logit_scale.exp().cpu()
+    logit_scale = model.logit_scale.detach().exp()
     image_features = image_features / image_features.norm(dim=1, keepdim=True)
     logits = logit_scale * image_features @ text_features.t()
     return logits
