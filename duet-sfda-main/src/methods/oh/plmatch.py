@@ -33,6 +33,7 @@ from sklearn.metrics import confusion_matrix
 from src.utils.adaptation_lists import load_adaptation_and_evaluation_rows
 from src.utils.failure_audit import save_failure_audit_snapshot
 from src.utils.first_cycle_prior import apply_first_cycle_prior
+from src.utils.probability_fusion import fuse_probabilities
 
 logger = logging.getLogger(__name__)
 
@@ -715,7 +716,13 @@ def obtain_label(
     logging.info(log_str)
     # Combine outputs for confidence distribution and other uses
 
-    all_mix_output = (all_output + clip_all_output) / 2
+    fusion_mode = getattr(cfg.ACTIVE, "FUSION", "arithmetic")
+    all_mix_output = fuse_probabilities(
+        all_output,
+        clip_all_output,
+        mode=fusion_mode,
+    )
+    logging.info("DUET probability fusion: %s", fusion_mode)
 
     _, all_mix_output_pred = torch.max(all_mix_output, dim=1)
     valid_mixed = all_mix_output_pred[label_mask]

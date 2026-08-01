@@ -33,6 +33,8 @@ ACTIVE:
   BETA: 0.99
   CON_PAR: 0.2
   KL_PAR: 0.4
+  # Keep the matched VisDA DUET fusion contract; only DUET_FCP.POWER differs.
+  FUSION: rms
   ADAPTATION_LIST: ""
 DUET_FCP:
   POWER: 0.5
