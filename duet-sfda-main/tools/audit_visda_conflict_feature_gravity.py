@@ -33,6 +33,7 @@ from src.methods.oh.plmatch import clip_pre_text, data_load  # noqa: E402
 from src.utils.feature_gravity_audit import (  # noqa: E402
     binary_auroc,
     classwise_gradient_mass,
+    duet_logit_descent_components,
     evaluate_preflight_gate,
     fixed_tail_masks,
     gradient_projection_summary,
@@ -333,33 +334,14 @@ def main() -> None:
         # Exact output-level components of the released DUET conflict objective.
         # Logits are detached from model parameters; autograd therefore cannot
         # update or accumulate gradients in the source or CLIP networks.
-        weak_proxy = weak_logits[conflict_position].detach().requires_grad_(True)
-        strong_proxy = strong_logits[conflict_position].detach().requires_grad_(True)
-        clip_target = clip_prob[conflict_position].detach()
-        weak_proxy_prob = torch.softmax(weak_proxy, dim=1)
-        strong_proxy_prob = torch.softmax(strong_proxy, dim=1)
-        consistency_per_sample = F.kl_div(
-            strong_proxy_prob.clamp_min(1e-12).log(),
-            weak_proxy_prob,
-            reduction="none",
-        ).sum(dim=1)
-        clip_per_sample = F.kl_div(
-            weak_proxy_prob.clamp_min(1e-12).log(),
-            clip_target,
-            reduction="none",
-        ).sum(dim=1)
-        batch_scale = 1.0 / float(weak_x.size(0))
-        consistency_grad_weak, consistency_grad_strong = torch.autograd.grad(
-            cfg.ACTIVE.CON_PAR * batch_scale * consistency_per_sample.sum(),
-            (weak_proxy, strong_proxy),
-            retain_graph=True,
-            create_graph=False,
+        components = duet_logit_descent_components(
+            weak_logits[conflict_position],
+            strong_logits[conflict_position],
+            clip_logits[conflict_position],
+            con_weight=float(cfg.ACTIVE.CON_PAR),
+            clip_weight=float(cfg.ACTIVE.KL_PAR),
+            batch_size=int(weak_x.size(0)),
         )
-        clip_grad_weak = torch.autograd.grad(
-            cfg.ACTIVE.KL_PAR * batch_scale * clip_per_sample.sum(),
-            weak_proxy,
-            create_graph=False,
-        )[0]
 
         selected = conflict_position.cpu().numpy()
         values = {
@@ -369,13 +351,17 @@ def main() -> None:
             "task_conf": task_conf[conflict_position].cpu().numpy(),
             "clip_conf": clip_conf[conflict_position].cpu().numpy(),
             "feature_cosine": feature_cosine[conflict_position].cpu().numpy(),
-            "weak_strong_kl": consistency_per_sample.detach().cpu().numpy(),
-            "clip_kl": clip_per_sample.detach().cpu().numpy(),
-            "weak_prob": weak_proxy_prob.detach().cpu().numpy(),
-            "strong_prob": strong_proxy_prob.detach().cpu().numpy(),
-            "consistency_descent_weak": -consistency_grad_weak.detach().cpu().numpy(),
-            "consistency_descent_strong": -consistency_grad_strong.detach().cpu().numpy(),
-            "clip_descent_weak": -clip_grad_weak.detach().cpu().numpy(),
+            "weak_strong_kl": components["consistency_per_sample"].cpu().numpy(),
+            "clip_kl": components["clip_per_sample"].cpu().numpy(),
+            "weak_prob": components["weak_prob"].cpu().numpy(),
+            "strong_prob": components["strong_prob"].cpu().numpy(),
+            "consistency_descent_weak": components[
+                "consistency_descent_weak"
+            ].cpu().numpy(),
+            "consistency_descent_strong": components[
+                "consistency_descent_strong"
+            ].cpu().numpy(),
+            "clip_descent_weak": components["clip_descent_weak"].cpu().numpy(),
         }
         for name, value in values.items():
             conflict_parts[name].append(value)
@@ -461,8 +447,8 @@ def main() -> None:
         gravity_weight=gravity_weight.astype(np.float32),
         weak_prob=conflict["weak_prob"],
         strong_prob=conflict["strong_prob"],
-        current_descent=current_descent.astype(np.float32),
-        candidate_descent=candidate_descent.astype(np.float32),
+        current_descent=current_descent,
+        candidate_descent=candidate_descent,
         bottom_cosine_quintile=bottom_tail,
         top_cosine_quintile=top_tail,
     )
@@ -622,6 +608,7 @@ def main() -> None:
             "feature_signal": "cosine(task weak feature, task strong feature)",
             "weight": "clamp_min(cosine, 0) / mean_conflict_weight",
             "weight_gradient": "stopped",
+            "gradient_audit_precision": "float64 detached logits with log_softmax",
             "agreement_samples": "unchanged weight 1",
             "task_clip_fusion": "unchanged",
             "pseudo_label_admission": "unchanged",

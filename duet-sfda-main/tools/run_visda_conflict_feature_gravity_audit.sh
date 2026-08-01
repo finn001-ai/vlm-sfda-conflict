@@ -20,8 +20,13 @@ for path in \
 done
 
 if [ -e "$run_dir" ]; then
-  echo "Existing feature-gravity audit found; refusing to overwrite: $run_dir" >&2
-  exit 1
+  if [ -s "$summary" ]; then
+    echo "Completed feature-gravity audit found; refusing to overwrite: $run_dir" >&2
+    exit 1
+  fi
+  incomplete_dir="${run_dir}.incomplete_$(date +%Y%m%d_%H%M%S)"
+  mv -- "$run_dir" "$incomplete_dir"
+  echo "==> Archived incomplete audit: $incomplete_dir"
 fi
 
 echo "==> Read-only VisDA feature-gravity audit"

@@ -5,9 +5,87 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 import numpy as np
+import torch
+import torch.nn.functional as F
 
 
 HARD_CLASSES = ("car", "person", "truck")
+
+
+def duet_logit_descent_components(
+    weak_logits: torch.Tensor,
+    strong_logits: torch.Tensor,
+    clip_logits: torch.Tensor,
+    *,
+    con_weight: float,
+    clip_weight: float,
+    batch_size: int,
+) -> dict[str, torch.Tensor]:
+    """Return finite detached-logit proxies for the released DUET losses.
+
+    The audit deliberately evaluates these components in float64 and supplies
+    KL targets as log probabilities.  This is mathematically equivalent to the
+    released objective, but avoids float32 probability underflow when the
+    source classifier is extremely confident.  The input logits are detached,
+    so this helper cannot update either model.
+    """
+    if not (
+        weak_logits.ndim == strong_logits.ndim == clip_logits.ndim == 2
+        and weak_logits.shape == strong_logits.shape == clip_logits.shape
+        and weak_logits.shape[0] > 0
+    ):
+        raise ValueError("logits must be non-empty same-shaped 2-D tensors")
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+
+    weak_proxy = weak_logits.detach().to(torch.float64).requires_grad_(True)
+    strong_proxy = strong_logits.detach().to(torch.float64).requires_grad_(True)
+    clip_log_prob = torch.log_softmax(clip_logits.detach().to(torch.float64), dim=1)
+    weak_log_prob = torch.log_softmax(weak_proxy, dim=1)
+    strong_log_prob = torch.log_softmax(strong_proxy, dim=1)
+    weak_prob = weak_log_prob.exp()
+    strong_prob = strong_log_prob.exp()
+    consistency_per_sample = F.kl_div(
+        strong_log_prob,
+        weak_log_prob,
+        reduction="none",
+        log_target=True,
+    ).sum(dim=1)
+    clip_per_sample = F.kl_div(
+        weak_log_prob,
+        clip_log_prob,
+        reduction="none",
+        log_target=True,
+    ).sum(dim=1)
+    batch_scale = 1.0 / float(batch_size)
+    consistency_grad_weak, consistency_grad_strong = torch.autograd.grad(
+        float(con_weight) * batch_scale * consistency_per_sample.sum(),
+        (weak_proxy, strong_proxy),
+        retain_graph=True,
+        create_graph=False,
+    )
+    clip_grad_weak = torch.autograd.grad(
+        float(clip_weight) * batch_scale * clip_per_sample.sum(),
+        weak_proxy,
+        create_graph=False,
+    )[0]
+    result = {
+        "weak_prob": weak_prob.detach(),
+        "strong_prob": strong_prob.detach(),
+        "consistency_per_sample": consistency_per_sample.detach(),
+        "clip_per_sample": clip_per_sample.detach(),
+        "consistency_descent_weak": -consistency_grad_weak.detach(),
+        "consistency_descent_strong": -consistency_grad_strong.detach(),
+        "clip_descent_weak": -clip_grad_weak.detach(),
+    }
+    for name, tensor in result.items():
+        if not torch.isfinite(tensor).all():
+            nonfinite = int((~torch.isfinite(tensor)).sum().item())
+            raise RuntimeError(
+                f"Non-finite {name} after float64 log-prob stabilization: "
+                f"{nonfinite} values"
+            )
+    return result
 
 
 def _one_dimensional_pair(

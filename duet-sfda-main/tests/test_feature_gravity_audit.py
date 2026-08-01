@@ -1,10 +1,13 @@
 from pathlib import Path
 
 import numpy as np
+import torch
+import torch.nn.functional as F
 
 from src.utils.feature_gravity_audit import (
     binary_auroc,
     classwise_gradient_mass,
+    duet_logit_descent_components,
     evaluate_preflight_gate,
     fixed_tail_masks,
     gradient_projection_summary,
@@ -13,6 +16,75 @@ from src.utils.feature_gravity_audit import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_detached_logit_components_remain_finite_for_extreme_logits() -> None:
+    weak = torch.tensor(
+        [[10_000.0, 0.0, -10_000.0], [1_000.0, 999.0, -1_000.0]]
+    )
+    strong = torch.tensor(
+        [[9_999.0, 1.0, -9_999.0], [999.0, 1_000.0, -999.0]]
+    )
+    clip = torch.tensor(
+        [[0.0, 10_000.0, -10_000.0], [1_000.0, -1_000.0, 999.0]]
+    )
+
+    components = duet_logit_descent_components(
+        weak,
+        strong,
+        clip,
+        con_weight=0.1,
+        clip_weight=0.5,
+        batch_size=32,
+    )
+
+    assert all(torch.isfinite(value).all() for value in components.values())
+    torch.testing.assert_close(
+        components["weak_prob"].sum(dim=1),
+        torch.ones(2, dtype=torch.float64),
+    )
+
+
+def test_stabilized_components_match_released_kl_on_finite_inputs() -> None:
+    weak = torch.tensor([[2.0, 0.5, -1.0], [0.1, 1.2, -0.4]], dtype=torch.float64)
+    strong = torch.tensor([[1.5, 0.7, -0.5], [0.3, 0.9, -0.2]], dtype=torch.float64)
+    clip = torch.tensor([[0.2, 1.1, -0.1], [0.8, -0.2, 0.4]], dtype=torch.float64)
+    con_weight, clip_weight, batch_size = 0.1, 0.5, 32
+    components = duet_logit_descent_components(
+        weak,
+        strong,
+        clip,
+        con_weight=con_weight,
+        clip_weight=clip_weight,
+        batch_size=batch_size,
+    )
+
+    weak_proxy = weak.detach().requires_grad_(True)
+    strong_proxy = strong.detach().requires_grad_(True)
+    weak_prob = torch.softmax(weak_proxy, dim=1)
+    strong_prob = torch.softmax(strong_proxy, dim=1)
+    consistency = F.kl_div(
+        strong_prob.log(), weak_prob, reduction="none"
+    ).sum(dim=1)
+    clip_kl = F.kl_div(
+        weak_prob.log(), torch.softmax(clip, dim=1), reduction="none"
+    ).sum(dim=1)
+    consistency_grad = torch.autograd.grad(
+        con_weight * consistency.sum() / batch_size,
+        (weak_proxy, strong_proxy),
+        retain_graph=True,
+    )
+    clip_grad = torch.autograd.grad(
+        clip_weight * clip_kl.sum() / batch_size, weak_proxy
+    )[0]
+
+    torch.testing.assert_close(components["consistency_per_sample"], consistency)
+    torch.testing.assert_close(components["clip_per_sample"], clip_kl)
+    torch.testing.assert_close(components["consistency_descent_weak"], -consistency_grad[0])
+    torch.testing.assert_close(
+        components["consistency_descent_strong"], -consistency_grad[1]
+    )
+    torch.testing.assert_close(components["clip_descent_weak"], -clip_grad)
 
 
 def test_binary_auroc_and_fixed_tails_are_label_independent() -> None:
