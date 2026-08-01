@@ -19,7 +19,6 @@ import src.methods.oh.adacontrast as ADACONTRAST
 import src.methods.oh.source as SOURCE
 import src.methods.oh.plmatch as PLMATCH
 import src.methods.oh.duet_first_cycle_prior as DUET_FCP
-import src.methods.oh.ct_duet as CT_DUET
 import src.methods.oh.plum as PLUM
 
 from conf import cfg, load_cfg_from_args
@@ -119,13 +118,6 @@ if __name__ == "__main__":
     ):
         print("using DUET with first-cycle prior")
         acc = DUET_FCP.train_target(cfg)
-
-    elif (
-        cfg.MODEL.METHOD == "ct_duet"
-        or cfg.MODEL.METHOD.startswith("ct_duet_")
-    ):
-        print("using CT-DUET complementary transition")
-        acc = CT_DUET.train_target(cfg)
 
     elif cfg.MODEL.METHOD == "plum":
         print("using plum method")

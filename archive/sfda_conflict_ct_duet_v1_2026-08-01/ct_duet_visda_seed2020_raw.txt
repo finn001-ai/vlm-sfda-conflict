@@ -1,0 +1,439 @@
+==> CT-DUET VisDA-C full target, 8 cycles, seed=2020home/vlm-sfda-conflict/duet-sfda-main# bash tools/run_visda_ct_duet.sh
+[26/07/31 13:44:01] [conf.py:  430]: PyTorch Version: torch=2.8.0+cu128, cuda=12.8
+[26/07/31 13:44:01] [conf.py:  431]: ACTIVE:
+  ADAPTATION_LIST: 
+  ARCH: ViT-B/32
+  BETA: 0.99
+  CLS_PAR: 0.4
+  CON_PAR: 0.2
+  CTX_INIT: a_photo_of_a
+  CYCLE: 8
+  ENT: True
+  EPSILON: 1e-05
+  FINE_LR: 1e-07
+  GENT: True
+  GENT_PAR: 0.1
+  IIC_PAR: 1.0
+  KL_PAR: 0.4
+  LOAD: None
+  N_CTX: 4
+  Q_VALUE: 1.05
+  TTA_STEPS: 1
+ADACONTRAST:
+  ALPHA: 1.0
+  BETA: 1.0
+  CE_SUP_TYPE: weak_strong
+  CE_TYPE: standard
+  CONTRAST_TYPE: class_aware
+  DIST_TYPE: cosine
+  ETA: 1.0
+  FULL_PROGRESS: 0
+  GAMMA: 0.2
+  NUM_NEIGHBORS: 10
+  OPTIM_COS: True
+  OPTIM_EXP: False
+  REFINE_METHOD: nearest_neighbors
+  SCHEDULE: [10, 20]
+CKPT_DIR: .
+CKPT_PATH: 
+COWA:
+  ALPHA: 0.2
+  COEFF: JMDS
+  DISTANCE: cosine
+  EPSILON: 1e-05
+  EPSILON2: 1e-06
+  PICKLE: False
+  WARM: 0.0
+CUDNN:
+  BENCHMARK: True
+DA: uda
+DATA_DIR: /home/sfda/data/
+DESC: 
+DIFO:
+  ARCH: ViT-B/32
+  CLS_PAR: 0.4
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 1.0
+  IIC_PAR: 1.0
+  LOAD: None
+  N_CTX: 4
+  TTA_STEPS: 1
+DUET_FCP:
+  POWER: 0.5
+FAILURE_AUDIT:
+  DIR: failure_audit
+  ENABLED: False
+  FEATURE_DTYPE: float16
+FOLDER: ./data/
+GKD:
+  CLS_PAR: 0.3
+  DISTANCE: cosine
+  ENT: True
+  ENT_PAR: 1.0
+  EPSILON: 1e-05
+  GENT: True
+  THRESHOLD: 0.0
+GPU_ID: 0
+ISSAVE: False
+LCFD:
+  ARCH: ViT-B/32
+  CLS_PAR: 0.4
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 1.0
+  LOSS_FUNC: sce
+  N_CTX: 4
+  TTA_STEPS: 1
+LOG_DEST: ct_duet_260731_134401.txt
+LOG_TIME: 260731_134401
+MODEL:
+  ADAPTATION: source
+  ARCH: resnet101
+  EPISODIC: False
+  METHOD: ct_duet_visda_full_seed2020
+  WEIGHTS: IMAGENET1K_V1
+NRC:
+  EPSILON: 1e-05
+  K: 5
+  KK: 4
+NUM_WORKERS: 4
+OPTIM:
+  DAMPENING: 0.0
+  LR: 0.001
+  LR_DECAY1: 0.1
+  LR_DECAY2: 1
+  LR_DECAY3: 0.01
+  METHOD: SGD
+  MOMENTUM: 0.9
+  NESTEROV: True
+  WD: 0.001
+PLUE:
+  CTR: True
+  EPSILON: 1e-05
+  LABEL_REFINEMENT: True
+  NEG_L: True
+  NUM_NEIGHBORS: 10
+  REWEIGHTING: True
+  TEMPORAL_LENGTH: 5
+ProDe:
+  ARCH: ViT-B/32
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 0.1
+  IIC_PAR: 1.3
+  LOAD: None
+  N_CTX: 4
+  TTA_STEPS: 1
+SAVE_DIR: ./output
+SCLM:
+  CLS_PAR: 0.3
+  CLS_SNT: 0.1
+  CONFI_PAR: 0.3
+  DISTANCE: cosine
+  ENT: True
+  ENT_PAR: 1.0
+  EPSILON: 1e-05
+  GENT: True
+  INITC_PAR: 0.3
+  NEW_ENT_PAR: 0.3
+  THRESHOLD: 0.0
+SETTING:
+  DATASET: VISDA-C
+  OUTPUT_SRC: source
+  S: 0
+  SEED: 2020
+  T: 1
+SHOT:
+  CLS_PAR: 0.3
+  DISTANCE: cosine
+  ENT: True
+  ENT_PAR: 1.0
+  EPSILON: 1e-05
+  GENT: True
+  THRESHOLD: 0.0
+SOURCE:
+  EPSILON: 1e-05
+  TRTE: val
+TEST:
+  BATCH_SIZE: 64
+  INTERVAL: 4
+  MAX_EPOCH: 4
+TPDS:
+  DISTANCE: cosine
+  EPSILON: 1e-05
+  THRESHOLD: 0.0
+TSD:
+  ARCH: ViT-B/32
+  CLS_PAR: 0.4
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 1.0
+  IIC_PAR: 1.0
+  LENT_PAR: 0.05
+  LOAD: None
+  N_CTX: 4
+  TTA_STEPS: 1
+bottleneck: 512
+class_num: 12
+domain: ['train', 'validation']
+name: TV
+name_file: ./data/VISDA-C/classname.txt
+name_src: T
+output_dir: ./output/uda/VISDA-C/TV/ct_duet_visda_full_seed2020
+output_dir_src: ./source/uda/VISDA-C/T
++++++++++++++++++++IB+++++++++++++++++++++
+using CT-DUET complementary transition
+[26/07/31 13:44:01] [plmatch.py:  375]: DUET first-cycle prior: enabled=True; power=0.500
+[26/07/31 13:44:01] [plmatch.py:  381]: CT-DUET complementary transition: enabled=True; weight=CLS_PAR=0.400
+100%|███████████████████████████████████████| 338M/338M [00:20<00:00, 17.7MiB/s]
+/usr/local/lib/python3.10/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
+  warnings.warn(
+/usr/local/lib/python3.10/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=ResNet101_Weights.IMAGENET1K_V1`. You can also use `weights=ResNet101_Weights.DEFAULT` to get the most up-to-date weights.
+  warnings.warn(msg)
+/usr/local/lib/python3.10/site-packages/torch/nn/utils/weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+train_clip
+[26/07/31 13:47:31] [plmatch.py:  759]: DUET first-cycle prior schedule: cycle=1; active=True
+[26/07/31 13:47:31] [plmatch.py:  794]: Number of valid pseudo-labeled samples: 27939/55388; Accuracy = 93.93%
+[26/07/31 13:47:31] [plmatch.py:  803]: Mixed output with valid mask: 93.93%
+[26/07/31 13:47:31] [plmatch.py:  813]: all_mix_output Accuracy = 74.65%; clip_output_accuracy = 82.70%; pure_output_accuracy = 52.65%;
+[26/07/31 13:47:32] [plmatch.py:  520]: CT-DUET refresh: cycle=1; selected=27939; unresolved_conflicts=27449
+[26/07/31 13:48:56] [plmatch.py:  347]: CLIP visual Accuracy = 86.19%;
+[26/07/31 13:53:04] [plmatch.py:  626]: Task: TV, Iter:866/3464; Cycle: 1/8; Accuracy = 84.66%; classifier_loss = 0.6805106401443481
+97.04 81.24 86.52 73.64 96.27 87.37 93.96 73.68 86.55 92.85 91.6 55.23
+[26/07/31 13:57:16] [plmatch.py:  626]: Task: TV, Iter:1732/3464; Cycle: 1/8; Accuracy = 85.59%; classifier_loss = 0.6256774663925171
+98.0 78.73 88.83 73.37 97.02 89.78 93.74 75.25 87.93 94.52 92.73 57.17
+[26/07/31 14:01:31] [plmatch.py:  626]: Task: TV, Iter:2598/3464; Cycle: 1/8; Accuracy = 86.25%; classifier_loss = 0.21566742658615112
+97.94 83.54 88.14 77.58 96.4 90.65 93.72 73.55 89.56 94.83 92.42 56.63
+[26/07/31 14:05:41] [plmatch.py:  626]: Task: TV, Iter:3464/3464; Cycle: 1/8; Accuracy = 86.47%; classifier_loss = 0.27751654386520386
+98.0 85.32 86.08 78.26 97.04 90.55 91.94 75.52 89.07 94.48 92.59 58.8
+[26/07/31 14:05:41] [plmatch.py:  632]: CT-DUET cycle summary: cycle=1; unresolved_conflicts=27449; conflict_updates=109796; mean_comp_loss=0.466198; mean_outside_mass=0.372472
+[26/07/31 14:08:19] [plmatch.py:  759]: DUET first-cycle prior schedule: cycle=2; active=False
+[26/07/31 14:08:19] [plmatch.py:  794]: Number of valid pseudo-labeled samples: 49326/55388; Accuracy = 91.10%
+[26/07/31 14:08:19] [plmatch.py:  803]: Mixed output with valid mask: 91.47%
+[26/07/31 14:08:19] [plmatch.py:  813]: all_mix_output Accuracy = 87.41%; clip_output_accuracy = 86.70%; pure_output_accuracy = 84.67%;
+[26/07/31 14:08:19] [plmatch.py:  520]: CT-DUET refresh: cycle=2; selected=49326; unresolved_conflicts=6062
+[26/07/31 14:09:49] [plmatch.py:  347]: CLIP visual Accuracy = 87.50%;
+[26/07/31 14:14:05] [plmatch.py:  626]: Task: TV, Iter:866/3464; Cycle: 2/8; Accuracy = 88.41%; classifier_loss = 0.12247481942176819
+98.27 83.94 87.33 78.73 96.93 95.57 94.46 79.97 92.35 94.87 92.16 66.31
+[26/07/31 14:18:10] [plmatch.py:  626]: Task: TV, Iter:1732/3464; Cycle: 2/8; Accuracy = 88.86%; classifier_loss = 0.3047208786010742
+98.44 88.75 88.34 77.49 97.44 95.33 93.63 81.08 91.91 96.54 92.45 64.91
+[26/07/31 14:22:20] [plmatch.py:  626]: Task: TV, Iter:2598/3464; Cycle: 2/8; Accuracy = 88.90%; classifier_loss = 0.11086656153202057
+98.03 86.07 88.12 80.05 97.46 95.23 93.75 82.0 92.57 96.36 93.7 63.43
+[26/07/31 14:26:27] [plmatch.py:  626]: Task: TV, Iter:3464/3464; Cycle: 2/8; Accuracy = 88.98%; classifier_loss = 0.28061383962631226
+98.52 85.18 87.42 78.48 97.1 95.28 93.24 82.95 92.75 95.53 93.81 67.56
+[26/07/31 14:26:27] [plmatch.py:  632]: CT-DUET cycle summary: cycle=2; unresolved_conflicts=6062; conflict_updates=24248; mean_comp_loss=0.434383; mean_outside_mass=0.350263
+[26/07/31 14:29:01] [plmatch.py:  759]: DUET first-cycle prior schedule: cycle=3; active=False
+[26/07/31 14:29:01] [plmatch.py:  794]: Number of valid pseudo-labeled samples: 52223/55388; Accuracy = 89.99%
+[26/07/31 14:29:01] [plmatch.py:  803]: Mixed output with valid mask: 90.56%
+[26/07/31 14:29:01] [plmatch.py:  813]: all_mix_output Accuracy = 88.36%; clip_output_accuracy = 87.65%; pure_output_accuracy = 86.75%;
+[26/07/31 14:29:01] [plmatch.py:  520]: CT-DUET refresh: cycle=3; selected=52223; unresolved_conflicts=3165
+[26/07/31 14:30:25] [plmatch.py:  347]: CLIP visual Accuracy = 88.03%;
+[26/07/31 14:34:34] [plmatch.py:  626]: Task: TV, Iter:866/3464; Cycle: 3/8; Accuracy = 89.43%; classifier_loss = 0.4744967222213745
+98.22 85.53 88.89 76.03 96.7 96.24 95.0 84.48 93.14 95.35 93.84 69.77
+[26/07/31 14:38:43] [plmatch.py:  626]: Task: TV, Iter:1732/3464; Cycle: 3/8; Accuracy = 89.83%; classifier_loss = 0.21405287086963654
+97.89 86.39 87.21 79.67 97.55 96.72 95.15 82.0 94.17 95.31 94.31 71.65
+[26/07/31 14:42:53] [plmatch.py:  626]: Task: TV, Iter:2598/3464; Cycle: 3/8; Accuracy = 89.85%; classifier_loss = 0.2551383972167969
+98.46 90.45 89.79 76.8 97.85 96.43 92.75 84.05 94.37 96.01 93.58 67.66
+[26/07/31 14:47:01] [plmatch.py:  626]: Task: TV, Iter:3464/3464; Cycle: 3/8; Accuracy = 89.88%; classifier_loss = 0.3213310241699219
+98.63 87.54 89.49 81.47 97.42 95.57 94.43 82.3 92.86 96.23 92.99 69.7
+[26/07/31 14:47:01] [plmatch.py:  632]: CT-DUET cycle summary: cycle=3; unresolved_conflicts=3165; conflict_updates=12660; mean_comp_loss=0.449395; mean_outside_mass=0.351363
+[26/07/31 14:49:32] [plmatch.py:  759]: DUET first-cycle prior schedule: cycle=4; active=False
+[26/07/31 14:49:32] [plmatch.py:  794]: Number of valid pseudo-labeled samples: 53381/55388; Accuracy = 89.98%
+[26/07/31 14:49:32] [plmatch.py:  803]: Mixed output with valid mask: 90.32%
+[26/07/31 14:49:32] [plmatch.py:  813]: all_mix_output Accuracy = 88.84%; clip_output_accuracy = 88.11%; pure_output_accuracy = 87.99%;
+[26/07/31 14:49:32] [plmatch.py:  520]: CT-DUET refresh: cycle=4; selected=53381; unresolved_conflicts=2007
+[26/07/31 14:50:46] [plmatch.py:  347]: CLIP visual Accuracy = 88.59%;
+[26/07/31 14:54:50] [plmatch.py:  626]: Task: TV, Iter:866/3464; Cycle: 4/8; Accuracy = 90.12%; classifier_loss = 0.291038453578949
+98.57 86.82 87.4 77.85 97.8 96.39 94.51 83.8 94.04 97.11 94.9 72.3
+[26/07/31 14:58:54] [plmatch.py:  626]: Task: TV, Iter:1732/3464; Cycle: 4/8; Accuracy = 90.11%; classifier_loss = 0.07820142805576324
+98.19 85.61 88.64 81.41 97.85 96.67 95.76 83.5 94.33 96.1 93.63 69.61
+[26/07/31 15:02:57] [plmatch.py:  626]: Task: TV, Iter:2598/3464; Cycle: 4/8; Accuracy = 90.37%; classifier_loss = 0.2996155023574829
+98.55 89.12 88.38 80.55 98.04 96.92 94.55 84.15 93.89 96.01 94.97 69.32
+[26/07/31 15:06:52] [plmatch.py:  626]: Task: TV, Iter:3464/3464; Cycle: 4/8; Accuracy = 90.39%; classifier_loss = 0.1380871683359146
+98.44 88.26 88.93 80.66 97.78 97.06 95.15 84.9 93.91 95.88 93.11 70.66
+[26/07/31 15:06:52] [plmatch.py:  632]: CT-DUET cycle summary: cycle=4; unresolved_conflicts=2007; conflict_updates=8028; mean_comp_loss=0.465616; mean_outside_mass=0.360067
+[26/07/31 15:09:10] [plmatch.py:  759]: DUET first-cycle prior schedule: cycle=5; active=False
+[26/07/31 15:09:10] [plmatch.py:  794]: Number of valid pseudo-labeled samples: 53991/55388; Accuracy = 89.80%
+[26/07/31 15:09:10] [plmatch.py:  803]: Mixed output with valid mask: 90.27%
+[26/07/31 15:09:10] [plmatch.py:  813]: all_mix_output Accuracy = 89.24%; clip_output_accuracy = 88.60%; pure_output_accuracy = 88.38%;
+[26/07/31 15:09:10] [plmatch.py:  520]: CT-DUET refresh: cycle=5; selected=53991; unresolved_conflicts=1397
+[26/07/31 15:10:32] [plmatch.py:  347]: CLIP visual Accuracy = 88.89%;
+[26/07/31 15:14:41] [plmatch.py:  626]: Task: TV, Iter:866/3464; Cycle: 5/8; Accuracy = 90.53%; classifier_loss = 0.07996289432048798
+98.46 87.97 87.65 81.42 97.95 96.67 95.72 84.5 94.31 96.41 93.67 71.63
+[26/07/31 15:18:52] [plmatch.py:  626]: Task: TV, Iter:1732/3464; Cycle: 5/8; Accuracy = 90.82%; classifier_loss = 0.2833113968372345
+98.57 89.47 88.34 79.48 98.04 96.92 95.05 83.9 95.32 96.58 93.72 74.46
+[26/07/31 15:23:00] [plmatch.py:  626]: Task: TV, Iter:2598/3464; Cycle: 5/8; Accuracy = 90.78%; classifier_loss = 0.18413111567497253
+98.77 89.73 89.72 78.52 98.17 96.92 95.39 84.05 95.69 96.89 91.57 73.99
+[26/07/31 15:27:10] [plmatch.py:  626]: Task: TV, Iter:3464/3464; Cycle: 5/8; Accuracy = 90.65%; classifier_loss = 0.2701529264450073
+98.57 88.43 86.18 78.43 97.85 96.72 96.1 83.85 95.41 97.11 94.29 74.86
+[26/07/31 15:27:10] [plmatch.py:  632]: CT-DUET cycle summary: cycle=5; unresolved_conflicts=1397; conflict_updates=5588; mean_comp_loss=0.462215; mean_outside_mass=0.352563
+[26/07/31 15:29:51] [plmatch.py:  759]: DUET first-cycle prior schedule: cycle=6; active=False
+[26/07/31 15:29:51] [plmatch.py:  794]: Number of valid pseudo-labeled samples: 54387/55388; Accuracy = 89.36%
+[26/07/31 15:29:51] [plmatch.py:  803]: Mixed output with valid mask: 90.03%
+[26/07/31 15:29:51] [plmatch.py:  813]: all_mix_output Accuracy = 89.23%; clip_output_accuracy = 88.83%; pure_output_accuracy = 88.35%;
+[26/07/31 15:29:52] [plmatch.py:  520]: CT-DUET refresh: cycle=6; selected=54387; unresolved_conflicts=1001
+[26/07/31 15:31:15] [plmatch.py:  347]: CLIP visual Accuracy = 89.04%;
+[26/07/31 15:35:30] [plmatch.py:  626]: Task: TV, Iter:866/3464; Cycle: 6/8; Accuracy = 91.02%; classifier_loss = 0.38711994886398315
+97.97 89.44 87.57 81.94 97.8 97.35 94.65 86.22 95.98 96.27 94.31 72.76
+[26/07/31 15:40:02] [plmatch.py:  626]: Task: TV, Iter:1732/3464; Cycle: 6/8; Accuracy = 91.13%; classifier_loss = 0.09901796281337738
+98.6 90.13 89.74 81.32 98.19 97.64 94.48 84.55 95.74 97.19 94.31 71.68
+[26/07/31 15:44:07] [plmatch.py:  626]: Task: TV, Iter:2598/3464; Cycle: 6/8; Accuracy = 91.12%; classifier_loss = 0.44530394673347473
+98.63 90.1 88.59 79.82 98.06 97.64 95.72 84.42 95.96 96.8 94.62 73.05
+[26/07/31 15:48:26] [plmatch.py:  626]: Task: TV, Iter:3464/3464; Cycle: 6/8; Accuracy = 91.19%; classifier_loss = 0.19912782311439514
+98.68 90.91 88.81 78.29 98.29 97.11 95.43 84.4 95.78 97.02 94.71 74.84
+[26/07/31 15:48:26] [plmatch.py:  632]: CT-DUET cycle summary: cycle=6; unresolved_conflicts=1001; conflict_updates=4004; mean_comp_loss=0.467558; mean_outside_mass=0.362939
+[26/07/31 15:51:08] [plmatch.py:  759]: DUET first-cycle prior schedule: cycle=7; active=False
+[26/07/31 15:51:08] [plmatch.py:  794]: Number of valid pseudo-labeled samples: 54600/55388; Accuracy = 89.67%
+[26/07/31 15:51:08] [plmatch.py:  803]: Mixed output with valid mask: 89.96%
+[26/07/31 15:51:08] [plmatch.py:  813]: all_mix_output Accuracy = 89.32%; clip_output_accuracy = 88.80%; pure_output_accuracy = 88.87%;
+[26/07/31 15:51:08] [plmatch.py:  520]: CT-DUET refresh: cycle=7; selected=54600; unresolved_conflicts=788
+[26/07/31 15:52:33] [plmatch.py:  347]: CLIP visual Accuracy = 89.12%;
+[26/07/31 15:56:46] [plmatch.py:  626]: Task: TV, Iter:866/3464; Cycle: 7/8; Accuracy = 91.19%; classifier_loss = 0.10345742851495743
+98.27 89.67 87.76 79.95 98.08 97.4 94.7 85.1 96.39 97.41 93.46 76.08
+[26/07/31 16:00:56] [plmatch.py:  626]: Task: TV, Iter:1732/3464; Cycle: 7/8; Accuracy = 91.21%; classifier_loss = 0.5254254341125488
+98.63 90.01 89.89 77.94 97.97 98.02 95.51 85.48 96.24 95.97 94.95 73.94
+[26/07/31 16:05:08] [plmatch.py:  626]: Task: TV, Iter:2598/3464; Cycle: 7/8; Accuracy = 91.24%; classifier_loss = 0.17995718121528625
+98.52 90.27 87.59 82.02 97.78 97.69 95.17 84.48 95.19 97.81 94.36 73.97
+[26/07/31 16:09:17] [plmatch.py:  626]: Task: TV, Iter:3464/3464; Cycle: 7/8; Accuracy = 91.30%; classifier_loss = 0.12451808154582977
+98.41 89.47 88.36 81.71 98.21 97.73 95.17 84.98 96.11 96.62 95.11 73.68
+[26/07/31 16:09:17] [plmatch.py:  632]: CT-DUET cycle summary: cycle=7; unresolved_conflicts=788; conflict_updates=3152; mean_comp_loss=0.495944; mean_outside_mass=0.378541
+[26/07/31 16:11:42] [plmatch.py:  759]: DUET first-cycle prior schedule: cycle=8; active=False
+[26/07/31 16:11:42] [plmatch.py:  794]: Number of valid pseudo-labeled samples: 54780/55388; Accuracy = 90.05%
+[26/07/31 16:11:42] [plmatch.py:  803]: Mixed output with valid mask: 89.91%
+[26/07/31 16:11:42] [plmatch.py:  813]: all_mix_output Accuracy = 89.41%; clip_output_accuracy = 88.87%; pure_output_accuracy = 89.44%;
+[26/07/31 16:11:42] [plmatch.py:  520]: CT-DUET refresh: cycle=8; selected=54780; unresolved_conflicts=608
+[26/07/31 16:12:58] [plmatch.py:  347]: CLIP visual Accuracy = 89.28%;
+[26/07/31 16:17:04] [plmatch.py:  626]: Task: TV, Iter:866/3464; Cycle: 8/8; Accuracy = 91.32%; classifier_loss = 0.6148689389228821
+98.55 89.9 88.81 79.63 97.7 97.93 96.12 85.3 96.53 96.98 95.49 72.87
+[26/07/31 16:21:10] [plmatch.py:  626]: Task: TV, Iter:1732/3464; Cycle: 8/8; Accuracy = 91.51%; classifier_loss = 0.5926767587661743
+98.66 91.54 88.57 78.38 98.12 97.98 95.5 82.55 96.39 97.81 95.09 77.52
+[26/07/31 16:25:25] [plmatch.py:  626]: Task: TV, Iter:2598/3464; Cycle: 8/8; Accuracy = 91.41%; classifier_loss = 0.18991100788116455
+98.77 91.28 88.17 79.46 98.08 97.98 94.82 84.92 95.41 97.54 95.28 75.18
+[26/07/31 16:29:48] [plmatch.py:  626]: Task: TV, Iter:3464/3464; Cycle: 8/8; Accuracy = 91.49%; classifier_loss = 0.14257048070430756
+98.63 90.04 88.98 79.4 98.15 97.93 95.82 84.95 95.98 97.19 95.25 75.58
+[26/07/31 16:29:48] [plmatch.py:  632]: CT-DUET cycle summary: cycle=8; unresolved_conflicts=608; conflict_updates=2432; mean_comp_loss=0.484242; mean_outside_mass=0.377768
+Running time: 9947.47 Seconds
+{
+  "decision": "visda_run_complete",
+  "metric": "mean per-class accuracy",
+  "selection_warning": "peak reads validation labels and is oracle-only",
+  "num_checkpoints": 32,
+  "final": {
+    "iteration": 3464,
+    "max_iteration": 3464,
+    "cycle": 8,
+    "max_cycle": 8,
+    "accuracy": 91.49,
+    "class_accuracy": [
+      98.63,
+      90.04,
+      88.98,
+      79.4,
+      98.15,
+      97.93,
+      95.82,
+      84.95,
+      95.98,
+      97.19,
+      95.25,
+      75.58
+    ]
+  },
+  "oracle_peak": {
+    "iteration": 1732,
+    "max_iteration": 3464,
+    "cycle": 8,
+    "max_cycle": 8,
+    "accuracy": 91.51,
+    "class_accuracy": [
+      98.66,
+      91.54,
+      88.57,
+      78.38,
+      98.12,
+      97.98,
+      95.5,
+      82.55,
+      96.39,
+      97.81,
+      95.09,
+      77.52
+    ]
+  },
+  "peak_minus_final": 0.02,
+  "classes": [
+    {
+      "class": "aeroplane",
+      "final_accuracy": 98.63,
+      "peak_checkpoint_accuracy": 98.66
+    },
+    {
+      "class": "bicycle",
+      "final_accuracy": 90.04,
+      "peak_checkpoint_accuracy": 91.54
+    },
+    {
+      "class": "bus",
+      "final_accuracy": 88.98,
+      "peak_checkpoint_accuracy": 88.57
+    },
+    {
+      "class": "car",
+      "final_accuracy": 79.4,
+      "peak_checkpoint_accuracy": 78.38
+    },
+    {
+      "class": "horse",
+      "final_accuracy": 98.15,
+      "peak_checkpoint_accuracy": 98.12
+    },
+    {
+      "class": "knife",
+      "final_accuracy": 97.93,
+      "peak_checkpoint_accuracy": 97.98
+    },
+    {
+      "class": "motorcycle",
+      "final_accuracy": 95.82,
+      "peak_checkpoint_accuracy": 95.5
+    },
+    {
+      "class": "person",
+      "final_accuracy": 84.95,
+      "peak_checkpoint_accuracy": 82.55
+    },
+    {
+      "class": "plant",
+      "final_accuracy": 95.98,
+      "peak_checkpoint_accuracy": 96.39
+    },
+    {
+      "class": "skateboard",
+      "final_accuracy": 97.19,
+      "peak_checkpoint_accuracy": 97.81
+    },
+    {
+      "class": "train",
+      "final_accuracy": 95.25,
+      "peak_checkpoint_accuracy": 95.09
+    },
+    {
+      "class": "truck",
+      "final_accuracy": 75.58,
+      "peak_checkpoint_accuracy": 77.52
+    }
+  ],
+  "next": "compare with same-source VisDA baselines, then run adaptation seeds 2021/2022"
+}
+==> Baseline gate: final > 91.50 and oracle peak > 91.52
+==> Summary: output/uda/VISDA-C/ct_duet_visda_seed2020_summary.json

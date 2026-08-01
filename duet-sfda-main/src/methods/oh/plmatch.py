@@ -33,7 +33,6 @@ from sklearn.metrics import confusion_matrix
 from src.utils.adaptation_lists import load_adaptation_and_evaluation_rows
 from src.utils.failure_audit import save_failure_audit_snapshot
 from src.utils.first_cycle_prior import apply_first_cycle_prior
-from src.utils.complementary_learning import complementary_conflict_loss
 
 logger = logging.getLogger(__name__)
 
@@ -357,18 +356,12 @@ def spectral_entropy(text_features, EPS=1e-9):
     return spectral_ent
 
 
-def train_target(
-    cfg,
-    *,
-    first_cycle_prior=False,
-    complementary_transition=False,
-):
-    """训练原始 DUET、DUET-FCP 或 CT-DUET。
+def train_target(cfg, *, first_cycle_prior=False):
+    """训练原始 DUET，或仅增加首轮 prior 的 DUET-FCP。
 
     ``first_cycle_prior=False`` 是发布版 DUET 的原始路径。DUET-FCP 入口只把
     该参数设为 ``True``；stable memory、target head、graph teacher 和 GTR
-    均不在本文件中，因此不会混入候选。CT-DUET 额外把尚未准入的冲突
-    转换为互补标签监督，并在其后续达成一致时自然切回原始正标签监督。
+    均不在本文件中，因此不会混入候选。
     """
     if first_cycle_prior and cfg.DUET_FCP.POWER < 0:
         raise ValueError("DUET_FCP.POWER must be non-negative")
@@ -376,12 +369,6 @@ def train_target(
         "DUET first-cycle prior: enabled={}; power={:.3f}".format(
             bool(first_cycle_prior),
             float(cfg.DUET_FCP.POWER) if first_cycle_prior else 0.0,
-        )
-    )
-    logging.info(
-        "CT-DUET complementary transition: enabled={}; weight=CLS_PAR={:.3f}".format(
-            bool(complementary_transition),
-            float(cfg.ACTIVE.CLS_PAR) if complementary_transition else 0.0,
         )
     )
     clip_model, preprocess, _ = clip.load(cfg.ACTIVE.ARCH)
@@ -469,42 +456,16 @@ def train_target(
                 float(cfg.DUET_FCP.POWER) if first_cycle_prior else 0.0
             ),
             prior_epsilon=float(cfg.ACTIVE.EPSILON),
-            return_conflict_pairs=complementary_transition,
         )
-        if cfg.FAILURE_AUDIT.ENABLED and complementary_transition:
-            (
-                mem_label,
-                label_mask,
-                confi_imag,
-                confi_dis,
-                clip_soft,
-                task_candidate,
-                clip_candidate,
-                audit_payload,
-            ) = label_result
-        elif cfg.FAILURE_AUDIT.ENABLED:
-            (
-                mem_label,
-                label_mask,
-                confi_imag,
-                confi_dis,
-                clip_soft,
-                audit_payload,
-            ) = label_result
-        elif complementary_transition:
-            (
-                mem_label,
-                label_mask,
-                confi_imag,
-                confi_dis,
-                clip_soft,
-                task_candidate,
-                clip_candidate,
-            ) = label_result
-        else:
-            mem_label, label_mask, confi_imag, confi_dis, clip_soft = label_result
-
         if cfg.FAILURE_AUDIT.ENABLED:
+            (
+                mem_label,
+                label_mask,
+                confi_imag,
+                confi_dis,
+                clip_soft,
+                audit_payload,
+            ) = label_result
             save_failure_audit_snapshot(
                 cfg,
                 f"pre_cycle{curr_cycle + 1:02d}.npz",
@@ -513,20 +474,8 @@ def train_target(
                 phase=np.array("pre_cycle"),
                 **audit_payload,
             )
-
-        if complementary_transition:
-            unresolved_mask = (~label_mask) & task_candidate.ne(clip_candidate)
-            unresolved_count = int(unresolved_mask.sum().item())
-            logging.info(
-                "CT-DUET refresh: cycle={}; selected={}; unresolved_conflicts={}".format(
-                    curr_cycle + 1,
-                    int(label_mask.sum().item()),
-                    unresolved_count,
-                )
-            )
-            comp_loss_sum = 0.0
-            comp_mass_sum = 0.0
-            comp_update_count = 0
+        else:
+            mem_label, label_mask, confi_imag, confi_dis, clip_soft = label_result
         clip_soft = clip_soft.cuda()
         mem_label = mem_label.cuda()
         prev_label_mask = label_mask
@@ -577,20 +526,6 @@ def train_target(
                 supervised_logits = weak_logits[label_mask[tar_idx]]
                 if pred.size(0) != 0:
                     classifier_loss += nn.CrossEntropyLoss()(supervised_logits, pred) * cfg.ACTIVE.CLS_PAR
-            if complementary_transition:
-                batch_selected = label_mask[tar_idx]
-                comp_loss, comp_stats = complementary_conflict_loss(
-                    strong_logits,
-                    task_candidate[tar_idx],
-                    clip_candidate[tar_idx],
-                    batch_selected,
-                    epsilon=float(cfg.ACTIVE.EPSILON),
-                )
-                classifier_loss += comp_loss * cfg.ACTIVE.CLS_PAR
-                comp_count = comp_stats["count"]
-                comp_loss_sum += comp_stats["mean_loss"] * comp_count
-                comp_mass_sum += comp_stats["outside_mass"] * comp_count
-                comp_update_count += comp_count
             # pseudo_output = weak_preds[filtered_idx]
             clip_soft_batch = clip_soft[tar_idx]
             # mixed_soft_batch = confi_dis[tar_idx].cuda()
@@ -627,19 +562,6 @@ def train_target(
                 netF.train()
                 netB.train()
                 # netC.train()
-        if complementary_transition:
-            normalizer = max(comp_update_count, 1)
-            logging.info(
-                "CT-DUET cycle summary: cycle={}; unresolved_conflicts={}; "
-                "conflict_updates={}; mean_comp_loss={:.6f}; "
-                "mean_outside_mass={:.6f}".format(
-                    curr_cycle + 1,
-                    unresolved_count,
-                    comp_update_count,
-                    comp_loss_sum / normalizer,
-                    comp_mass_sum / normalizer,
-                )
-            )
         curr_cycle += 1
 
     if cfg.FAILURE_AUDIT.ENABLED:
@@ -695,7 +617,6 @@ def obtain_label(
     first_cycle_prior=False,
     prior_power=0.5,
     prior_epsilon=1e-6,
-    return_conflict_pairs=False,
 ):
     # class_logit_bias = get_class_bias(netF, netB, netC)
     start_test = True
@@ -822,8 +743,6 @@ def obtain_label(
         confi_dis,
         clip_all_output,
     )
-    if return_conflict_pairs:
-        result += (all_output_pred.long(), clip_all_output_pred.long())
     if not return_diagnostics:
         return result
     audit_payload = {

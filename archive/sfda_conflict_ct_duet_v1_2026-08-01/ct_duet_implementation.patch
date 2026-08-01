@@ -1,0 +1,595 @@
+diff --git a/duet-sfda-main/README.md b/duet-sfda-main/README.md
+index bddbb97..d287f04 100644
+--- a/duet-sfda-main/README.md
++++ b/duet-sfda-main/README.md
+@@ -63,6 +63,19 @@ After training the source model, modify `conf.py` to set `${CKPT_DIR}` to the di
+ CUDA_VISIBLE_DEVICES=0 python image_target_of_oh_vs.py --cfg "cfgs/office-home/plmatch.yaml" SETTING.S 0 SETTING.T 1
+ ```
+ 
++### CT-DUET VisDA-C 实验
++
++CT-DUET 保留发布版 DUET 的正伪标签、weak/strong consistency、CLIP KL、
++TMI 和 monotonic memory。对于尚未准入且 task/CLIP top-1 冲突的样本，
++它把候选对之外的 `C-2` 个类别作为互补标签；样本后续达成一致后自动
++转回原始 DUET 正标签训练。该路径不使用第三方视觉模型或额外分类头。
++
++脚本会直接覆盖它自己的固定输出目录：
++
++```bash
++bash tools/run_visda_ct_duet.sh
++```
++
+ ### DomainNet-126
+ 
+ ```bash
+diff --git a/duet-sfda-main/cfgs/visda/ct_duet.yaml b/duet-sfda-main/cfgs/visda/ct_duet.yaml
+new file mode 100644
+index 0000000..76ba162
+--- /dev/null
++++ b/duet-sfda-main/cfgs/visda/ct_duet.yaml
+@@ -0,0 +1,39 @@
++MODEL:
++  ARCH: resnet101
++  METHOD: ct_duet
++SETTING:
++  DATASET: VISDA-C
++  S: 0
++  T: 1
++  SEED: 2020
++  OUTPUT_SRC: source
++OPTIM:
++  METHOD: SGD
++  MOMENTUM: 0.9
++  LR: 0.001
++  WD: 1e-3
++  NESTEROV: TRUE
++TEST:
++  BATCH_SIZE: 64
++  MAX_EPOCH: 4
++  INTERVAL: 4
++ACTIVE:
++  CYCLE: 8
++  CLS_PAR: 0.4
++  EPSILON: 1e-5
++  GENT_PAR: 0.1
++  ARCH: ViT-B/32
++  TTA_STEPS: 1
++  CTX_INIT: a_photo_of_a
++  N_CTX: 4
++  LOAD: None
++  IIC_PAR: 1.0
++  FINE_LR: 1e-7
++  Q_VALUE: 1.05
++  BETA: 0.99
++  CON_PAR: 0.2
++  KL_PAR: 0.4
++  ADAPTATION_LIST: ""
++DUET_FCP:
++  # 与当前主线一致：prior 只在第一个 cycle 生效。
++  POWER: 0.5
+diff --git a/duet-sfda-main/image_target_of_oh_vs.py b/duet-sfda-main/image_target_of_oh_vs.py
+index 0f34909..f325b4a 100644
+--- a/duet-sfda-main/image_target_of_oh_vs.py
++++ b/duet-sfda-main/image_target_of_oh_vs.py
+@@ -19,6 +19,7 @@ import src.methods.oh.adacontrast as ADACONTRAST
+ import src.methods.oh.source as SOURCE
+ import src.methods.oh.plmatch as PLMATCH
+ import src.methods.oh.duet_first_cycle_prior as DUET_FCP
++import src.methods.oh.ct_duet as CT_DUET
+ import src.methods.oh.plum as PLUM
+ 
+ from conf import cfg, load_cfg_from_args
+@@ -119,6 +120,13 @@ if __name__ == "__main__":
+         print("using DUET with first-cycle prior")
+         acc = DUET_FCP.train_target(cfg)
+ 
++    elif (
++        cfg.MODEL.METHOD == "ct_duet"
++        or cfg.MODEL.METHOD.startswith("ct_duet_")
++    ):
++        print("using CT-DUET complementary transition")
++        acc = CT_DUET.train_target(cfg)
++
+     elif cfg.MODEL.METHOD == "plum":
+         print("using plum method")
+         acc = PLUM.train_target(cfg)
+diff --git a/duet-sfda-main/src/methods/oh/ct_duet.py b/duet-sfda-main/src/methods/oh/ct_duet.py
+new file mode 100644
+index 0000000..eec2343
+--- /dev/null
++++ b/duet-sfda-main/src/methods/oh/ct_duet.py
+@@ -0,0 +1,16 @@
++"""CT-DUET：以冲突互补标签补全 DUET 的正标签准入流程。"""
++
++from src.methods.oh import plmatch
++
++
++def train_target(cfg):
++    """运行首轮 prior + 冲突负监督到一致正监督的 CT-DUET。
++
++    主循环、CLIP 更新、monotonic pseudo-label memory、consistency 与 CLIP
++    KL 均来自发布版 DUET。新增机制只作用于尚未准入的 task/CLIP 冲突样本。
++    """
++    return plmatch.train_target(
++        cfg,
++        first_cycle_prior=True,
++        complementary_transition=True,
++    )
+diff --git a/duet-sfda-main/src/methods/oh/plmatch.py b/duet-sfda-main/src/methods/oh/plmatch.py
+index 5a8b31d..3c4200e 100644
+--- a/duet-sfda-main/src/methods/oh/plmatch.py
++++ b/duet-sfda-main/src/methods/oh/plmatch.py
+@@ -33,6 +33,7 @@ from sklearn.metrics import confusion_matrix
+ from src.utils.adaptation_lists import load_adaptation_and_evaluation_rows
+ from src.utils.failure_audit import save_failure_audit_snapshot
+ from src.utils.first_cycle_prior import apply_first_cycle_prior
++from src.utils.complementary_learning import complementary_conflict_loss
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -356,12 +357,18 @@ def spectral_entropy(text_features, EPS=1e-9):
+     return spectral_ent
+ 
+ 
+-def train_target(cfg, *, first_cycle_prior=False):
+-    """训练原始 DUET，或仅增加首轮 prior 的 DUET-FCP。
++def train_target(
++    cfg,
++    *,
++    first_cycle_prior=False,
++    complementary_transition=False,
++):
++    """训练原始 DUET、DUET-FCP 或 CT-DUET。
+ 
+     ``first_cycle_prior=False`` 是发布版 DUET 的原始路径。DUET-FCP 入口只把
+     该参数设为 ``True``；stable memory、target head、graph teacher 和 GTR
+-    均不在本文件中，因此不会混入候选。
++    均不在本文件中，因此不会混入候选。CT-DUET 额外把尚未准入的冲突
++    转换为互补标签监督，并在其后续达成一致时自然切回原始正标签监督。
+     """
+     if first_cycle_prior and cfg.DUET_FCP.POWER < 0:
+         raise ValueError("DUET_FCP.POWER must be non-negative")
+@@ -371,6 +378,12 @@ def train_target(cfg, *, first_cycle_prior=False):
+             float(cfg.DUET_FCP.POWER) if first_cycle_prior else 0.0,
+         )
+     )
++    logging.info(
++        "CT-DUET complementary transition: enabled={}; weight=CLS_PAR={:.3f}".format(
++            bool(complementary_transition),
++            float(cfg.ACTIVE.CLS_PAR) if complementary_transition else 0.0,
++        )
++    )
+     clip_model, preprocess, _ = clip.load(cfg.ACTIVE.ARCH)
+     clip_model.float()
+     text_inputs = clip_pre_text(cfg)
+@@ -456,16 +469,42 @@ def train_target(cfg, *, first_cycle_prior=False):
+                 float(cfg.DUET_FCP.POWER) if first_cycle_prior else 0.0
+             ),
+             prior_epsilon=float(cfg.ACTIVE.EPSILON),
++            return_conflict_pairs=complementary_transition,
+         )
+-        if cfg.FAILURE_AUDIT.ENABLED:
++        if cfg.FAILURE_AUDIT.ENABLED and complementary_transition:
+             (
+                 mem_label,
+                 label_mask,
+                 confi_imag,
+                 confi_dis,
+                 clip_soft,
++                task_candidate,
++                clip_candidate,
+                 audit_payload,
+             ) = label_result
++        elif cfg.FAILURE_AUDIT.ENABLED:
++            (
++                mem_label,
++                label_mask,
++                confi_imag,
++                confi_dis,
++                clip_soft,
++                audit_payload,
++            ) = label_result
++        elif complementary_transition:
++            (
++                mem_label,
++                label_mask,
++                confi_imag,
++                confi_dis,
++                clip_soft,
++                task_candidate,
++                clip_candidate,
++            ) = label_result
++        else:
++            mem_label, label_mask, confi_imag, confi_dis, clip_soft = label_result
++
++        if cfg.FAILURE_AUDIT.ENABLED:
+             save_failure_audit_snapshot(
+                 cfg,
+                 f"pre_cycle{curr_cycle + 1:02d}.npz",
+@@ -474,8 +513,20 @@ def train_target(cfg, *, first_cycle_prior=False):
+                 phase=np.array("pre_cycle"),
+                 **audit_payload,
+             )
+-        else:
+-            mem_label, label_mask, confi_imag, confi_dis, clip_soft = label_result
++
++        if complementary_transition:
++            unresolved_mask = (~label_mask) & task_candidate.ne(clip_candidate)
++            unresolved_count = int(unresolved_mask.sum().item())
++            logging.info(
++                "CT-DUET refresh: cycle={}; selected={}; unresolved_conflicts={}".format(
++                    curr_cycle + 1,
++                    int(label_mask.sum().item()),
++                    unresolved_count,
++                )
++            )
++            comp_loss_sum = 0.0
++            comp_mass_sum = 0.0
++            comp_update_count = 0
+         clip_soft = clip_soft.cuda()
+         mem_label = mem_label.cuda()
+         prev_label_mask = label_mask
+@@ -526,6 +577,20 @@ def train_target(cfg, *, first_cycle_prior=False):
+                 supervised_logits = weak_logits[label_mask[tar_idx]]
+                 if pred.size(0) != 0:
+                     classifier_loss += nn.CrossEntropyLoss()(supervised_logits, pred) * cfg.ACTIVE.CLS_PAR
++            if complementary_transition:
++                batch_selected = label_mask[tar_idx]
++                comp_loss, comp_stats = complementary_conflict_loss(
++                    strong_logits,
++                    task_candidate[tar_idx],
++                    clip_candidate[tar_idx],
++                    batch_selected,
++                    epsilon=float(cfg.ACTIVE.EPSILON),
++                )
++                classifier_loss += comp_loss * cfg.ACTIVE.CLS_PAR
++                comp_count = comp_stats["count"]
++                comp_loss_sum += comp_stats["mean_loss"] * comp_count
++                comp_mass_sum += comp_stats["outside_mass"] * comp_count
++                comp_update_count += comp_count
+             # pseudo_output = weak_preds[filtered_idx]
+             clip_soft_batch = clip_soft[tar_idx]
+             # mixed_soft_batch = confi_dis[tar_idx].cuda()
+@@ -562,6 +627,19 @@ def train_target(cfg, *, first_cycle_prior=False):
+                 netF.train()
+                 netB.train()
+                 # netC.train()
++        if complementary_transition:
++            normalizer = max(comp_update_count, 1)
++            logging.info(
++                "CT-DUET cycle summary: cycle={}; unresolved_conflicts={}; "
++                "conflict_updates={}; mean_comp_loss={:.6f}; "
++                "mean_outside_mass={:.6f}".format(
++                    curr_cycle + 1,
++                    unresolved_count,
++                    comp_update_count,
++                    comp_loss_sum / normalizer,
++                    comp_mass_sum / normalizer,
++                )
++            )
+         curr_cycle += 1
+ 
+     if cfg.FAILURE_AUDIT.ENABLED:
+@@ -617,6 +695,7 @@ def obtain_label(
+     first_cycle_prior=False,
+     prior_power=0.5,
+     prior_epsilon=1e-6,
++    return_conflict_pairs=False,
+ ):
+     # class_logit_bias = get_class_bias(netF, netB, netC)
+     start_test = True
+@@ -743,6 +822,8 @@ def obtain_label(
+         confi_dis,
+         clip_all_output,
+     )
++    if return_conflict_pairs:
++        result += (all_output_pred.long(), clip_all_output_pred.long())
+     if not return_diagnostics:
+         return result
+     audit_payload = {
+diff --git a/duet-sfda-main/src/utils/complementary_learning.py b/duet-sfda-main/src/utils/complementary_learning.py
+new file mode 100644
+index 0000000..ad3be49
+--- /dev/null
++++ b/duet-sfda-main/src/utils/complementary_learning.py
+@@ -0,0 +1,73 @@
++"""CT-DUET 的互补标签损失；不依赖数据集或模型实现。"""
++
++from __future__ import annotations
++
++import torch
++import torch.nn.functional as F
++
++
++def complementary_conflict_loss(
++    strong_logits: torch.Tensor,
++    task_labels: torch.Tensor,
++    clip_labels: torch.Tensor,
++    selected_mask: torch.Tensor,
++    epsilon: float = 1e-5,
++) -> tuple[torch.Tensor, dict[str, float | int]]:
++    """用冲突候选对的补集构造负标签监督。
++
++    task/CLIP 冲突不能可靠地回答两个 top-1 中谁正确，但二者共同排除的
++    ``C-2`` 个类别仍然提供稠密负监督。这里只训练尚未被 DUET monotonic
++    memory 准入的冲突样本；已准入样本继续完全使用原始 DUET 正标签 CE。
++
++    返回的统计量只用于日志，不参与反向传播。
++    """
++    if strong_logits.ndim != 2:
++        raise ValueError("strong_logits must have shape [batch, classes]")
++    num_classes = strong_logits.size(1)
++    if num_classes <= 2:
++        raise ValueError("CT-DUET requires more than two classes")
++
++    batch_size = strong_logits.size(0)
++    for name, value in (
++        ("task_labels", task_labels),
++        ("clip_labels", clip_labels),
++        ("selected_mask", selected_mask),
++    ):
++        if value.ndim != 1 or value.size(0) != batch_size:
++            raise ValueError(f"{name} must have shape [batch]")
++
++    task_labels = task_labels.to(device=strong_logits.device, dtype=torch.long)
++    clip_labels = clip_labels.to(device=strong_logits.device, dtype=torch.long)
++    selected_mask = selected_mask.to(
++        device=strong_logits.device, dtype=torch.bool
++    )
++    conflict_mask = (~selected_mask) & task_labels.ne(clip_labels)
++    conflict_count = int(conflict_mask.sum().item())
++    if conflict_count == 0:
++        zero = strong_logits.sum() * 0.0
++        return zero, {"count": 0, "mean_loss": 0.0, "outside_mass": 0.0}
++
++    conflict_probs = F.softmax(strong_logits[conflict_mask], dim=1)
++    negative_mask = torch.ones_like(conflict_probs, dtype=torch.bool)
++    negative_mask.scatter_(
++        1, task_labels[conflict_mask].unsqueeze(1), False
++    )
++    negative_mask.scatter_(
++        1, clip_labels[conflict_mask].unsqueeze(1), False
++    )
++
++    # 与 FullMatch 的 negative learning 一致，类别维求和、batch 维平均。
++    # 这样后期只剩少量困难冲突时，损失会随冲突占比自然衰减，不会让一个
++    # 残余冲突支配整个 mini-batch。
++    safe_probs = conflict_probs.clamp(max=1.0 - float(epsilon))
++    per_class_loss = -torch.log1p(-safe_probs)
++    per_sample_loss = per_class_loss.masked_fill(~negative_mask, 0.0).sum(dim=1)
++    outside_mass = (
++        conflict_probs.masked_fill(~negative_mask, 0.0).sum(dim=1).mean()
++    )
++    training_loss = per_sample_loss.sum() / float(batch_size)
++    return training_loss, {
++        "count": conflict_count,
++        "mean_loss": float(per_sample_loss.detach().mean().item()),
++        "outside_mass": float(outside_mass.detach().item()),
++    }
+diff --git a/duet-sfda-main/tests/test_ct_duet.py b/duet-sfda-main/tests/test_ct_duet.py
+new file mode 100644
+index 0000000..320529b
+--- /dev/null
++++ b/duet-sfda-main/tests/test_ct_duet.py
+@@ -0,0 +1,121 @@
++import ast
++import unittest
++from pathlib import Path
++
++import torch
++import yaml
++
++from src.utils.complementary_learning import complementary_conflict_loss
++
++
++class ComplementaryConflictLossTest(unittest.TestCase):
++    def test_uses_only_unselected_conflicts_and_excludes_both_candidates(self):
++        logits = torch.tensor(
++            [
++                [2.0, 1.0, 0.5, -0.5],
++                [0.0, 2.0, 1.0, -1.0],
++                [0.0, 0.0, 2.0, -1.0],
++            ],
++            requires_grad=True,
++        )
++        task_labels = torch.tensor([0, 1, 2])
++        clip_labels = torch.tensor([1, 2, 2])
++        selected_mask = torch.tensor([False, True, False])
++
++        value, stats = complementary_conflict_loss(
++            logits, task_labels, clip_labels, selected_mask
++        )
++        probs = logits[0].softmax(dim=0)
++        conflict_loss = -torch.log1p(-probs[2]) - torch.log1p(-probs[3])
++        expected = conflict_loss / logits.size(0)
++
++        self.assertTrue(torch.allclose(value, expected))
++        self.assertEqual(stats["count"], 1)
++        self.assertAlmostEqual(stats["mean_loss"], float(conflict_loss.item()))
++        self.assertAlmostEqual(
++            stats["outside_mass"], float((probs[2] + probs[3]).item())
++        )
++
++        value.backward()
++        self.assertGreater(float(logits.grad[0].abs().sum()), 0.0)
++        self.assertEqual(float(logits.grad[1].abs().sum()), 0.0)
++        self.assertEqual(float(logits.grad[2].abs().sum()), 0.0)
++
++    def test_zero_conflict_result_remains_differentiable(self):
++        logits = torch.randn(3, 4, requires_grad=True)
++        value, stats = complementary_conflict_loss(
++            logits,
++            torch.tensor([0, 1, 2]),
++            torch.tensor([0, 2, 2]),
++            torch.tensor([False, True, False]),
++        )
++
++        self.assertEqual(float(value.item()), 0.0)
++        self.assertEqual(
++            stats, {"count": 0, "mean_loss": 0.0, "outside_mass": 0.0}
++        )
++        value.backward()
++        self.assertEqual(float(logits.grad.abs().sum()), 0.0)
++
++    def test_rejects_binary_classification(self):
++        with self.assertRaisesRegex(ValueError, "more than two classes"):
++            complementary_conflict_loss(
++                torch.randn(2, 2),
++                torch.tensor([0, 0]),
++                torch.tensor([1, 1]),
++                torch.tensor([False, False]),
++            )
++
++
++class CTDuetContractTest(unittest.TestCase):
++    def test_config_matches_first_cycle_prior_except_method(self):
++        baseline = yaml.safe_load(
++            Path("cfgs/visda/duet_first_cycle_prior.yaml").read_text()
++        )
++        candidate = yaml.safe_load(Path("cfgs/visda/ct_duet.yaml").read_text())
++        candidate["MODEL"]["METHOD"] = baseline["MODEL"]["METHOD"]
++        self.assertEqual(candidate, baseline)
++
++    def test_wrapper_enables_only_prior_and_complementary_transition(self):
++        wrapper = Path("src/methods/oh/ct_duet.py").read_text()
++        self.assertIn("first_cycle_prior=True", wrapper)
++        self.assertIn("complementary_transition=True", wrapper)
++        for removed_component in (
++            "target_head",
++            "graph_teacher",
++            "gtr",
++            "dino",
++        ):
++            self.assertNotIn(removed_component, wrapper.lower())
++
++    def test_original_duet_defaults_to_complementary_transition_disabled(self):
++        tree = ast.parse(Path("src/methods/oh/plmatch.py").read_text())
++        train_target = next(
++            node
++            for node in tree.body
++            if isinstance(node, ast.FunctionDef) and node.name == "train_target"
++        )
++        obtain_label = next(
++            node
++            for node in tree.body
++            if isinstance(node, ast.FunctionDef) and node.name == "obtain_label"
++        )
++
++        self.assertFalse(train_target.args.kw_defaults[-1].value)
++        self.assertFalse(obtain_label.args.defaults[-1].value)
++
++    def test_dispatch_and_cloud_script_are_dedicated(self):
++        entrypoint = Path("image_target_of_oh_vs.py").read_text()
++        self.assertIn('cfg.MODEL.METHOD.startswith("ct_duet_")', entrypoint)
++        self.assertIn("import src.methods.oh.ct_duet as CT_DUET", entrypoint)
++
++        script = Path("tools/run_visda_ct_duet.sh").read_text()
++        self.assertIn("--cfg cfgs/visda/ct_duet.yaml", script)
++        self.assertIn('method="ct_duet_visda_full_seed${seed}"', script)
++        self.assertIn('rm -rf -- "$run_dir"', script)
++        self.assertIn('ACTIVE.CYCLE 8', script)
++        self.assertIn('grep -c "CT-DUET cycle summary"', script)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/duet-sfda-main/tests/test_duet_fcp_contract.py b/duet-sfda-main/tests/test_duet_fcp_contract.py
+index e73e12b..fb30ab1 100644
+--- a/duet-sfda-main/tests/test_duet_fcp_contract.py
++++ b/duet-sfda-main/tests/test_duet_fcp_contract.py
+@@ -37,8 +37,21 @@ class DuetFCPContractTest(unittest.TestCase):
+             if isinstance(node, ast.FunctionDef) and node.name == "obtain_label"
+         )
+ 
+-        train_default = train_target.args.kw_defaults[-1]
+-        obtain_default = obtain_label.args.defaults[-3]
++        train_defaults = dict(
++            zip(
++                (arg.arg for arg in train_target.args.kwonlyargs),
++                train_target.args.kw_defaults,
++            )
++        )
++        positional_default_names = [
++            arg.arg
++            for arg in obtain_label.args.args[-len(obtain_label.args.defaults):]
++        ]
++        obtain_defaults = dict(
++            zip(positional_default_names, obtain_label.args.defaults)
++        )
++        train_default = train_defaults["first_cycle_prior"]
++        obtain_default = obtain_defaults["first_cycle_prior"]
+         self.assertIsInstance(train_default, ast.Constant)
+         self.assertFalse(train_default.value)
+         self.assertIsInstance(obtain_default, ast.Constant)
+diff --git a/duet-sfda-main/tools/run_visda_ct_duet.sh b/duet-sfda-main/tools/run_visda_ct_duet.sh
+new file mode 100755
+index 0000000..dfd59e3
+--- /dev/null
++++ b/duet-sfda-main/tools/run_visda_ct_duet.sh
+@@ -0,0 +1,66 @@
++#!/usr/bin/env bash
++set -euo pipefail
++shopt -s nullglob
++
++seed=2020
++method="ct_duet_visda_full_seed${seed}"
++run_dir="output/uda/VISDA-C/TV/${method}"
++result_dir="output/uda/VISDA-C"
++
++for path in \
++  data/VISDA-C/train_list.txt \
++  data/VISDA-C/validation_list.txt \
++  data/VISDA-C/classname.txt \
++  source/uda/VISDA-C/T/source_F.pt \
++  source/uda/VISDA-C/T/source_B.pt \
++  source/uda/VISDA-C/T/source_C.pt; do
++  if [ ! -f "$path" ]; then
++    echo "Missing VisDA-C input: $path" >&2
++    exit 1
++  fi
++done
++
++# 用户要求可直接重跑，因此只覆盖这个脚本自己的固定输出目录。
++case "$run_dir" in
++  output/uda/VISDA-C/TV/ct_duet_visda_full_seed2020) ;;
++  *)
++    echo "Refusing to clear unexpected VisDA-C path: $run_dir" >&2
++    exit 1
++    ;;
++esac
++rm -rf -- "$run_dir"
++
++echo "==> CT-DUET VisDA-C full target, 8 cycles, seed=${seed}"
++python image_target_of_oh_vs.py \
++  --cfg cfgs/visda/ct_duet.yaml \
++  CKPT_DIR . SETTING.OUTPUT_SRC source \
++  MODEL.METHOD "$method" \
++  SETTING.SEED "$seed" SETTING.S 0 SETTING.T 1 \
++  ACTIVE.CYCLE 8
++
++logs=("$run_dir"/*.txt)
++if [ "${#logs[@]}" -ne 1 ]; then
++  echo "Expected exactly one VisDA-C log, found ${#logs[@]}" >&2
++  exit 1
++fi
++if [ "$(grep -c "CT-DUET complementary transition: enabled=True" "${logs[0]}")" -ne 1 ]; then
++  echo "CT-DUET activation contract failed" >&2
++  exit 1
++fi
++if [ "$(grep -c "CT-DUET cycle summary" "${logs[0]}")" -ne 8 ]; then
++  echo "CT-DUET did not emit all eight cycle summaries" >&2
++  exit 1
++fi
++if [ "$(grep -c "Task: TV" "${logs[0]}")" -ne 32 ]; then
++  echo "VisDA-C did not finish 8 cycles / 32 checkpoints" >&2
++  exit 1
++fi
++
++python tools/summarize_visda_run.py \
++  --glob "$run_dir/*.txt" \
++  --out "$result_dir/ct_duet_visda_seed2020_summary.json" \
++  --csv-out "$result_dir/ct_duet_visda_seed2020_per_class.csv" \
++  --class-names data/VISDA-C/classname.txt
++
++echo "==> Baseline gate: final > 91.50 and oracle peak > 91.52"
++echo "==> Summary: $result_dir/ct_duet_visda_seed2020_summary.json"

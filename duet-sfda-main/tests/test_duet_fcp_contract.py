@@ -37,21 +37,8 @@ class DuetFCPContractTest(unittest.TestCase):
             if isinstance(node, ast.FunctionDef) and node.name == "obtain_label"
         )
 
-        train_defaults = dict(
-            zip(
-                (arg.arg for arg in train_target.args.kwonlyargs),
-                train_target.args.kw_defaults,
-            )
-        )
-        positional_default_names = [
-            arg.arg
-            for arg in obtain_label.args.args[-len(obtain_label.args.defaults):]
-        ]
-        obtain_defaults = dict(
-            zip(positional_default_names, obtain_label.args.defaults)
-        )
-        train_default = train_defaults["first_cycle_prior"]
-        obtain_default = obtain_defaults["first_cycle_prior"]
+        train_default = train_target.args.kw_defaults[-1]
+        obtain_default = obtain_label.args.defaults[-3]
         self.assertIsInstance(train_default, ast.Constant)
         self.assertFalse(train_default.value)
         self.assertIsInstance(obtain_default, ast.Constant)

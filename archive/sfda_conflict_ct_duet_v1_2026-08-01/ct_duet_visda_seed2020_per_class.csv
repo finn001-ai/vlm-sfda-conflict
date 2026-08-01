@@ -1,0 +1,13 @@
+class,final_accuracy,peak_checkpoint_accuracy
+aeroplane,98.63,98.66
+bicycle,90.04,91.54
+bus,88.98,88.57
+car,79.4,78.38
+horse,98.15,98.12
+knife,97.93,97.98
+motorcycle,95.82,95.5
+person,84.95,82.55
+plant,95.98,96.39
+skateboard,97.19,97.81
+train,95.25,95.09
+truck,75.58,77.52
