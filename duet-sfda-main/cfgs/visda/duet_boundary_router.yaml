@@ -1,6 +1,6 @@
 MODEL:
   ARCH: resnet101
-  METHOD: duet_first_cycle_prior
+  METHOD: duet_boundary_router
 SETTING:
   DATASET: VISDA-C
   S: 0
@@ -34,5 +34,5 @@ ACTIVE:
   CON_PAR: 0.2
   KL_PAR: 0.4
   ADAPTATION_LIST: ""
-DUET_FCP:
-  POWER: 0.5
+DUET_BOUNDARY:
+  TOP_FRACTION: 0.2

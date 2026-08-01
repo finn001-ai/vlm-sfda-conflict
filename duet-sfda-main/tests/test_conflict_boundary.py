@@ -8,6 +8,7 @@ from src.utils.conflict_boundary import (
     fixed_fraction_mask,
     paired_accuracy_bootstrap_ci,
     pairwise_first_order_boundary,
+    route_conflict_probabilities,
 )
 
 
@@ -48,6 +49,43 @@ class ConflictBoundaryTest(unittest.TestCase):
         )
         self.assertEqual(low, 100.0)
         self.assertEqual(high, 100.0)
+
+    def test_routing_changes_only_fixed_top_conflicts(self):
+        task_prob = torch.tensor(
+            [
+                [0.8, 0.2],
+                [0.9, 0.1],
+                [0.7, 0.3],
+                [0.6, 0.4],
+            ]
+        )
+        clip_prob = torch.tensor(
+            [
+                [0.6, 0.4],
+                [0.2, 0.8],
+                [0.4, 0.6],
+                [0.3, 0.7],
+            ]
+        )
+        conflict = torch.tensor([False, True, True, True])
+        task_radius = torch.tensor([0.0, 8.0, 1.0, 2.0])
+        clip_radius = torch.tensor([0.0, 1.0, 5.0, 1.0])
+
+        fused, selected, choose_task, _ = route_conflict_probabilities(
+            task_prob,
+            clip_prob,
+            conflict,
+            task_radius,
+            clip_radius,
+            fraction=0.34,
+        )
+
+        self.assertEqual(selected.tolist(), [False, True, True, False])
+        self.assertEqual(choose_task.tolist(), [False, True, False, True])
+        self.assertTrue(torch.allclose(fused[1], task_prob[1]))
+        self.assertTrue(torch.allclose(fused[2], clip_prob[2]))
+        self.assertTrue(torch.allclose(fused[0], (task_prob[0] + clip_prob[0]) / 2))
+        self.assertTrue(torch.allclose(fused[3], (task_prob[3] + clip_prob[3]) / 2))
 
 
 if __name__ == "__main__":

@@ -31,9 +31,12 @@ from data.cls_to_names import *
 from data.domain_datasets import domain_datasets
 from sklearn.metrics import confusion_matrix
 from src.utils.adaptation_lists import load_adaptation_and_evaluation_rows
+from src.utils.conflict_boundary import (
+    pairwise_first_order_boundary,
+    route_conflict_probabilities,
+)
 from src.utils.failure_audit import save_failure_audit_snapshot
 from src.utils.first_cycle_prior import apply_first_cycle_prior
-from src.utils.probability_fusion import fuse_probabilities
 
 logger = logging.getLogger(__name__)
 
@@ -357,19 +360,34 @@ def spectral_entropy(text_features, EPS=1e-9):
     return spectral_ent
 
 
-def train_target(cfg, *, first_cycle_prior=False):
-    """训练原始 DUET，或仅增加首轮 prior 的 DUET-FCP。
+def train_target(cfg, *, first_cycle_prior=False, boundary_router=False):
+    """训练原始 DUET，或启用一个明确隔离的候选改动。
 
     ``first_cycle_prior=False`` 是发布版 DUET 的原始路径。DUET-FCP 入口只把
     该参数设为 ``True``；stable memory、target head、graph teacher 和 GTR
     均不在本文件中，因此不会混入候选。
+
+    ``boundary_router=True`` 仅在首轮未准入冲突中，将固定 top fraction 的
+    算术融合软分布替换为局部边界距离更大的完整 task 或 CLIP 分布。硬 CE
+    mask、consistency、KL 和所有优化器均保持发布版 DUET 不变。
     """
+    if first_cycle_prior and boundary_router:
+        raise ValueError("first_cycle_prior and boundary_router are separate candidates")
     if first_cycle_prior and cfg.DUET_FCP.POWER < 0:
         raise ValueError("DUET_FCP.POWER must be non-negative")
+    boundary_fraction = float(cfg.DUET_BOUNDARY.TOP_FRACTION)
+    if boundary_router and not 0.0 < boundary_fraction <= 1.0:
+        raise ValueError("DUET_BOUNDARY.TOP_FRACTION must be in (0, 1]")
     logging.info(
         "DUET first-cycle prior: enabled={}; power={:.3f}".format(
             bool(first_cycle_prior),
             float(cfg.DUET_FCP.POWER) if first_cycle_prior else 0.0,
+        )
+    )
+    logging.info(
+        "DUET boundary router: enabled={}; first_cycle_only=True; top_fraction={:.3f}".format(
+            bool(boundary_router),
+            boundary_fraction,
         )
     )
     clip_model, preprocess, _ = clip.load(cfg.ACTIVE.ARCH)
@@ -457,6 +475,8 @@ def train_target(cfg, *, first_cycle_prior=False):
                 float(cfg.DUET_FCP.POWER) if first_cycle_prior else 0.0
             ),
             prior_epsilon=float(cfg.ACTIVE.EPSILON),
+            boundary_router=boundary_router,
+            boundary_top_fraction=boundary_fraction,
         )
         if cfg.FAILURE_AUDIT.ENABLED:
             (
@@ -618,9 +638,12 @@ def obtain_label(
     first_cycle_prior=False,
     prior_power=0.5,
     prior_epsilon=1e-6,
+    boundary_router=False,
+    boundary_top_fraction=0.2,
 ):
     # class_logit_bias = get_class_bias(netF, netB, netC)
     start_test = True
+    collect_boundary = bool(boundary_router and curr_cycle == 0)
     with torch.no_grad():
         iter_test = iter(loader)
         for _ in range(len(loader)):
@@ -641,11 +664,58 @@ def obtain_label(
             else:
                 clip_score, _ = clip_model(weak_x, text_inputs)
 
+            if collect_boundary:
+                batch_task_pred = weak_outputs.argmax(dim=1)
+                batch_clip_pred = clip_score.argmax(dim=1)
+                batch_conflict = batch_task_pred != batch_clip_pred
+                batch_task_radius = torch.zeros(
+                    weak_x.size(0), dtype=torch.float32, device=weak_x.device
+                )
+                batch_clip_radius = torch.zeros_like(batch_task_radius)
+                conflict_position = torch.nonzero(
+                    batch_conflict, as_tuple=False
+                ).flatten()
+                if conflict_position.numel() > 0:
+                    conflict_task_pred = batch_task_pred[conflict_position]
+                    conflict_clip_pred = batch_clip_pred[conflict_position]
+                    with torch.enable_grad():
+                        task_x = weak_x[conflict_position].detach().requires_grad_(True)
+                        task_boundary_logits = netC(netB(netF(task_x)))
+                        task_radius, _, _ = pairwise_first_order_boundary(
+                            task_boundary_logits,
+                            task_x,
+                            conflict_task_pred,
+                            conflict_clip_pred,
+                        )
+                        clip_x = weak_x[conflict_position].detach().requires_grad_(True)
+                        if text_features is None:
+                            clip_boundary_logits, _ = clip_model(clip_x, text_inputs)
+                        else:
+                            clip_boundary_features = F.normalize(
+                                clip_model.encode_image(clip_x), dim=1
+                            )
+                            clip_boundary_logits = (
+                                clip_model.logit_scale.exp()
+                                * clip_boundary_features
+                                @ text_features.t()
+                            )
+                        clip_radius, _, _ = pairwise_first_order_boundary(
+                            clip_boundary_logits,
+                            clip_x,
+                            conflict_clip_pred,
+                            conflict_task_pred,
+                        )
+                    batch_task_radius[conflict_position] = task_radius.float()
+                    batch_clip_radius[conflict_position] = clip_radius.float()
+
             clip_score = clip_score.cpu()
             if start_test:
                 all_output = weak_outputs.float().cpu()
                 all_clip_score = clip_score.float().cpu()
                 all_label = labels.float()
+                if collect_boundary:
+                    all_task_radius = batch_task_radius.cpu()
+                    all_clip_radius = batch_clip_radius.cpu()
                 if return_diagnostics:
                     all_task_features = weak_feas.float().cpu()
                     all_strong_output = strong_outputs.float().cpu()
@@ -655,6 +725,13 @@ def obtain_label(
                 all_output = torch.cat((all_output, weak_outputs.float().cpu()), 0)
                 all_label = torch.cat((all_label, labels.float()), 0)
                 all_clip_score = torch.cat((all_clip_score, clip_score.float()), 0)
+                if collect_boundary:
+                    all_task_radius = torch.cat(
+                        (all_task_radius, batch_task_radius.cpu()), 0
+                    )
+                    all_clip_radius = torch.cat(
+                        (all_clip_radius, batch_clip_radius.cpu()), 0
+                    )
                 if return_diagnostics:
                     all_task_features = torch.cat(
                         (all_task_features, weak_feas.float().cpu()), 0
@@ -716,13 +793,45 @@ def obtain_label(
     logging.info(log_str)
     # Combine outputs for confidence distribution and other uses
 
-    fusion_mode = getattr(cfg.ACTIVE, "FUSION", "arithmetic")
-    all_mix_output = fuse_probabilities(
-        all_output,
-        clip_all_output,
-        mode=fusion_mode,
-    )
-    logging.info("DUET probability fusion: %s", fusion_mode)
+    all_mix_output = (all_output + clip_all_output) / 2.0
+    boundary_payload = None
+    if collect_boundary:
+        active_conflict = (~label_mask) & (~matching_indices)
+        (
+            all_mix_output,
+            boundary_selected,
+            boundary_choose_task,
+            boundary_separation,
+        ) = route_conflict_probabilities(
+            all_output,
+            clip_all_output,
+            active_conflict,
+            all_task_radius,
+            all_clip_radius,
+            fraction=boundary_top_fraction,
+        )
+        boundary_payload = {
+            "boundary_selected": boundary_selected,
+            "boundary_choose_task": boundary_choose_task,
+            "boundary_separation": boundary_separation,
+            "task_boundary_radius": all_task_radius,
+            "clip_boundary_radius": all_clip_radius,
+        }
+        logging.info(
+            "DUET boundary routing: cycle={}; active_conflicts={}; selected={}; "
+            "choose_task={}; choose_clip={}".format(
+                curr_cycle + 1,
+                int(active_conflict.sum().item()),
+                int(boundary_selected.sum().item()),
+                int((boundary_selected & boundary_choose_task).sum().item()),
+                int((boundary_selected & ~boundary_choose_task).sum().item()),
+            )
+        )
+    elif boundary_router:
+        logging.info(
+            "DUET boundary routing: cycle={}; active_conflicts=0; selected=0; "
+            "choose_task=0; choose_clip=0".format(curr_cycle + 1)
+        )
 
     _, all_mix_output_pred = torch.max(all_mix_output, dim=1)
     valid_mixed = all_mix_output_pred[label_mask]
@@ -764,6 +873,8 @@ def obtain_label(
         "task_feature": all_task_features.float(),
         "sample_index": all_sample_index.long(),
     }
+    if boundary_payload is not None:
+        audit_payload.update(boundary_payload)
     return result + (audit_payload,)
 
 

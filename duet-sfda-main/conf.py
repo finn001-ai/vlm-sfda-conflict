@@ -268,11 +268,13 @@ _C.ACTIVE.BETA = 0.99
 _C.ACTIVE.CYCLE = 4
 _C.ACTIVE.CON_PAR = 0.2
 _C.ACTIVE.KL_PAR = 0.4
-# Released DUET uses ``arithmetic``. Research configs may opt into ``rms``.
-_C.ACTIVE.FUSION = "arithmetic"
 # Optional target-domain adaptation list. Methods that support this field use
 # it for training and pseudo-label inference while retaining full evaluation.
 _C.ACTIVE.ADAPTATION_LIST = ""
+
+# ------------------------ DUET boundary-router options ------------------- #
+_C.DUET_BOUNDARY = CfgNode()
+_C.DUET_BOUNDARY.TOP_FRACTION = 0.2
 
 # --------------------------- Failure-audit options ------------------------ #
 # These options only write read-only diagnostic snapshots. They do not alter

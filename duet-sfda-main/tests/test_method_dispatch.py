@@ -35,6 +35,19 @@ class MethodDispatchTest(unittest.TestCase):
         entrypoint = Path("image_target_of_oh_vs.py").read_text()
         self.assertNotIn("boundary_flip", entrypoint.lower())
 
+    def test_boundary_router_uses_dedicated_thin_wrapper(self):
+        entrypoint = Path("image_target_of_oh_vs.py").read_text()
+        self.assertIn(
+            'cfg.MODEL.METHOD.startswith("duet_boundary_router_")',
+            entrypoint,
+        )
+        self.assertIn(
+            "import src.methods.oh.duet_boundary_router as DUET_BOUNDARY",
+            entrypoint,
+        )
+        wrapper = Path("src/methods/oh/duet_boundary_router.py").read_text()
+        self.assertIn("plmatch.train_target(cfg, boundary_router=True)", wrapper)
+
 
 if __name__ == "__main__":
     unittest.main()

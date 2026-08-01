@@ -18,6 +18,7 @@ import src.methods.oh.plue as PLUE
 import src.methods.oh.adacontrast as ADACONTRAST
 import src.methods.oh.source as SOURCE
 import src.methods.oh.plmatch as PLMATCH
+import src.methods.oh.duet_boundary_router as DUET_BOUNDARY
 import src.methods.oh.duet_first_cycle_prior as DUET_FCP
 import src.methods.oh.plum as PLUM
 
@@ -118,6 +119,13 @@ if __name__ == "__main__":
     ):
         print("using DUET with first-cycle prior")
         acc = DUET_FCP.train_target(cfg)
+
+    elif (
+        cfg.MODEL.METHOD == "duet_boundary_router"
+        or cfg.MODEL.METHOD.startswith("duet_boundary_router_")
+    ):
+        print("using DUET with first-cycle boundary router")
+        acc = DUET_BOUNDARY.train_target(cfg)
 
     elif cfg.MODEL.METHOD == "plum":
         print("using plum method")

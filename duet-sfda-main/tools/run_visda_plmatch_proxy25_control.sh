@@ -4,6 +4,7 @@ set -euo pipefail
 method="plmatch_visda_proxy25_seed2020"
 proxy_list="data/VISDA-C/validation_proxy25_seed2020_list.txt"
 result_dir="output/uda/VISDA-C"
+control_contract_hash="${result_dir}/plmatch_visda_proxy25_seed2020_contract_sha256.txt"
 
 for path in \
   data/VISDA-C/validation_list.txt \
@@ -50,6 +51,12 @@ sha256sum source/uda/VISDA-C/T/source_{F,B,C}.pt \
   > "$result_dir/plmatch_visda_proxy25_seed2020_source_sha256.txt"
 sha256sum "$proxy_list" \
   > "$result_dir/plmatch_visda_proxy25_seed2020_proxy_sha256.txt"
+sha256sum \
+  conf.py \
+  cfgs/visda/plmatch.yaml \
+  src/methods/oh/plmatch.py \
+  src/utils/conflict_boundary.py \
+  > "$control_contract_hash"
 
 echo "==> Original PLMatch control: VisDA-C 25% adaptation, full evaluation"
 python image_target_of_oh_vs.py \

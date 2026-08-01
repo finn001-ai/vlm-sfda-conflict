@@ -83,6 +83,59 @@ def fixed_fraction_mask(scores: torch.Tensor, fraction: float) -> torch.Tensor:
     return selected
 
 
+def route_conflict_probabilities(
+    task_prob: torch.Tensor,
+    clip_prob: torch.Tensor,
+    conflict_mask: torch.Tensor,
+    task_radius: torch.Tensor,
+    clip_radius: torch.Tensor,
+    *,
+    fraction: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Route a fixed top fraction of conflicts to one complete soft view.
+
+    Non-selected samples retain released DUET's arithmetic fusion. The routing
+    signal depends only on model probabilities and boundary radii; no target
+    labels enter selection or branch choice.
+    """
+    if task_prob.shape != clip_prob.shape or task_prob.ndim != 2:
+        raise ValueError("task_prob and clip_prob must be same-shaped 2-D tensors")
+    sample_count = task_prob.size(0)
+    for name, value in (
+        ("conflict_mask", conflict_mask),
+        ("task_radius", task_radius),
+        ("clip_radius", clip_radius),
+    ):
+        if value.shape != (sample_count,):
+            raise ValueError(f"{name} must have shape ({sample_count},)")
+    if conflict_mask.dtype != torch.bool:
+        raise TypeError("conflict_mask must be boolean")
+
+    fused = (task_prob + clip_prob) / 2.0
+    selected = torch.zeros(sample_count, dtype=torch.bool, device=task_prob.device)
+    choose_task = torch.zeros_like(selected)
+    separation = torch.zeros(sample_count, dtype=task_prob.dtype, device=task_prob.device)
+    conflict_index = torch.nonzero(conflict_mask, as_tuple=False).flatten()
+    if conflict_index.numel() == 0:
+        return fused, selected, choose_task, separation
+
+    local_choice, local_separation = boundary_choice_and_separation(
+        task_radius[conflict_index],
+        clip_radius[conflict_index],
+    )
+    local_selected = fixed_fraction_mask(local_separation, fraction)
+    selected_index = conflict_index[local_selected]
+    selected[selected_index] = True
+    choose_task[conflict_index] = local_choice
+    separation[conflict_index] = local_separation.to(task_prob.dtype)
+
+    task_selected = selected & choose_task
+    clip_selected = selected & ~choose_task
+    fused[task_selected] = task_prob[task_selected]
+    fused[clip_selected] = clip_prob[clip_selected]
+    return fused, selected, choose_task, separation
+
+
 def paired_accuracy_bootstrap_ci(
     candidate_correct: np.ndarray,
     baseline_correct: np.ndarray,
