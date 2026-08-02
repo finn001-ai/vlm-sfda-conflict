@@ -51,6 +51,10 @@ from src.utils.clip_confidence_delay import (
     class_balanced_clip_confidence_delay,
 )
 from src.utils.pcgrad_parameter_runtime import run_exact_pcgrad_parameter_audit
+from src.utils.pcgrad_compatibility import (
+    build_pcgrad_parameter_correction,
+    merge_compatible_parameter_correction_,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -383,6 +387,7 @@ def train_target(
     support_conditioned_clip=False,
     support_conditioned_clip_memory=False,
     clip_confidence_delay=False,
+    pcgrad_compatibility=False,
 ):
     """训练原始 DUET，或启用一个明确隔离的候选改动。
 
@@ -409,6 +414,10 @@ def train_target(
     ``clip_confidence_delay=True`` 仅在首轮 top-1 一致样本中，按共同伪类别
     暂缓 CLIP 置信度最低的固定 10%。后续仍由原始单调 agreement 规则自然
     准入；CLIP KL、融合分布、损失权重和优化器全部保持不变。
+
+    ``pcgrad_compatibility=True`` 仅在 cycle 2 对尚未准入的冲突样本组合
+    consistency 与 CLIP-KL 的输出梯度。PCGrad 修正量再按其与完整 DUET
+    参数梯度的非负投影比例截断；其余 cycle、目标、mask、权重和优化器不变。
     """
     candidate_count = sum(
         bool(value)
@@ -419,6 +428,7 @@ def train_target(
             support_conditioned_clip,
             support_conditioned_clip_memory,
             clip_confidence_delay,
+            pcgrad_compatibility,
         )
     )
     if candidate_count > 1:
@@ -434,6 +444,16 @@ def train_target(
     ):
         raise ValueError(
             "PCGrad parameter audit is locked to VisDA-C, two cycles, "
+            "batch size 64, and FAILURE_AUDIT disabled"
+        )
+    if pcgrad_compatibility and (
+        cfg.SETTING.DATASET != "VISDA-C"
+        or int(cfg.ACTIVE.CYCLE) != 4
+        or int(cfg.TEST.BATCH_SIZE) != 64
+        or cfg.FAILURE_AUDIT.ENABLED
+    ):
+        raise ValueError(
+            "PCGrad compatibility is locked to VisDA-C, four cycles, "
             "batch size 64, and FAILURE_AUDIT disabled"
         )
     if first_cycle_prior and cfg.DUET_FCP.POWER < 0:
@@ -518,6 +538,12 @@ def train_target(
             parameter_audit
         )
     )
+    logging.info(
+        "DUET PCGrad compatibility: enabled={}; active_cycle=2; "
+        "fraction=clip(dot(full_duet_grad,pcgrad_correction)/"
+        "norm2(pcgrad_correction),0,1); target_labels=False; "
+        "fitted_thresholds=False".format(bool(pcgrad_compatibility))
+    )
     clip_model, preprocess, _ = clip.load(cfg.ACTIVE.ARCH)
     clip_model.float()
     text_inputs = clip_pre_text(cfg)
@@ -563,6 +589,12 @@ def train_target(
 
     optimizer = optim.SGD(param_group)
     optimizer = op_copy(optimizer)
+    trainable_parameters = tuple(
+        parameter
+        for model in (netF, netB)
+        for parameter in model.parameters()
+        if parameter.requires_grad
+    )
 
     for param in clip_model.transformer.parameters():
         param.requires_grad = False
@@ -709,6 +741,11 @@ def train_target(
         netF.train()
         netB.train()
         # netC.train()
+        compatibility_batches = 0
+        compatibility_applied_batches = 0
+        compatibility_unresolved = 0
+        compatibility_output_active = 0
+        compatibility_fraction_sum = 0.0
         while iter_num < max_iter:
             try:
                 inputs_test, _, tar_idx = next(iter_test)
@@ -753,8 +790,39 @@ def train_target(
             mi_loss = F.kl_div(weak_preds.log(), clip_soft_batch, reduction="batchmean")
             classifier_loss += mi_loss * cfg.ACTIVE.KL_PAR
 
+            correction_payload = None
+            if pcgrad_compatibility and curr_cycle == 1:
+                unresolved_batch = (~label_mask[tar_idx]).to(
+                    weak_logits.device, non_blocking=True
+                )
+                correction_payload = build_pcgrad_parameter_correction(
+                    weak_logits=weak_logits,
+                    strong_logits=strong_logits,
+                    weak_probability=weak_preds,
+                    strong_probability=nn.Softmax(dim=1)(strong_logits),
+                    clip_target=clip_soft_batch,
+                    unresolved_mask=unresolved_batch,
+                    parameters=trainable_parameters,
+                    consistency_weight=float(cfg.ACTIVE.CON_PAR),
+                    clip_weight=float(cfg.ACTIVE.KL_PAR),
+                )
+
             optimizer.zero_grad()
             classifier_loss.backward()
+            if correction_payload is not None:
+                compatibility = merge_compatible_parameter_correction_(
+                    trainable_parameters,
+                    correction_payload["parameter_correction"],
+                )
+                compatibility_batches += 1
+                compatibility_applied_batches += int(
+                    compatibility["fraction"] > 0.0
+                )
+                compatibility_unresolved += correction_payload["unresolved"]
+                compatibility_output_active += correction_payload[
+                    "output_pcgrad_active"
+                ]
+                compatibility_fraction_sum += compatibility["fraction"]
             optimizer.step()
 
             if iter_num % interval_iter == 0 or iter_num == max_iter:
@@ -782,6 +850,26 @@ def train_target(
                 netF.train()
                 netB.train()
                 # netC.train()
+        if pcgrad_compatibility:
+            mean_fraction = (
+                compatibility_fraction_sum / compatibility_batches
+                if compatibility_batches
+                else 0.0
+            )
+            logging.info(
+                "DUET PCGrad compatibility cycle summary: cycle={}; active={}; "
+                "audited_batches={}; applied_batches={}; unresolved_rows={}; "
+                "output_pcgrad_active_rows={}; mean_fraction={:.6f}; "
+                "target_labels=False; fitted_thresholds=False".format(
+                    curr_cycle + 1,
+                    curr_cycle == 1,
+                    compatibility_batches,
+                    compatibility_applied_batches,
+                    compatibility_unresolved,
+                    compatibility_output_active,
+                    mean_fraction,
+                )
+            )
         curr_cycle += 1
 
     if cfg.FAILURE_AUDIT.ENABLED:
