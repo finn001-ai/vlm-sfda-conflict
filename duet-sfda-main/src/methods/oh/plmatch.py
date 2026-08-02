@@ -4,6 +4,7 @@ Corresponding paper: http://proceedings.mlr.press/v119/liang20a/liang20a.pdf
 """
 
 import os.path as osp
+import math
 import numpy as np
 import torch
 import torch.nn as nn
@@ -44,6 +45,10 @@ from src.utils.attribute_reliability import (
 from src.utils.pairwise_attribute_audit import build_visda_attribute_prompt_manifest
 from src.utils.support_conditioned_clip import (
     condition_clip_on_task_clip_top2_union,
+)
+from src.utils.clip_confidence_delay import (
+    LOCKED_DELAY_FRACTION,
+    class_balanced_clip_confidence_delay,
 )
 
 logger = logging.getLogger(__name__)
@@ -376,6 +381,7 @@ def train_target(
     attribute_reliability_kl=False,
     support_conditioned_clip=False,
     support_conditioned_clip_memory=False,
+    clip_confidence_delay=False,
 ):
     """训练原始 DUET，或启用一个明确隔离的候选改动。
 
@@ -398,6 +404,10 @@ def train_target(
     ``support_conditioned_clip_memory=True`` 使用同一软目标公式，但将它持续用于
     首轮冲突中尚未被累积 agreement mask 解决的样本。这个候选只改时间作用域；
     目标公式、KL 权重、硬 CE mask、consistency 和优化器均不变。
+
+    ``clip_confidence_delay=True`` 仅在首轮 top-1 一致样本中，按共同伪类别
+    暂缓 CLIP 置信度最低的固定 10%。后续仍由原始单调 agreement 规则自然
+    准入；CLIP KL、融合分布、损失权重和优化器全部保持不变。
     """
     candidate_count = sum(
         bool(value)
@@ -407,6 +417,7 @@ def train_target(
             attribute_reliability_kl,
             support_conditioned_clip,
             support_conditioned_clip_memory,
+            clip_confidence_delay,
         )
     )
     if candidate_count > 1:
@@ -428,6 +439,20 @@ def train_target(
         raise ValueError(
             "support-conditioned CLIP is locked to VisDA-C with CLIP ViT-B/32"
         )
+    clip_delay_fraction = float(cfg.DUET_CLIP_DELAY.FRACTION)
+    if clip_confidence_delay and (
+        cfg.SETTING.DATASET != "VISDA-C" or str(cfg.ACTIVE.ARCH) != "ViT-B/32"
+    ):
+        raise ValueError(
+            "CLIP-confidence delay is locked to VisDA-C with CLIP ViT-B/32"
+        )
+    if clip_confidence_delay and not math.isclose(
+        clip_delay_fraction,
+        LOCKED_DELAY_FRACTION,
+        rel_tol=0.0,
+        abs_tol=1e-12,
+    ):
+        raise ValueError("DUET_CLIP_DELAY.FRACTION is locked to 0.10")
     stop_after_pre_cycle = int(cfg.FAILURE_AUDIT.STOP_AFTER_PRE_CYCLE)
     if stop_after_pre_cycle < 0 or stop_after_pre_cycle > int(cfg.ACTIVE.CYCLE):
         raise ValueError(
@@ -464,6 +489,13 @@ def train_target(
         "memory=cycle1_task_clip_conflicts; target=currently_unresolved; "
         "support=task_clip_top2_union".format(
             bool(support_conditioned_clip_memory)
+        )
+    )
+    logging.info(
+        "DUET CLIP-confidence delay: enabled={}; first_cycle_only=True; "
+        "per_pseudo_class_fraction={:.3f}".format(
+            bool(clip_confidence_delay),
+            clip_delay_fraction,
         )
     )
     clip_model, preprocess, _ = clip.load(cfg.ACTIVE.ARCH)
@@ -590,6 +622,8 @@ def train_target(
             attribute_text_features=attribute_text_features,
             support_conditioned_clip=support_conditioned_clip,
             support_conditioned_clip_memory=support_conditioned_clip_memory,
+            clip_confidence_delay=clip_confidence_delay,
+            clip_delay_fraction=clip_delay_fraction,
         )
         if cfg.FAILURE_AUDIT.ENABLED:
             (
@@ -764,6 +798,8 @@ def obtain_label(
     attribute_text_features=None,
     support_conditioned_clip=False,
     support_conditioned_clip_memory=False,
+    clip_confidence_delay=False,
+    clip_delay_fraction=LOCKED_DELAY_FRACTION,
 ):
     # class_logit_bias = get_class_bias(netF, netB, netC)
     start_test = True
@@ -924,11 +960,41 @@ def obtain_label(
     # Find indices where predictions match
     matching_indices = all_output_pred == clip_all_output_pred
 
+    admission_matching = matching_indices
+    if clip_confidence_delay and curr_cycle == 0:
+        delay = class_balanced_clip_confidence_delay(
+            matching_indices,
+            all_output_pred,
+            clip_all_output,
+            fraction=clip_delay_fraction,
+        )
+        admission_matching = delay["retained_matching"]
+        delayed = delay["delayed"]
+        delayed_confidence = clip_all_output[
+            delayed, all_output_pred[delayed]
+        ]
+        logging.info(
+            "DUET CLIP-confidence delay applied: cycle=1; "
+            "original_agreements={}; delayed={}; retained={}; "
+            "mean_delayed_clip_confidence={:.6f}; target_labels=False; "
+            "fitted_thresholds=False".format(
+                int(matching_indices.sum().item()),
+                int(delayed.sum().item()),
+                int(admission_matching.sum().item()),
+                float(delayed_confidence.mean().item()),
+            )
+        )
+    elif clip_confidence_delay:
+        logging.info(
+            "DUET CLIP-confidence delay applied: cycle={}; delayed=0; "
+            "first_cycle_only=True".format(curr_cycle + 1)
+        )
+
     # Update label mask based on previous label mask
     if prev_label_mask is not None:
-        label_mask = prev_label_mask | (~prev_label_mask & matching_indices)
+        label_mask = prev_label_mask | (~prev_label_mask & admission_matching)
     else:
-        label_mask = matching_indices
+        label_mask = admission_matching
 
     kl_soft_output = clip_all_output
     if collect_attribute:

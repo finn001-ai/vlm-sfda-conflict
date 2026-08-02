@@ -276,6 +276,11 @@ _C.ACTIVE.ADAPTATION_LIST = ""
 _C.DUET_BOUNDARY = CfgNode()
 _C.DUET_BOUNDARY.TOP_FRACTION = 0.2
 
+# Locked first-cycle class-balanced agreement delay.  This fraction comes from
+# a predeclared offline audit and must not be tuned with target labels.
+_C.DUET_CLIP_DELAY = CfgNode()
+_C.DUET_CLIP_DELAY.FRACTION = 0.10
+
 # --------------------------- Failure-audit options ------------------------ #
 # These options only write read-only diagnostic snapshots. They do not alter
 # pseudo labels, losses, optimizers, or inference logits.

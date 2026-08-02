@@ -19,7 +19,7 @@ done
 echo "==> CPU-only cycle-1 DUET false-agreement rank-residual audit"
 echo "==> Reuses the locked pre-cycle-1 snapshot; no GPU process is started"
 echo "==> Signal: task/CLIP agree on top-1 but oppose each other's runner-up"
-echo "==> Comparison: identical per-class coverage versus three confidence filters"
+echo "==> Comparison: identical per-class coverage versus four confidence filters"
 echo "==> No image, checkpoint, model, forward, backward, optimizer, or training"
 
 python tools/audit_visda_agreement_rank_residual.py \

@@ -375,7 +375,7 @@ def main() -> None:
         "predeclared_gate": {
             "min_error_enrichment": 2.0,
             "min_retained_accuracy_gain_pp": 0.25,
-            "paired_precision_ci_lower": "> 0 against all three confidence baselines",
+            "paired_precision_ci_lower": "> 0 against all four confidence baselines",
             "car_truck_noncar_wrong_capture": "nonworse than all three matched baselines",
         },
         "input_contract_checks": input_checks,

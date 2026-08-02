@@ -23,6 +23,7 @@ import src.methods.oh.duet_first_cycle_prior as DUET_FCP
 import src.methods.oh.duet_attribute_reliability_kl as DUET_ATTRIBUTE_KL
 import src.methods.oh.duet_support_conditioned_clip as DUET_SUPPORT_CLIP
 import src.methods.oh.duet_support_conditioned_clip_memory as DUET_SUPPORT_CLIP_MEMORY
+import src.methods.oh.duet_clip_confidence_delay as DUET_CLIP_DELAY
 import src.methods.oh.plum as PLUM
 
 from conf import cfg, load_cfg_from_args
@@ -150,6 +151,13 @@ if __name__ == "__main__":
     ):
         print("using DUET with first-cycle support-conditioned CLIP KL target")
         acc = DUET_SUPPORT_CLIP.train_target(cfg)
+
+    elif (
+        cfg.MODEL.METHOD == "duet_clip_confidence_delay"
+        or cfg.MODEL.METHOD.startswith("duet_clip_confidence_delay_")
+    ):
+        print("using DUET with first-cycle CLIP-confidence admission delay")
+        acc = DUET_CLIP_DELAY.train_target(cfg)
 
     elif cfg.MODEL.METHOD == "plum":
         print("using plum method")
