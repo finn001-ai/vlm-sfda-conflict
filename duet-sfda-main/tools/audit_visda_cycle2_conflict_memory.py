@@ -176,6 +176,9 @@ def main():
             target["probability"].argmax(1), clip2[initial_conflict].argmax(1)
         ),
     }
+    # NumPy comparisons return np.bool_, which Python 3.10's JSON encoder does
+    # not serialize.  Lock the manifest with explicit built-in booleans.
+    input_checks = {name: bool(passed) for name, passed in input_checks.items()}
     failed = [name for name, passed in input_checks.items() if not passed]
     if failed:
         raise RuntimeError(f"Cycle-2 label-free input contract failed: {failed}")

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import numpy as np
@@ -83,6 +84,9 @@ def test_runner_stops_before_cycle2_optimization() -> None:
     runner = (
         REPO_ROOT / "tools/run_visda_cycle2_conflict_memory_audit.sh"
     ).read_text()
+    audit = (
+        REPO_ROOT / "tools/audit_visda_cycle2_conflict_memory.py"
+    ).read_text()
     assert "stop_after_pre_cycle == curr_cycle + 1" in plmatch
     assert "return netF, netB, netC" in plmatch
     assert "FAILURE_AUDIT.STOP_AFTER_PRE_CYCLE 2" in runner
@@ -91,3 +95,16 @@ def test_runner_stops_before_cycle2_optimization() -> None:
     assert "Reusing completed cycle-2 snapshots; GPU will not be started" in runner
     assert "if maximum_error > 0.10" in runner
     assert "no proxy or full training was started" in runner
+    assert (
+        "input_checks = {name: bool(passed) for name, passed in input_checks.items()}"
+        in audit
+    )
+
+
+def test_numpy_boolean_contract_is_json_serializable() -> None:
+    checks = {"numpy_result": np.bool_(True), "python_result": True}
+    normalized = {name: bool(passed) for name, passed in checks.items()}
+    assert json.loads(json.dumps(normalized)) == {
+        "numpy_result": True,
+        "python_result": True,
+    }
