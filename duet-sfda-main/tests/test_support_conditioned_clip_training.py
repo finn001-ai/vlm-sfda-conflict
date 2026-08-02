@@ -99,3 +99,25 @@ def test_candidate_changes_only_first_cycle_conflict_kl_target() -> None:
     assert "ACTIVE.CYCLE 4" in runner
     assert "run_visda_plmatch_proxy25_control.sh" not in runner
     assert "Even PASS does not authorize or start a full VisDA run" in runner
+
+
+def test_memory_candidate_changes_only_the_temporal_scope() -> None:
+    plmatch = (REPO_ROOT / "src/methods/oh/plmatch.py").read_text()
+    wrapper = (
+        REPO_ROOT / "src/methods/oh/duet_support_conditioned_clip_memory.py"
+    ).read_text()
+    runner = (
+        REPO_ROOT
+        / "tools/run_visda_duet_support_conditioned_clip_memory_proxy25.sh"
+    ).read_text()
+
+    assert "support_conditioned_clip_memory=False" in plmatch
+    assert "or support_conditioned_clip_memory" in plmatch
+    assert "active_conflict = (~label_mask) & (~matching_indices)" in plmatch
+    assert 'kl_soft_output[active_conflict] = conditioned["probability"]' in plmatch
+    assert "support_conditioned_clip_memory=True" in wrapper
+    assert "ACTIVE.CYCLE 4" in runner
+    assert "only_negative_burden_check_failed" in runner
+    assert "The predeclared audit remains REJECT" in runner
+    assert "run_visda_plmatch_proxy25_control.sh" not in runner
+    assert "Even PASS does not authorize or start a full VisDA run" in runner

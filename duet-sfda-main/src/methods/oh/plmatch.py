@@ -375,6 +375,7 @@ def train_target(
     boundary_router=False,
     attribute_reliability_kl=False,
     support_conditioned_clip=False,
+    support_conditioned_clip_memory=False,
 ):
     """训练原始 DUET，或启用一个明确隔离的候选改动。
 
@@ -393,6 +394,10 @@ def train_target(
     ``support_conditioned_clip=True`` 只在首轮未准入冲突中，将 CLIP KL
     软目标限制到 task/CLIP top-2 并集后重新归一化。task 只提供候选支持集；
     CLIP 的集内相对概率及 top-1 均保持不变。
+
+    ``support_conditioned_clip_memory=True`` 使用同一软目标公式，但将它持续用于
+    首轮冲突中尚未被累积 agreement mask 解决的样本。这个候选只改时间作用域；
+    目标公式、KL 权重、硬 CE mask、consistency 和优化器均不变。
     """
     candidate_count = sum(
         bool(value)
@@ -401,6 +406,7 @@ def train_target(
             boundary_router,
             attribute_reliability_kl,
             support_conditioned_clip,
+            support_conditioned_clip_memory,
         )
     )
     if candidate_count > 1:
@@ -416,7 +422,7 @@ def train_target(
         raise ValueError(
             "attribute-reliability KL is locked to VisDA-C with CLIP ViT-B/32"
         )
-    if support_conditioned_clip and (
+    if (support_conditioned_clip or support_conditioned_clip_memory) and (
         cfg.SETTING.DATASET != "VISDA-C" or str(cfg.ACTIVE.ARCH) != "ViT-B/32"
     ):
         raise ValueError(
@@ -451,6 +457,13 @@ def train_target(
         "DUET support-conditioned CLIP: enabled={}; first_cycle_only=True; "
         "support=task_clip_top2_union; target=unresolved_conflicts".format(
             bool(support_conditioned_clip)
+        )
+    )
+    logging.info(
+        "DUET support-conditioned CLIP memory: enabled={}; "
+        "memory=cycle1_task_clip_conflicts; target=currently_unresolved; "
+        "support=task_clip_top2_union".format(
+            bool(support_conditioned_clip_memory)
         )
     )
     clip_model, preprocess, _ = clip.load(cfg.ACTIVE.ARCH)
@@ -576,6 +589,7 @@ def train_target(
             attribute_reliability_kl=attribute_reliability_kl,
             attribute_text_features=attribute_text_features,
             support_conditioned_clip=support_conditioned_clip,
+            support_conditioned_clip_memory=support_conditioned_clip_memory,
         )
         if cfg.FAILURE_AUDIT.ENABLED:
             (
@@ -749,13 +763,15 @@ def obtain_label(
     attribute_reliability_kl=False,
     attribute_text_features=None,
     support_conditioned_clip=False,
+    support_conditioned_clip_memory=False,
 ):
     # class_logit_bias = get_class_bias(netF, netB, netC)
     start_test = True
     collect_boundary = bool(boundary_router and curr_cycle == 0)
     collect_attribute = bool(attribute_reliability_kl and curr_cycle == 0)
     collect_support_conditioned = bool(
-        support_conditioned_clip and curr_cycle == 0
+        (support_conditioned_clip and curr_cycle == 0)
+        or support_conditioned_clip_memory
     )
     if collect_attribute and (text_features is None or attribute_text_features is None):
         raise ValueError("attribute-reliability KL requires fixed text features")
@@ -975,22 +991,24 @@ def obtain_label(
             .item()
         )
         logging.info(
-            "DUET support-conditioned CLIP applied: cycle=1; "
+            "DUET support-conditioned CLIP applied: cycle={}; "
             "active_conflicts={}; changed_top1={}; mean_support_size={:.6f}; "
             "mean_retained_clip_mass={:.6f}; target_labels=False; "
             "fitted_thresholds=False".format(
+                curr_cycle + 1,
                 conflict_count,
                 changed_top1,
                 float(conditioned["support_size"].float().mean().item()),
                 float(conditioned["retained_clip_mass"].mean().item()),
             )
         )
-    elif support_conditioned_clip:
+    elif support_conditioned_clip or support_conditioned_clip_memory:
         logging.info(
             "DUET support-conditioned CLIP applied: cycle={}; "
             "active_conflicts=0; changed_top1=0; mean_support_size=0.000000; "
-            "mean_retained_clip_mass=0.000000; first_cycle_only=True".format(
-                curr_cycle + 1
+            "mean_retained_clip_mass=0.000000; first_cycle_only={}".format(
+                curr_cycle + 1,
+                bool(support_conditioned_clip),
             )
         )
 

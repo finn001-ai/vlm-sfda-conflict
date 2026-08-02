@@ -65,6 +65,28 @@ class MethodDispatchTest(unittest.TestCase):
             "plmatch.train_target(cfg, support_conditioned_clip=True)", wrapper
         )
 
+    def test_support_conditioned_clip_memory_has_separate_dispatch(self):
+        entrypoint = Path("image_target_of_oh_vs.py").read_text()
+        memory_branch = entrypoint.index(
+            'cfg.MODEL.METHOD.startswith("duet_support_conditioned_clip_memory_")'
+        )
+        first_cycle_branch = entrypoint.index(
+            'cfg.MODEL.METHOD.startswith("duet_support_conditioned_clip_")'
+        )
+        self.assertLess(memory_branch, first_cycle_branch)
+        self.assertIn(
+            "import src.methods.oh.duet_support_conditioned_clip_memory as "
+            "DUET_SUPPORT_CLIP_MEMORY",
+            entrypoint,
+        )
+        wrapper = Path(
+            "src/methods/oh/duet_support_conditioned_clip_memory.py"
+        ).read_text()
+        self.assertIn(
+            "plmatch.train_target(cfg, support_conditioned_clip_memory=True)",
+            wrapper,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
