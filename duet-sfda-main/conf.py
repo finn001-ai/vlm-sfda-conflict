@@ -283,6 +283,10 @@ _C.FAILURE_AUDIT = CfgNode()
 _C.FAILURE_AUDIT.ENABLED = False
 _C.FAILURE_AUDIT.DIR = "failure_audit"
 _C.FAILURE_AUDIT.FEATURE_DTYPE = "float16"
+# Diagnostic-only early stop.  Zero preserves every training path.  A positive
+# value stops immediately after writing that pre-cycle snapshot, before the
+# corresponding cycle performs CLIP or task optimization.
+_C.FAILURE_AUDIT.STOP_AFTER_PRE_CYCLE = 0
 
 # --------------------------- DUET-FCP options ----------------------------- #
 _C.DUET_FCP = CfgNode()

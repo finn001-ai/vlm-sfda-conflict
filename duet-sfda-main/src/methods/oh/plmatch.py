@@ -422,6 +422,15 @@ def train_target(
         raise ValueError(
             "support-conditioned CLIP is locked to VisDA-C with CLIP ViT-B/32"
         )
+    stop_after_pre_cycle = int(cfg.FAILURE_AUDIT.STOP_AFTER_PRE_CYCLE)
+    if stop_after_pre_cycle < 0 or stop_after_pre_cycle > int(cfg.ACTIVE.CYCLE):
+        raise ValueError(
+            "FAILURE_AUDIT.STOP_AFTER_PRE_CYCLE must be between 0 and ACTIVE.CYCLE"
+        )
+    if stop_after_pre_cycle and not cfg.FAILURE_AUDIT.ENABLED:
+        raise ValueError(
+            "FAILURE_AUDIT.STOP_AFTER_PRE_CYCLE requires FAILURE_AUDIT.ENABLED"
+        )
     logging.info(
         "DUET first-cycle prior: enabled={}; power={:.3f}".format(
             bool(first_cycle_prior),
@@ -585,6 +594,13 @@ def train_target(
                 phase=np.array("pre_cycle"),
                 **audit_payload,
             )
+            if stop_after_pre_cycle == curr_cycle + 1:
+                logging.info(
+                    "Failure audit stop: after_pre_cycle={}; optimizer_steps_in_cycle=0".format(
+                        curr_cycle + 1
+                    )
+                )
+                return netF, netB, netC
         else:
             mem_label, label_mask, confi_imag, confi_dis, kl_soft = label_result
         kl_soft = kl_soft.cuda()
