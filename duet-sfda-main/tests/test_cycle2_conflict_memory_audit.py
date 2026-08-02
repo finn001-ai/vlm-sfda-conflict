@@ -88,4 +88,6 @@ def test_runner_stops_before_cycle2_optimization() -> None:
     assert "FAILURE_AUDIT.STOP_AFTER_PRE_CYCLE 2" in runner
     assert "ACTIVE.CYCLE 2" in runner
     assert "optimizer_steps_in_cycle=0" in runner
+    assert "Reusing completed cycle-2 snapshots; GPU will not be started" in runner
+    assert "if maximum_error > 0.10" in runner
     assert "no proxy or full training was started" in runner

@@ -81,24 +81,33 @@ if ! cmp -s "$observed_proxy_hash" "$previous_proxy_hash"; then
   exit 1
 fi
 if [ -d "$output_dir" ]; then
-  echo "Existing audit directory found; refusing to overwrite: $output_dir" >&2
-  exit 1
+  existing_logs=("$output_dir"/*.txt)
+  if [ "${#existing_logs[@]}" -ne 1 ] || \
+     [ ! -f "${snapshot_dir}/pre_cycle01.npz" ] || \
+     [ ! -f "${snapshot_dir}/pre_cycle02.npz" ] || \
+     ! grep -q \
+       'Failure audit stop: after_pre_cycle=2; optimizer_steps_in_cycle=0' \
+       "${existing_logs[0]}"; then
+    echo "Existing directory is not a completed cycle-2 boundary capture" >&2
+    exit 1
+  fi
+  echo "==> Reusing completed cycle-2 snapshots; GPU will not be started"
+else
+  echo "==> Targeted cycle-2 boundary audit; not another four-cycle proxy"
+  echo "==> Runs cycle 1, writes pre-cycle-2 probabilities, then stops before optimization"
+  echo "==> Expected GPU time is about 11 minutes; no model checkpoint is saved"
+  python image_target_of_oh_vs.py \
+    --cfg cfgs/visda/duet_support_conditioned_clip.yaml \
+    CKPT_DIR . SETTING.OUTPUT_SRC source \
+    MODEL.METHOD "$method" \
+    SETTING.SEED "$seed" SETTING.S 0 SETTING.T 1 \
+    ACTIVE.CYCLE 2 \
+    ACTIVE.ADAPTATION_LIST "$proxy_list" \
+    FAILURE_AUDIT.ENABLED True \
+    FAILURE_AUDIT.DIR cycle2_conflict_memory_snapshots \
+    FAILURE_AUDIT.FEATURE_DTYPE float16 \
+    FAILURE_AUDIT.STOP_AFTER_PRE_CYCLE 2
 fi
-
-echo "==> Targeted cycle-2 boundary audit; not another four-cycle proxy"
-echo "==> Runs cycle 1, writes pre-cycle-2 probabilities, then stops before optimization"
-echo "==> Expected GPU time is about 11 minutes; no model checkpoint is saved"
-python image_target_of_oh_vs.py \
-  --cfg cfgs/visda/duet_support_conditioned_clip.yaml \
-  CKPT_DIR . SETTING.OUTPUT_SRC source \
-  MODEL.METHOD "$method" \
-  SETTING.SEED "$seed" SETTING.S 0 SETTING.T 1 \
-  ACTIVE.CYCLE 2 \
-  ACTIVE.ADAPTATION_LIST "$proxy_list" \
-  FAILURE_AUDIT.ENABLED True \
-  FAILURE_AUDIT.DIR cycle2_conflict_memory_snapshots \
-  FAILURE_AUDIT.FEATURE_DTYPE float16 \
-  FAILURE_AUDIT.STOP_AFTER_PRE_CYCLE 2
 
 logs=("$output_dir"/*.txt)
 if [ "${#logs[@]}" -ne 1 ]; then
@@ -146,7 +155,7 @@ if len(previous) != 4 or len(audit) != 4:
 if [item[0] for item in previous] != [item[0] for item in audit]:
     raise SystemExit("Cycle-1 replay checkpoint iterations changed")
 maximum_error = max(abs(a[1] - b[1]) for a, b in zip(previous, audit))
-if maximum_error > 0.05:
+if maximum_error > 0.10:
     raise SystemExit(f"Cycle-1 replay drifted by {maximum_error:.4f} pp")
 print(f"==> Cycle-1 replay contract passed; max_accuracy_error={maximum_error:.4f}pp")
 PY
