@@ -48,6 +48,23 @@ class MethodDispatchTest(unittest.TestCase):
         wrapper = Path("src/methods/oh/duet_boundary_router.py").read_text()
         self.assertIn("plmatch.train_target(cfg, boundary_router=True)", wrapper)
 
+    def test_support_conditioned_clip_uses_dedicated_thin_wrapper(self):
+        entrypoint = Path("image_target_of_oh_vs.py").read_text()
+        self.assertIn(
+            'cfg.MODEL.METHOD.startswith("duet_support_conditioned_clip_")',
+            entrypoint,
+        )
+        self.assertIn(
+            "import src.methods.oh.duet_support_conditioned_clip as DUET_SUPPORT_CLIP",
+            entrypoint,
+        )
+        wrapper = Path(
+            "src/methods/oh/duet_support_conditioned_clip.py"
+        ).read_text()
+        self.assertIn(
+            "plmatch.train_target(cfg, support_conditioned_clip=True)", wrapper
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

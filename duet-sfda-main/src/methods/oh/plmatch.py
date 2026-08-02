@@ -42,6 +42,9 @@ from src.utils.attribute_reliability import (
     pairwise_attribute_margin,
 )
 from src.utils.pairwise_attribute_audit import build_visda_attribute_prompt_manifest
+from src.utils.support_conditioned_clip import (
+    condition_clip_on_task_clip_top2_union,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -371,6 +374,7 @@ def train_target(
     first_cycle_prior=False,
     boundary_router=False,
     attribute_reliability_kl=False,
+    support_conditioned_clip=False,
 ):
     """训练原始 DUET，或启用一个明确隔离的候选改动。
 
@@ -385,10 +389,19 @@ def train_target(
     ``attribute_reliability_kl=True`` 只在首轮未准入冲突中，将原本的 CLIP
     KL 软目标替换为离线审计锁定的属性可靠性后验。agreement、硬 CE mask、
     consistency、损失权重和优化器均保持发布版 DUET 不变。
+
+    ``support_conditioned_clip=True`` 只在首轮未准入冲突中，将 CLIP KL
+    软目标限制到 task/CLIP top-2 并集后重新归一化。task 只提供候选支持集；
+    CLIP 的集内相对概率及 top-1 均保持不变。
     """
     candidate_count = sum(
         bool(value)
-        for value in (first_cycle_prior, boundary_router, attribute_reliability_kl)
+        for value in (
+            first_cycle_prior,
+            boundary_router,
+            attribute_reliability_kl,
+            support_conditioned_clip,
+        )
     )
     if candidate_count > 1:
         raise ValueError("DUET candidate interventions must be run separately")
@@ -402,6 +415,12 @@ def train_target(
     ):
         raise ValueError(
             "attribute-reliability KL is locked to VisDA-C with CLIP ViT-B/32"
+        )
+    if support_conditioned_clip and (
+        cfg.SETTING.DATASET != "VISDA-C" or str(cfg.ACTIVE.ARCH) != "ViT-B/32"
+    ):
+        raise ValueError(
+            "support-conditioned CLIP is locked to VisDA-C with CLIP ViT-B/32"
         )
     logging.info(
         "DUET first-cycle prior: enabled={}; power={:.3f}".format(
@@ -418,6 +437,12 @@ def train_target(
     logging.info(
         "DUET attribute reliability KL: enabled={}; first_cycle_only=True; "
         "target=unresolved_conflicts".format(bool(attribute_reliability_kl))
+    )
+    logging.info(
+        "DUET support-conditioned CLIP: enabled={}; first_cycle_only=True; "
+        "support=task_clip_top2_union; target=unresolved_conflicts".format(
+            bool(support_conditioned_clip)
+        )
     )
     clip_model, preprocess, _ = clip.load(cfg.ACTIVE.ARCH)
     clip_model.float()
@@ -541,6 +566,7 @@ def train_target(
             boundary_top_fraction=boundary_fraction,
             attribute_reliability_kl=attribute_reliability_kl,
             attribute_text_features=attribute_text_features,
+            support_conditioned_clip=support_conditioned_clip,
         )
         if cfg.FAILURE_AUDIT.ENABLED:
             (
@@ -706,11 +732,15 @@ def obtain_label(
     boundary_top_fraction=0.2,
     attribute_reliability_kl=False,
     attribute_text_features=None,
+    support_conditioned_clip=False,
 ):
     # class_logit_bias = get_class_bias(netF, netB, netC)
     start_test = True
     collect_boundary = bool(boundary_router and curr_cycle == 0)
     collect_attribute = bool(attribute_reliability_kl and curr_cycle == 0)
+    collect_support_conditioned = bool(
+        support_conditioned_clip and curr_cycle == 0
+    )
     if collect_attribute and (text_features is None or attribute_text_features is None):
         raise ValueError("attribute-reliability KL requires fixed text features")
     with torch.no_grad():
@@ -908,6 +938,44 @@ def obtain_label(
             "DUET attribute reliability KL applied: cycle={}; "
             "active_conflicts=0; changed_top1=0; mean_weight=0.000000; "
             "first_cycle_only=True".format(curr_cycle + 1)
+        )
+    elif collect_support_conditioned:
+        active_conflict = (~label_mask) & (~matching_indices)
+        conflict_count = int(active_conflict.sum().item())
+        if conflict_count <= 0:
+            raise RuntimeError("support-conditioned CLIP found no active conflicts")
+        conditioned = condition_clip_on_task_clip_top2_union(
+            all_output[active_conflict],
+            clip_all_output[active_conflict],
+        )
+        kl_soft_output = clip_all_output.clone()
+        kl_soft_output[active_conflict] = conditioned["probability"]
+        changed_top1 = int(
+            (
+                conditioned["probability"].argmax(dim=1)
+                != clip_all_output_pred[active_conflict]
+            )
+            .sum()
+            .item()
+        )
+        logging.info(
+            "DUET support-conditioned CLIP applied: cycle=1; "
+            "active_conflicts={}; changed_top1={}; mean_support_size={:.6f}; "
+            "mean_retained_clip_mass={:.6f}; target_labels=False; "
+            "fitted_thresholds=False".format(
+                conflict_count,
+                changed_top1,
+                float(conditioned["support_size"].float().mean().item()),
+                float(conditioned["retained_clip_mass"].mean().item()),
+            )
+        )
+    elif support_conditioned_clip:
+        logging.info(
+            "DUET support-conditioned CLIP applied: cycle={}; "
+            "active_conflicts=0; changed_top1=0; mean_support_size=0.000000; "
+            "mean_retained_clip_mass=0.000000; first_cycle_only=True".format(
+                curr_cycle + 1
+            )
         )
 
     # Filter predictions and labels based on the updated label mask

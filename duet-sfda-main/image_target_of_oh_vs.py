@@ -21,6 +21,7 @@ import src.methods.oh.plmatch as PLMATCH
 import src.methods.oh.duet_boundary_router as DUET_BOUNDARY
 import src.methods.oh.duet_first_cycle_prior as DUET_FCP
 import src.methods.oh.duet_attribute_reliability_kl as DUET_ATTRIBUTE_KL
+import src.methods.oh.duet_support_conditioned_clip as DUET_SUPPORT_CLIP
 import src.methods.oh.plum as PLUM
 
 from conf import cfg, load_cfg_from_args
@@ -134,6 +135,13 @@ if __name__ == "__main__":
     ):
         print("using DUET with first-cycle attribute-reliability KL target")
         acc = DUET_ATTRIBUTE_KL.train_target(cfg)
+
+    elif (
+        cfg.MODEL.METHOD == "duet_support_conditioned_clip"
+        or cfg.MODEL.METHOD.startswith("duet_support_conditioned_clip_")
+    ):
+        print("using DUET with first-cycle support-conditioned CLIP KL target")
+        acc = DUET_SUPPORT_CLIP.train_target(cfg)
 
     elif cfg.MODEL.METHOD == "plum":
         print("using plum method")
