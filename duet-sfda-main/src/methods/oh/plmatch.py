@@ -50,6 +50,7 @@ from src.utils.clip_confidence_delay import (
     LOCKED_DELAY_FRACTION,
     class_balanced_clip_confidence_delay,
 )
+from src.utils.pcgrad_parameter_runtime import run_exact_pcgrad_parameter_audit
 
 logger = logging.getLogger(__name__)
 
@@ -422,6 +423,19 @@ def train_target(
     )
     if candidate_count > 1:
         raise ValueError("DUET candidate interventions must be run separately")
+    parameter_audit = bool(cfg.PCGRAD_PARAMETER_AUDIT.ENABLED)
+    if parameter_audit and candidate_count:
+        raise ValueError("PCGrad parameter audit requires pure arithmetic DUET")
+    if parameter_audit and (
+        cfg.SETTING.DATASET != "VISDA-C"
+        or int(cfg.ACTIVE.CYCLE) != 2
+        or int(cfg.TEST.BATCH_SIZE) != 64
+        or cfg.FAILURE_AUDIT.ENABLED
+    ):
+        raise ValueError(
+            "PCGrad parameter audit is locked to VisDA-C, two cycles, "
+            "batch size 64, and FAILURE_AUDIT disabled"
+        )
     if first_cycle_prior and cfg.DUET_FCP.POWER < 0:
         raise ValueError("DUET_FCP.POWER must be non-negative")
     boundary_fraction = float(cfg.DUET_BOUNDARY.TOP_FRACTION)
@@ -496,6 +510,12 @@ def train_target(
         "per_pseudo_class_fraction={:.3f}".format(
             bool(clip_confidence_delay),
             clip_delay_fraction,
+        )
+    )
+    logging.info(
+        "DUET exact PCGrad parameter audit: enabled={}; cycle=2; "
+        "pure_arithmetic_duet=True; optimizer_updates_in_audit=0".format(
+            parameter_audit
         )
     )
     clip_model, preprocess, _ = clip.load(cfg.ACTIVE.ARCH)
@@ -607,10 +627,14 @@ def train_target(
         netF.eval()
         netB.eval()
         # netC.eval()
+        parameter_audit_this_cycle = parameter_audit and curr_cycle + 1 == 2
+        diagnostic_payload_requested = bool(
+            cfg.FAILURE_AUDIT.ENABLED or parameter_audit_this_cycle
+        )
         label_result = obtain_label(
             dset_loaders['test_aug'], netF, netB, netC, text_inputs, text_features, clip_model, prev_label_mask,
             curr_cycle,
-            return_diagnostics=cfg.FAILURE_AUDIT.ENABLED,
+            return_diagnostics=diagnostic_payload_requested,
             first_cycle_prior=first_cycle_prior,
             prior_power=(
                 float(cfg.DUET_FCP.POWER) if first_cycle_prior else 0.0
@@ -625,7 +649,7 @@ def train_target(
             clip_confidence_delay=clip_confidence_delay,
             clip_delay_fraction=clip_delay_fraction,
         )
-        if cfg.FAILURE_AUDIT.ENABLED:
+        if diagnostic_payload_requested:
             (
                 mem_label,
                 label_mask,
@@ -634,6 +658,9 @@ def train_target(
                 kl_soft,
                 audit_payload,
             ) = label_result
+        else:
+            mem_label, label_mask, confi_imag, confi_dis, kl_soft = label_result
+        if cfg.FAILURE_AUDIT.ENABLED:
             save_failure_audit_snapshot(
                 cfg,
                 f"pre_cycle{curr_cycle + 1:02d}.npz",
@@ -649,8 +676,26 @@ def train_target(
                     )
                 )
                 return netF, netB, netC
-        else:
-            mem_label, label_mask, confi_imag, confi_dis, kl_soft = label_result
+        if parameter_audit_this_cycle:
+            run_exact_pcgrad_parameter_audit(
+                cfg,
+                netF=netF,
+                netB=netB,
+                netC=netC,
+                target_dataset=dset_loaders["target"].dataset,
+                mem_label=mem_label,
+                label_mask=label_mask,
+                kl_soft=kl_soft,
+                audit_payload={
+                    "source_label": audit_payload["source_label"],
+                    "clip_label": audit_payload["clip_label"],
+                },
+            )
+            logging.info(
+                "PCGrad exact parameter audit stop: after_pre_cycle=2; "
+                "cycle2_optimizer_steps=0; parameters_updated_by_audit=False"
+            )
+            return netF, netB, netC
         kl_soft = kl_soft.cuda()
         mem_label = mem_label.cuda()
         prev_label_mask = label_mask

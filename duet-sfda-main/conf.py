@@ -293,6 +293,15 @@ _C.FAILURE_AUDIT.FEATURE_DTYPE = "float16"
 # corresponding cycle performs CLIP or task optimization.
 _C.FAILURE_AUDIT.STOP_AFTER_PRE_CYCLE = 0
 
+# -------- Exact cycle-2 PCGrad parameter preflight (diagnostic only) ----- #
+# This mode replays one pure arithmetic-DUET cycle, measures locked parameter
+# gradients at the next cycle boundary, restores every model buffer, and
+# stops before any cycle-2 optimizer step.  It never changes a training run
+# when disabled.
+_C.PCGRAD_PARAMETER_AUDIT = CfgNode()
+_C.PCGRAD_PARAMETER_AUDIT.ENABLED = False
+_C.PCGRAD_PARAMETER_AUDIT.DIR = "conflict_pcgrad_parameter_audit"
+
 # --------------------------- DUET-FCP options ----------------------------- #
 _C.DUET_FCP = CfgNode()
 # source/CLIP 两路只在第 1 个 cycle 使用的 prior 强度。
