@@ -13,9 +13,13 @@ def _probability_matrix(probability: np.ndarray, *, name: str) -> np.ndarray:
         raise ValueError(f"{name} must have shape [sample, class]")
     if not np.isfinite(values).all() or np.any(values < 0.0):
         raise ValueError(f"{name} must be finite and non-negative")
-    if not np.allclose(values.sum(axis=1), 1.0, atol=1e-6, rtol=1e-6):
+    row_sum = values.sum(axis=1)
+    if not np.allclose(row_sum, 1.0, atol=1e-6, rtol=1e-6):
         raise ValueError(f"{name} rows must sum to one")
-    return values
+    # Locked probabilities were serialized as float32.  Re-establish the
+    # simplex exactly after float64 conversion so sub-micro rounding drift does
+    # not appear as a non-zero logit-gradient row sum.
+    return values / row_sum[:, None]
 
 
 def kl_logit_descent(

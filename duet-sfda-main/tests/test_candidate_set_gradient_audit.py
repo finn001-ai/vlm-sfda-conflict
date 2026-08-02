@@ -41,6 +41,24 @@ def test_set_mass_descent_matches_finite_difference_logit_gradient() -> None:
     np.testing.assert_allclose(descent, -numerical_gradient, atol=1e-9, rtol=1e-7)
 
 
+def test_float32_probability_drift_is_renormalized_before_gradient_check() -> None:
+    student = np.array(
+        [[0.70, 0.20, 0.09999994], [0.10, 0.60, 0.30000007]],
+        dtype=np.float32,
+    )
+    target = np.array(
+        [[0.10, 0.30, 0.59999996], [0.20, 0.20, 0.60000008]],
+        dtype=np.float32,
+    )
+    candidate_mask = np.array([[True, True, False], [False, True, True]], dtype=bool)
+
+    set_descent = set_mass_logit_descent(student, candidate_mask)
+    kl_descent = kl_logit_descent(student, target)
+
+    np.testing.assert_allclose(set_descent.sum(axis=1), 0.0, atol=1e-14)
+    np.testing.assert_allclose(kl_descent.sum(axis=1), 0.0, atol=1e-14)
+
+
 def test_kl_and_oracle_ce_descents_have_expected_closed_forms() -> None:
     student = np.array([[0.6, 0.3, 0.1]])
     target = np.array([[0.1, 0.2, 0.7]])
