@@ -4,6 +4,7 @@ import numpy as np
 
 from src.utils.prototype_transport_audit import (
     capacity_preserving_transport,
+    classifier_replay_boundary_diagnostics,
     evaluate_prototype_transport_gate,
     prototype_cosine,
     row_ordinal_cost,
@@ -11,6 +12,17 @@ from src.utils.prototype_transport_audit import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_classifier_replay_accepts_only_boundary_tie_argmax_changes() -> None:
+    reference = np.array([[0.5002, 0.4998], [0.8, 0.2]])
+    replay = np.array([[0.4999, 0.5001], [0.7999, 0.2001]])
+    result = classifier_replay_boundary_diagnostics(reference, replay)
+    assert result["top1_mismatch_count"] == 1
+    assert result["top1_mismatch_fraction_pct"] == 50.0
+    assert np.isclose(result["max_probability_error"], 3e-4)
+    assert np.isclose(result["max_reference_margin_on_mismatch"], 4e-4)
+    assert result["all_mismatches_within_2linf_margin"]
 
 
 def test_row_ordinal_cost_is_parameter_free_and_deterministic() -> None:

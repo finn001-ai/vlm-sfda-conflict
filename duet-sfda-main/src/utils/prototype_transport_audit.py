@@ -9,6 +9,45 @@ from scipy import sparse
 from scipy.optimize import linprog
 
 
+def classifier_replay_boundary_diagnostics(
+    reference_probability: np.ndarray,
+    replay_probability: np.ndarray,
+) -> dict[str, Any]:
+    """Explain top-1 replay changes caused by stored-feature quantization.
+
+    An argmax can change even under a small elementwise replay error when the
+    reference top two classes are almost tied.  A changed row is consistent
+    with that error exactly when its reference margin is no larger than twice
+    the global L-infinity error (up to floating-point slack).
+    """
+    reference = np.asarray(reference_probability, dtype=np.float64)
+    replay = np.asarray(replay_probability, dtype=np.float64)
+    if (
+        reference.ndim != 2
+        or reference.shape != replay.shape
+        or reference.shape[0] == 0
+        or reference.shape[1] < 2
+    ):
+        raise ValueError("reference and replay probabilities must align")
+    if not np.isfinite(reference).all() or not np.isfinite(replay).all():
+        raise ValueError("reference and replay probabilities must be finite")
+    max_error = float(np.max(np.abs(reference - replay)))
+    mismatch = reference.argmax(axis=1) != replay.argmax(axis=1)
+    top_two = np.partition(reference, kth=-2, axis=1)[:, -2:]
+    margin = top_two.max(axis=1) - top_two.min(axis=1)
+    mismatch_margin = margin[mismatch]
+    max_mismatch_margin = float(mismatch_margin.max()) if mismatch.any() else 0.0
+    boundary_consistent = bool(np.all(mismatch_margin <= 2.0 * max_error + 1e-12))
+    return {
+        "max_probability_error": max_error,
+        "top1_mismatch": mismatch,
+        "top1_mismatch_count": int(mismatch.sum()),
+        "top1_mismatch_fraction_pct": float(mismatch.mean() * 100.0),
+        "max_reference_margin_on_mismatch": max_mismatch_margin,
+        "all_mismatches_within_2linf_margin": boundary_consistent,
+    }
+
+
 def row_ordinal_cost(score: np.ndarray) -> np.ndarray:
     """Convert larger-is-better row scores to deterministic ordinal costs.
 

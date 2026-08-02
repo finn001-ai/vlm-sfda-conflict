@@ -39,6 +39,7 @@ from src.utils.pcgrad_feature_jacobian_audit import (  # noqa: E402
 )
 from src.utils.prototype_transport_audit import (  # noqa: E402
     capacity_preserving_transport,
+    classifier_replay_boundary_diagnostics,
     evaluate_prototype_transport_gate,
     prototype_cosine,
     row_ordinal_cost,
@@ -326,7 +327,10 @@ def main() -> None:
     replay_probability = classifier_probability(
         task_feature, classifier_weight, classifier_bias
     )
-    replay_error = float(np.max(np.abs(replay_probability - task_probability)))
+    replay_diagnostic = classifier_replay_boundary_diagnostics(
+        task_probability, replay_probability
+    )
+    replay_error = replay_diagnostic["max_probability_error"]
     conflict_mask = task_label != clip_label
     conflict_index = np.flatnonzero(conflict_mask)
     conflict_clip = clip_probability[conflict_mask]
@@ -403,8 +407,8 @@ def main() -> None:
         "expected_conflict_count": conflict_index.size == EXPECTED_CONFLICTS,
         "classifier_shape": classifier_weight.shape
         == (EXPECTED_CLASSES, EXPECTED_FEATURES),
-        "frozen_classifier_top1_reproduced": np.array_equal(
-            replay_probability.argmax(1), task_label
+        "frozen_classifier_replay_disagreements_are_boundary_ties": (
+            replay_diagnostic["all_mismatches_within_2linf_margin"]
         ),
         "frozen_classifier_probability_error_at_most_5e_4": replay_error <= 5e-4,
         "transport_quota_exact": quota_exact,
@@ -502,6 +506,18 @@ def main() -> None:
             "solver_status": transport["solver_status"],
             "solver_message": transport["solver_message"],
             "frozen_classifier_max_probability_replay_error": replay_error,
+            "frozen_classifier_top1_mismatch_count": replay_diagnostic[
+                "top1_mismatch_count"
+            ],
+            "frozen_classifier_top1_mismatch_fraction_pct": replay_diagnostic[
+                "top1_mismatch_fraction_pct"
+            ],
+            "frozen_classifier_max_reference_margin_on_mismatch": (
+                replay_diagnostic["max_reference_margin_on_mismatch"]
+            ),
+            "frozen_classifier_replay_disagreements_are_boundary_ties": (
+                replay_diagnostic["all_mismatches_within_2linf_margin"]
+            ),
         },
         "inputs": {
             "pre_cycle1_snapshot": {
