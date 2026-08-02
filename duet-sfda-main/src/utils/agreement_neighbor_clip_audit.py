@@ -7,6 +7,45 @@ from typing import Any
 import numpy as np
 
 
+def agreement_neighbor_masks(
+    task_label: np.ndarray,
+    clip_label: np.ndarray,
+    admitted_mask: np.ndarray,
+    *,
+    query_mode: str,
+) -> dict[str, np.ndarray]:
+    """Build label-free reference/query masks for a declared DUET cycle.
+
+    ``all_current_conflicts`` reproduces the cycle-1 audit. The cycle-2 timing
+    audit uses ``unresolved_current_conflicts`` so stale, previously admitted
+    disagreements are neither references nor queries.
+    """
+    task = np.asarray(task_label, dtype=np.int64)
+    clip = np.asarray(clip_label, dtype=np.int64)
+    admitted = np.asarray(admitted_mask, dtype=bool)
+    if task.ndim != 1 or task.shape != clip.shape or task.shape != admitted.shape:
+        raise ValueError("labels and admitted mask must be aligned vectors")
+    if np.any(task < 0) or np.any(clip < 0):
+        raise ValueError("predicted labels must be non-negative")
+
+    current_agreement = task == clip
+    if query_mode == "all_current_conflicts":
+        reference = current_agreement
+        query = ~current_agreement
+    elif query_mode == "unresolved_current_conflicts":
+        reference = current_agreement & admitted
+        query = (~current_agreement) & (~admitted)
+    else:
+        raise ValueError(f"unsupported agreement-neighbor query mode: {query_mode}")
+    if np.any(reference & query):
+        raise RuntimeError("agreement-neighbor references and queries overlap")
+    return {
+        "current_agreement": current_agreement,
+        "reference": reference,
+        "query": query,
+    }
+
+
 def _probability_matrix(probability: np.ndarray, *, name: str) -> np.ndarray:
     values = np.asarray(probability, dtype=np.float64)
     if values.ndim != 2 or values.shape[0] == 0 or values.shape[1] < 2:

@@ -2,10 +2,10 @@
 """CPU-only audit of agreement-neighbor CLIP evidence for VisDA conflicts.
 
 The label-free phase retrieves the five nearest DUET agreements in task-feature
-space for every cycle-1 conflict, averages their CLIP distributions, and picks
-within the query's task/CLIP top-2 union. Signals are locked before target
-labels are parsed for oracle diagnostics. No image, model, checkpoint,
-optimizer, backward pass, parameter update, or training is used.
+space for a predeclared conflict scope, averages their CLIP distributions, and
+picks within the query's task/CLIP top-2 union. Signals are locked before target
+labels are parsed for oracle diagnostics. No image, model, checkpoint, optimizer,
+backward pass, parameter update, or training is used.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from src.utils.agreement_neighbor_clip_audit import (  # noqa: E402
+    agreement_neighbor_masks,
     agreement_neighbor_clip_posterior,
     evaluate_agreement_neighbor_clip_gate,
     select_from_candidate_set,
@@ -35,7 +36,6 @@ from src.utils.spatial_causal_audit import topk_union_candidates  # noqa: E402
 
 EXPECTED_SAMPLES = 13_847
 EXPECTED_CLASSES = 12
-EXPECTED_AGREEMENTS = 6_777
 NEIGHBORS = 5
 CLASS_NAMES = [
     "aeroplane",
@@ -85,6 +85,15 @@ def _parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_BASE / "agreement_neighbor_clip_audit",
     )
+    parser.add_argument("--expected-cycle", type=int, default=1)
+    parser.add_argument(
+        "--query-mode",
+        choices=("all_current_conflicts", "unresolved_current_conflicts"),
+        default="all_current_conflicts",
+    )
+    parser.add_argument("--expected-reference-count", type=int)
+    parser.add_argument("--expected-query-count", type=int)
+    parser.add_argument("--stem", default="visda_conflict_agreement_neighbor_clip")
     return parser.parse_args()
 
 
@@ -164,8 +173,9 @@ def _write_markdown(summary: dict[str, Any], path: Path) -> None:
         "",
         "## Label-free rule",
         "",
-        "For every cycle-1 task/CLIP conflict, retrieve K=5 nearest DUET",
-        "agreements in task-feature cosine space. Average those references'",
+        f"At pre-cycle {summary['cycle']}, retrieve K=5 nearest DUET",
+        f"agreements for `{summary['query_mode']}` in task-feature cosine space.",
+        "Average those references'",
         "CLIP distributions and choose within the query's task/CLIP top-2 union.",
         "",
         "## Oracle diagnostic",
@@ -236,12 +246,19 @@ def main() -> None:
         task_feature = np.asarray(snapshot["task_feature"], dtype=np.float32).copy()
         sample_index = np.asarray(snapshot["sample_index"], dtype=np.int64).copy()
 
-    agreement = task_label == clip_label
-    conflict = ~agreement
+    masks = agreement_neighbor_masks(
+        task_label,
+        clip_label,
+        label_mask,
+        query_mode=args.query_mode,
+    )
+    agreement = masks["current_agreement"]
+    reference = masks["reference"]
+    conflict = masks["query"]
     neighbor = agreement_neighbor_clip_posterior(
         task_feature,
         clip_probability,
-        agreement,
+        reference,
         conflict,
         neighbors=NEIGHBORS,
     )
@@ -278,14 +295,20 @@ def main() -> None:
     )
     class_mass_shift_pp = (candidate_mass - baseline_mass) * 100.0
 
+    source_snapshot_key = f"pre_cycle{args.expected_cycle}_sha256"
+    cycle_mask_contract = (
+        np.array_equal(label_mask, agreement)
+        if args.query_mode == "all_current_conflicts"
+        else bool(agreement[~label_mask].sum() == 0)
+    )
     input_checks = {
-        "source_snapshot_matches_cycle2_signal_lock": (
-            snapshot_sha256 == source_lock.get("inputs", {}).get("pre_cycle1_sha256")
+        "source_snapshot_matches_cycle_memory_signal_lock": (
+            snapshot_sha256 == source_lock.get("inputs", {}).get(source_snapshot_key)
         ),
         "source_lock_declares_labels_after_manifest": bool(
             source_lock.get("labels_read_after_this_manifest")
         ),
-        "cycle_is_one": cycle == 1,
+        "cycle_matches_predeclared_timing": cycle == args.expected_cycle,
         "expected_probability_shape": (
             task_probability.shape
             == clip_probability.shape
@@ -306,12 +329,23 @@ def main() -> None:
             np.array_equal(task_label, task_probability.argmax(1))
             and np.array_equal(clip_label, clip_probability.argmax(1))
         ),
-        "duet_mask_equals_top1_agreement": np.array_equal(label_mask, agreement),
-        "expected_agreement_count": int(agreement.sum()) == EXPECTED_AGREEMENTS,
+        "duet_mask_matches_query_scope_contract": cycle_mask_contract,
+        "expected_reference_count": (
+            args.expected_reference_count is None
+            or int(reference.sum()) == args.expected_reference_count
+        ),
+        "expected_query_count": (
+            args.expected_query_count is None
+            or int(conflict.sum()) == args.expected_query_count
+        ),
         "all_references_are_agreements": bool(
             agreement[neighbor["neighbor_index"]].all()
         ),
-        "all_queries_are_conflicts": bool(conflict[query].all()),
+        "all_references_are_admitted_when_required": bool(
+            args.query_mode != "unresolved_current_conflicts"
+            or label_mask[neighbor["neighbor_index"]].all()
+        ),
+        "all_queries_match_declared_scope": bool(conflict[query].all()),
         "candidate_predictions_inside_top2_union": bool(
             (candidates == candidate["prediction"][:, None]).any(axis=1).all()
         ),
@@ -322,7 +356,7 @@ def main() -> None:
         raise RuntimeError(f"Agreement-neighbor input contract failed: {failed}")
 
     args.output_dir.mkdir(parents=True, exist_ok=False)
-    stem = "visda_conflict_agreement_neighbor_clip"
+    stem = args.stem
     signal_path = args.output_dir / f"{stem}_label_free.npz"
     lock_path = args.output_dir / f"{stem}_signal_lock.json"
     oracle_path = args.output_dir / f"{stem}_oracle_diagnostic.csv"
@@ -350,15 +384,19 @@ def main() -> None:
         rms_prediction=rms_prediction[query],
     )
     lock = {
-        "phase": "LABEL_FREE_AGREEMENT_NEIGHBOR_CLIP_LOCK",
+        "phase": f"LABEL_FREE_AGREEMENT_NEIGHBOR_CLIP_CYCLE{cycle}_LOCK",
         "contains_target_labels": False,
         "contains_target_paths": False,
         "source_snapshot_contains_target_label_but_key_not_accessed_before_lock": True,
         "target_list_not_parsed_before_lock": True,
         "oracle_labels_parsed_after_this_manifest": True,
         "candidate_contract": {
-            "query": "cycle1 task/CLIP top1 conflicts",
-            "reference_pool": "cycle1 task/CLIP top1 agreements",
+            "cycle": cycle,
+            "query": args.query_mode,
+            "reference_pool": "current task/CLIP top1 agreements",
+            "reference_must_be_admitted": (
+                args.query_mode == "unresolved_current_conflicts"
+            ),
             "neighbor_space": "L2-normalized task bottleneck feature",
             "neighbors": NEIGHBORS,
             "neighbor_setting_source": "ViLAaD VisDA-C public K=5 setting",
@@ -383,8 +421,10 @@ def main() -> None:
         "input_contract_checks": input_checks,
         "label_free_metrics": {
             "samples": EXPECTED_SAMPLES,
-            "agreements": int(agreement.sum()),
-            "conflicts": int(conflict.sum()),
+            "current_agreements": int(agreement.sum()),
+            "admitted_samples": int(label_mask.sum()),
+            "references": int(reference.sum()),
+            "queries": int(conflict.sum()),
             "neighbors": NEIGHBORS,
             "mean_neighbor_cosine": float(neighbor["neighbor_similarity"].mean()),
             "mean_neighbor_clip_top1_consensus": float(
@@ -398,7 +438,7 @@ def main() -> None:
             "max_class_mass_shift_pp": float(np.abs(class_mass_shift_pp).max()),
         },
         "inputs": {
-            "pre_cycle1_snapshot": {
+            f"pre_cycle{cycle}_snapshot": {
                 "path": str(args.snapshot),
                 "sha256": snapshot_sha256,
             },
@@ -551,6 +591,8 @@ def main() -> None:
     summary = {
         "dataset": "VisDA-C",
         "seed": 2020,
+        "cycle": cycle,
+        "query_mode": args.query_mode,
         "decision": gate["decision"],
         "oracle_diagnostic": True,
         "labels_used_only_after_signal_lock": True,
@@ -583,7 +625,7 @@ def main() -> None:
             ),
             "neighbor_label_match_pct": float(neighbor_label_match.mean() * 100.0),
             "reference_agreement_accuracy_pct": float(
-                (task_label[agreement] == target_labels[sample_index[agreement]]).mean()
+                (task_label[reference] == target_labels[sample_index[reference]]).mean()
                 * 100.0
             ),
             "comparisons": comparisons,

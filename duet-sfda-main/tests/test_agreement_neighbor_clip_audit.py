@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from src.utils.agreement_neighbor_clip_audit import (
+    agreement_neighbor_masks,
     agreement_neighbor_clip_posterior,
     evaluate_agreement_neighbor_clip_gate,
     select_from_candidate_set,
@@ -69,6 +70,31 @@ def test_neighbor_contract_rejects_overlapping_reference_and_query_masks():
         )
 
 
+def test_cycle2_masks_exclude_stale_admitted_conflicts():
+    task = np.array([0, 1, 2, 3, 4])
+    clip = np.array([0, 1, 9, 8, 7])
+    admitted = np.array([True, True, True, False, False])
+    masks = agreement_neighbor_masks(
+        task,
+        clip,
+        admitted,
+        query_mode="unresolved_current_conflicts",
+    )
+    assert masks["reference"].tolist() == [True, True, False, False, False]
+    assert masks["query"].tolist() == [False, False, False, True, True]
+
+
+def test_cycle1_masks_reproduce_all_current_conflicts():
+    task = np.array([0, 1, 2])
+    clip = np.array([0, 9, 2])
+    admitted = task == clip
+    masks = agreement_neighbor_masks(
+        task, clip, admitted, query_mode="all_current_conflicts"
+    )
+    assert np.array_equal(masks["reference"], admitted)
+    assert np.array_equal(masks["query"], ~admitted)
+
+
 def test_candidate_selection_never_leaves_the_candidate_set():
     posterior = np.array([[0.1, 0.6, 0.3], [0.7, 0.2, 0.1]])
     candidates = np.array([[0, 2, -1], [1, 2, -1]])
@@ -121,13 +147,21 @@ def test_gate_requires_matched_gain_stability_and_hard_class_safety():
 
 
 def test_cloud_entrypoint_is_cpu_only_and_locks_before_oracle_labels():
-    runner = (
-        REPO_ROOT / "tools/run_visda_conflict_agreement_neighbor_clip_audit.sh"
-    ).read_text()
+    runners = [
+        (
+            REPO_ROOT / "tools/run_visda_conflict_agreement_neighbor_clip_audit.sh"
+        ).read_text(),
+        (
+            REPO_ROOT
+            / "tools/run_visda_conflict_agreement_neighbor_clip_cycle2_audit.sh"
+        ).read_text(),
+    ]
     audit = (
         REPO_ROOT / "tools/audit_visda_conflict_agreement_neighbor_clip.py"
     ).read_text()
-    assert 'CUDA_VISIBLE_DEVICES="" python' in runner
+    assert all('CUDA_VISIBLE_DEVICES="" python' in runner for runner in runners)
+    assert "--expected-cycle 2" in runners[1]
+    assert "--query-mode unresolved_current_conflicts" in runners[1]
     assert "import torch" not in audit
     assert "import clip" not in audit
     assert "optimizer.step" not in audit
