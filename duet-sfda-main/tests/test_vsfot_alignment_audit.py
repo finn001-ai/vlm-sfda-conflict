@@ -8,6 +8,7 @@ from src.utils.vsfot_alignment_audit import (
     log_sinkhorn,
     row_cosine,
     vsfot_alignment_feature_descent,
+    vsfot_transport_probability,
 )
 
 
@@ -22,6 +23,22 @@ def test_log_sinkhorn_matches_both_marginals() -> None:
     np.testing.assert_allclose(result["plan"].sum(axis=1), source, atol=1e-8)
     np.testing.assert_allclose(result["plan"].sum(axis=0), target, atol=1e-8)
     assert result["max_marginal_error"] <= 1e-8
+
+
+def test_log_sinkhorn_dual_refinement_handles_extreme_marginals() -> None:
+    source = np.array([0.999998, 1e-6, 1e-6])
+    target = np.full(8, 1.0 / 8.0)
+    cost = np.array(
+        [
+            [0.0, 20.0, 40.0, 60.0, 80.0, 100.0, 120.0, 140.0],
+            [140.0, 120.0, 100.0, 80.0, 60.0, 40.0, 20.0, 0.0],
+            [70.0, 60.0, 50.0, 40.0, 30.0, 20.0, 10.0, 0.0],
+        ]
+    )
+    result = log_sinkhorn(source, target, cost, iterations=5)
+    np.testing.assert_allclose(result["plan"].sum(axis=1), source, atol=1e-7)
+    np.testing.assert_allclose(result["plan"].sum(axis=0), target, atol=1e-7)
+    assert result["iterations"] > 5 or result["dual_refined"]
 
 
 def test_zero_direction_has_zero_cosine_instead_of_crashing() -> None:
@@ -102,6 +119,17 @@ def test_vsfot_alignment_matches_task_cost_autograd() -> None:
         rtol=2e-5,
         atol=2e-7,
     )
+
+
+def test_transport_probability_is_row_normalized_and_replay_complete() -> None:
+    rng = np.random.default_rng(23)
+    clip = rng.dirichlet(np.ones(3), 11)
+    task = rng.dirichlet(np.ones(3), 11)
+    result = vsfot_transport_probability(clip, task, rng.permutation(11), batch_size=4)
+    assert result["probability"].shape == clip.shape
+    np.testing.assert_allclose(result["probability"].sum(axis=1), 1.0)
+    assert np.all(result["probability"] >= 0.0)
+    assert result["max_sinkhorn_marginal_error"] <= 1e-6
 
 
 def _comparisons(low: float = 0.01) -> dict:

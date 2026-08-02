@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+from scipy.optimize import root
 from scipy.special import logsumexp
 
 
@@ -74,12 +75,135 @@ def log_sinkhorn(
             float(np.max(np.abs(plan.sum(axis=1) - source))),
             float(np.max(np.abs(plan.sum(axis=0) - target))),
         )
+    if error > tolerance:
+        # Preserve the public 1,000-iteration first pass, then extend only the
+        # numerically difficult batches.  Ordinary batches pay no extra cost.
+        extended_limit = max(iterations, 10_000)
+        for iteration in range(iterations, extended_limit):
+            log_u = log_source - logsumexp(log_kernel + log_v[None, :], axis=1)
+            log_v = log_target - logsumexp(log_kernel + log_u[:, None], axis=0)
+            if iteration % 25 == 24 or iteration == extended_limit - 1:
+                plan = np.exp(log_u[:, None] + log_kernel + log_v[None, :])
+                error = max(
+                    float(np.max(np.abs(plan.sum(axis=1) - source))),
+                    float(np.max(np.abs(plan.sum(axis=0) - target))),
+                )
+                if error <= tolerance:
+                    converged_at = iteration + 1
+                    break
+    dual_refined = False
+    if error > tolerance and source.size > 1:
+        # Alternating Sinkhorn scaling can converge very slowly for the
+        # extremely imbalanced VisDA CLIP marginals.  Keep the same entropic
+        # optimum, but solve its class dual directly while analytically
+        # satisfying every sample-column marginal.  Fix the largest-mass
+        # class as the additive gauge and solve the log residuals of all
+        # smaller classes; matching total mass then fixes the gauge row too.
+        gauge_index = int(np.argmax(source))
+        free_index = np.flatnonzero(np.arange(source.size) != gauge_index)
+        initial = (log_u - log_u[gauge_index])[free_index]
+
+        def log_plan_from_free(free: np.ndarray) -> np.ndarray:
+            class_potential = np.zeros(source.size, dtype=np.float64)
+            class_potential[free_index] = free
+            sample_potential = log_target - logsumexp(
+                log_kernel + class_potential[:, None], axis=0
+            )
+            return log_kernel + class_potential[:, None] + sample_potential[None, :]
+
+        def residual(free: np.ndarray) -> np.ndarray:
+            # Log-mass residuals prevent rare classes from disappearing below
+            # an absolute solver tolerance.
+            return (
+                logsumexp(log_plan_from_free(free), axis=1)[free_index]
+                - log_source[free_index]
+            )
+
+        solved = root(
+            residual,
+            initial,
+            method="hybr",
+            options={"xtol": min(tolerance, 1e-11), "maxfev": 5_000},
+        )
+        refined = np.exp(log_plan_from_free(np.asarray(solved.x, dtype=np.float64)))
+        refined_error = max(
+            float(np.max(np.abs(refined.sum(axis=1) - source))),
+            float(np.max(np.abs(refined.sum(axis=0) - target))),
+        )
+        if refined_error < error:
+            plan = refined
+            error = refined_error
+            dual_refined = True
     if not np.isfinite(plan).all():
         raise RuntimeError("Sinkhorn plan is not finite")
     return {
         "plan": plan,
         "max_marginal_error": error,
         "iterations": converged_at,
+        "dual_refined": dual_refined,
+    }
+
+
+def vsfot_transport_probability(
+    clip_probability: np.ndarray,
+    task_probability: np.ndarray,
+    batch_order: np.ndarray,
+    *,
+    batch_size: int = 64,
+    regularization: float = 0.2,
+) -> dict[str, Any]:
+    """Return a row-normalized VSFOT CLIP transport target.
+
+    The public coupling and inverse task-frequency class weights are retained,
+    but each sample row is normalized to a probability distribution so it can
+    replace DUET's existing KL target without introducing a fitted loss scale.
+    """
+    clip = normalize_rows(clip_probability, name="clip_probability")
+    task = normalize_rows(task_probability, name="task_probability")
+    order = np.asarray(batch_order, dtype=np.int64)
+    if clip.shape != task.shape:
+        raise ValueError("CLIP and task probabilities must have matching shape")
+    sample_count, class_count = clip.shape
+    if order.shape != (sample_count,) or not np.array_equal(
+        np.sort(order), np.arange(sample_count)
+    ):
+        raise ValueError("batch_order must be a sample permutation")
+    if batch_size <= 1:
+        raise ValueError("batch_size must exceed one")
+    class_scale = 1.0 / np.maximum(task.mean(axis=0), 1e-4)
+    target = np.zeros_like(clip)
+    max_marginal_error = 0.0
+    dual_refined_batches = 0
+    max_sinkhorn_iterations = 0
+    for start in range(0, sample_count, batch_size):
+        index = order[start : start + batch_size]
+        batch_clip = clip[index]
+        clip_distance = 1.0 - batch_clip.T
+        if float(np.max(clip_distance)) <= 0.0:
+            raise ValueError("CLIP distance must contain a positive value")
+        clip_cost = clip_distance / float(np.max(clip_distance)) - np.log(
+            batch_clip.T + 1e-6
+        )
+        sinkhorn = log_sinkhorn(
+            np.maximum(batch_clip.mean(axis=0), 1e-12),
+            np.full(index.size, 1.0 / index.size, dtype=np.float64),
+            clip_cost,
+            regularization=regularization,
+        )
+        weighted = sinkhorn["plan"].T * class_scale[None, :]
+        row_mass = weighted.sum(axis=1)
+        if np.any(row_mass <= 0.0) or not np.isfinite(weighted).all():
+            raise RuntimeError("transport target has invalid row mass")
+        target[index] = weighted / row_mass[:, None]
+        max_marginal_error = max(max_marginal_error, sinkhorn["max_marginal_error"])
+        dual_refined_batches += int(sinkhorn["dual_refined"])
+        max_sinkhorn_iterations = max(max_sinkhorn_iterations, sinkhorn["iterations"])
+    return {
+        "probability": target,
+        "class_scale": class_scale,
+        "max_sinkhorn_marginal_error": max_marginal_error,
+        "dual_refined_batches": dual_refined_batches,
+        "max_sinkhorn_iterations": max_sinkhorn_iterations,
     }
 
 
