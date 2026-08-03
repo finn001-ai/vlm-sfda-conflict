@@ -1,0 +1,430 @@
+(base) root@k0hauxeo3dlc-yttrve499c9k-main:/hyperai/home/vlm-sfda-conflict/duet-sfda-main# bash tools/run_visda_duet_clip_confidence_delay_proxy25.sh
+==> Offline evidence authorizes exactly one matched proxy25 candidate
+    Cycle-1 agreements=6777; delayed=683; wrong captured=197/399
+    Delayed-set oracle error precision=28.8433%; retained accuracy=96.6853%
+    Production selector exactly matches the pre-oracle locked mask
+==> Reusing matched arithmetic-DUET proxy control: final=87.93
+==> One matched class-balanced CLIP-confidence delay proxy25
+==> Only cycle-1 hard pseudo-label admission changes; CLIP KL is untouched
+==> Delayed agreements can enter naturally from cycle 2 onward
+==> No control rerun; expected candidate GPU time is about 40 minutes
+[26/08/02 12:49:18] [conf.py:  443]: PyTorch Version: torch=2.8.0+cu128, cuda=12.8
+[26/08/02 12:49:18] [conf.py:  444]: ACTIVE:
+  ADAPTATION_LIST: data/VISDA-C/validation_proxy25_seed2020_list.txt
+  ARCH: ViT-B/32
+  BETA: 0.99
+  CLS_PAR: 0.4
+  CON_PAR: 0.2
+  CTX_INIT: a_photo_of_a
+  CYCLE: 4
+  ENT: True
+  EPSILON: 1e-05
+  FINE_LR: 1e-07
+  GENT: True
+  GENT_PAR: 0.1
+  IIC_PAR: 1.0
+  KL_PAR: 0.4
+  LOAD: None
+  N_CTX: 4
+  Q_VALUE: 1.05
+  TTA_STEPS: 1
+ADACONTRAST:
+  ALPHA: 1.0
+  BETA: 1.0
+  CE_SUP_TYPE: weak_strong
+  CE_TYPE: standard
+  CONTRAST_TYPE: class_aware
+  DIST_TYPE: cosine
+  ETA: 1.0
+  FULL_PROGRESS: 0
+  GAMMA: 0.2
+  NUM_NEIGHBORS: 10
+  OPTIM_COS: True
+  OPTIM_EXP: False
+  REFINE_METHOD: nearest_neighbors
+  SCHEDULE: [10, 20]
+CKPT_DIR: .
+CKPT_PATH: 
+COWA:
+  ALPHA: 0.2
+  COEFF: JMDS
+  DISTANCE: cosine
+  EPSILON: 1e-05
+  EPSILON2: 1e-06
+  PICKLE: False
+  WARM: 0.0
+CUDNN:
+  BENCHMARK: True
+DA: uda
+DATA_DIR: /home/sfda/data/
+DESC: 
+DIFO:
+  ARCH: ViT-B/32
+  CLS_PAR: 0.4
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 1.0
+  IIC_PAR: 1.0
+  LOAD: None
+  N_CTX: 4
+  TTA_STEPS: 1
+DUET_BOUNDARY:
+  TOP_FRACTION: 0.2
+DUET_CLIP_DELAY:
+  FRACTION: 0.1
+DUET_FCP:
+  POWER: 0.5
+FAILURE_AUDIT:
+  DIR: failure_audit
+  ENABLED: False
+  FEATURE_DTYPE: float16
+  STOP_AFTER_PRE_CYCLE: 0
+FOLDER: ./data/
+GKD:
+  CLS_PAR: 0.3
+  DISTANCE: cosine
+  ENT: True
+  ENT_PAR: 1.0
+  EPSILON: 1e-05
+  GENT: True
+  THRESHOLD: 0.0
+GPU_ID: 0
+ISSAVE: False
+LCFD:
+  ARCH: ViT-B/32
+  CLS_PAR: 0.4
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 1.0
+  LOSS_FUNC: sce
+  N_CTX: 4
+  TTA_STEPS: 1
+LOG_DEST: duet_clip_confidence_delay_260802_124918.txt
+LOG_TIME: 260802_124918
+MODEL:
+  ADAPTATION: source
+  ARCH: resnet101
+  EPISODIC: False
+  METHOD: duet_clip_confidence_delay_visda_proxy25_seed2020
+  WEIGHTS: IMAGENET1K_V1
+NRC:
+  EPSILON: 1e-05
+  K: 5
+  KK: 4
+NUM_WORKERS: 4
+OPTIM:
+  DAMPENING: 0.0
+  LR: 0.001
+  LR_DECAY1: 0.1
+  LR_DECAY2: 1
+  LR_DECAY3: 0.01
+  METHOD: SGD
+  MOMENTUM: 0.9
+  NESTEROV: True
+  WD: 0.001
+PLUE:
+  CTR: True
+  EPSILON: 1e-05
+  LABEL_REFINEMENT: True
+  NEG_L: True
+  NUM_NEIGHBORS: 10
+  REWEIGHTING: True
+  TEMPORAL_LENGTH: 5
+ProDe:
+  ARCH: ViT-B/32
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 0.1
+  IIC_PAR: 1.3
+  LOAD: None
+  N_CTX: 4
+  TTA_STEPS: 1
+SAVE_DIR: ./output
+SCLM:
+  CLS_PAR: 0.3
+  CLS_SNT: 0.1
+  CONFI_PAR: 0.3
+  DISTANCE: cosine
+  ENT: True
+  ENT_PAR: 1.0
+  EPSILON: 1e-05
+  GENT: True
+  INITC_PAR: 0.3
+  NEW_ENT_PAR: 0.3
+  THRESHOLD: 0.0
+SETTING:
+  DATASET: VISDA-C
+  OUTPUT_SRC: source
+  S: 0
+  SEED: 2020
+  T: 1
+SHOT:
+  CLS_PAR: 0.3
+  DISTANCE: cosine
+  ENT: True
+  ENT_PAR: 1.0
+  EPSILON: 1e-05
+  GENT: True
+  THRESHOLD: 0.0
+SOURCE:
+  EPSILON: 1e-05
+  TRTE: val
+TEST:
+  BATCH_SIZE: 64
+  INTERVAL: 4
+  MAX_EPOCH: 4
+TPDS:
+  DISTANCE: cosine
+  EPSILON: 1e-05
+  THRESHOLD: 0.0
+TSD:
+  ARCH: ViT-B/32
+  CLS_PAR: 0.4
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 1.0
+  IIC_PAR: 1.0
+  LENT_PAR: 0.05
+  LOAD: None
+  N_CTX: 4
+  TTA_STEPS: 1
+bottleneck: 512
+class_num: 12
+domain: ['train', 'validation']
+name: TV
+name_file: ./data/VISDA-C/classname.txt
+name_src: T
+output_dir: ./output/uda/VISDA-C/TV/duet_clip_confidence_delay_visda_proxy25_seed2020
+output_dir_src: ./source/uda/VISDA-C/T
++++++++++++++++++++IB+++++++++++++++++++++
+using DUET with first-cycle CLIP-confidence admission delay
+[26/08/02 12:49:18] [plmatch.py:  465]: DUET first-cycle prior: enabled=False; power=0.000
+[26/08/02 12:49:18] [plmatch.py:  471]: DUET boundary router: enabled=False; first_cycle_only=True; top_fraction=0.200
+[26/08/02 12:49:18] [plmatch.py:  477]: DUET attribute reliability KL: enabled=False; first_cycle_only=True; target=unresolved_conflicts
+[26/08/02 12:49:18] [plmatch.py:  481]: DUET support-conditioned CLIP: enabled=False; first_cycle_only=True; support=task_clip_top2_union; target=unresolved_conflicts
+[26/08/02 12:49:18] [plmatch.py:  487]: DUET support-conditioned CLIP memory: enabled=False; memory=cycle1_task_clip_conflicts; target=currently_unresolved; support=task_clip_top2_union
+[26/08/02 12:49:18] [plmatch.py:  494]: DUET CLIP-confidence delay: enabled=True; first_cycle_only=True; per_pseudo_class_fraction=0.100
+100%|███████████████████████████████████████| 338M/338M [00:20<00:00, 17.2MiB/s]
+[26/08/02 12:49:41] [plmatch.py:  215]: PLMatch adaptation proxy list: data/VISDA-C/validation_proxy25_seed2020_list.txt; adaptation_samples=13847; full_evaluation_samples=55388
+/usr/local/lib/python3.10/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
+  warnings.warn(
+/usr/local/lib/python3.10/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=ResNet101_Weights.IMAGENET1K_V1`. You can also use `weights=ResNet101_Weights.DEFAULT` to get the most up-to-date weights.
+  warnings.warn(msg)
+/usr/local/lib/python3.10/site-packages/torch/nn/utils/weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+train_clip
+[26/08/02 12:50:35] [plmatch.py:  976]: DUET CLIP-confidence delay applied: cycle=1; original_agreements=6777; delayed=683; retained=6094; mean_delayed_clip_confidence=0.589162; target_labels=False; fitted_thresholds=False
+[26/08/02 12:50:35] [plmatch.py: 1097]: Number of valid pseudo-labeled samples: 6094/13847; Accuracy = 96.69%
+[26/08/02 12:50:35] [plmatch.py: 1144]: Mixed output with valid mask: 96.69%
+[26/08/02 12:50:35] [plmatch.py: 1154]: all_mix_output Accuracy = 73.71%; clip_output_accuracy = 82.96%; pure_output_accuracy = 51.19%;
+[26/08/02 12:50:54] [plmatch.py:  363]: CLIP visual Accuracy = 85.37%;
+[26/08/02 12:53:19] [plmatch.py:  736]: Task: TV, Iter:217/868; Cycle: 1/4; Accuracy = 79.94%; classifier_loss = 0.3297547399997711
+96.38 75.19 83.03 71.96 94.01 78.12 90.3 61.92 84.17 84.96 89.52 49.73
+[26/08/02 12:55:27] [plmatch.py:  736]: Task: TV, Iter:434/868; Cycle: 1/4; Accuracy = 81.73%; classifier_loss = 0.5038268566131592
+95.83 75.65 84.54 73.6 95.69 79.9 91.99 68.05 86.15 88.08 88.79 52.45
+[26/08/02 12:57:42] [plmatch.py:  736]: Task: TV, Iter:651/868; Cycle: 1/4; Accuracy = 82.11%; classifier_loss = 0.2936198115348816
+96.9 78.19 85.16 73.0 95.99 80.39 90.98 66.27 86.22 90.0 89.4 52.83
+[26/08/02 12:59:51] [plmatch.py:  736]: Task: TV, Iter:868/868; Cycle: 1/4; Accuracy = 81.80%; classifier_loss = 0.2944769561290741
+96.98 77.18 83.07 73.41 96.08 82.27 92.31 64.88 85.38 89.61 89.09 51.3
+[26/08/02 13:00:28] [plmatch.py:  988]: DUET CLIP-confidence delay applied: cycle=2; delayed=0; first_cycle_only=True
+[26/08/02 13:00:28] [plmatch.py: 1097]: Number of valid pseudo-labeled samples: 11654/13847; Accuracy = 91.48%
+[26/08/02 13:00:28] [plmatch.py: 1144]: Mixed output with valid mask: 92.23%
+[26/08/02 13:00:28] [plmatch.py: 1154]: all_mix_output Accuracy = 86.62%; clip_output_accuracy = 86.60%; pure_output_accuracy = 80.58%;
+[26/08/02 13:00:43] [plmatch.py:  363]: CLIP visual Accuracy = 87.18%;
+[26/08/02 13:02:52] [plmatch.py:  736]: Task: TV, Iter:217/868; Cycle: 2/4; Accuracy = 84.91%; classifier_loss = 0.17511135339736938
+97.09 78.07 83.11 78.06 96.35 91.47 91.99 78.38 89.84 89.57 89.68 55.34
+[26/08/02 13:05:08] [plmatch.py:  736]: Task: TV, Iter:434/868; Cycle: 2/4; Accuracy = 85.70%; classifier_loss = 0.28646498918533325
+96.68 82.56 85.52 75.08 96.74 89.16 92.77 76.95 90.53 92.63 91.31 58.51
+[26/08/02 13:07:16] [plmatch.py:  736]: Task: TV, Iter:651/868; Cycle: 2/4; Accuracy = 85.66%; classifier_loss = 0.2698739171028137
+97.12 80.35 86.2 74.92 96.5 90.89 93.44 78.38 90.02 92.63 91.27 56.15
+[26/08/02 13:09:25] [plmatch.py:  736]: Task: TV, Iter:868/868; Cycle: 2/4; Accuracy = 85.57%; classifier_loss = 0.299934446811676
+97.7 79.88 85.46 76.04 96.91 91.23 92.94 77.48 90.42 92.42 90.08 56.25
+[26/08/02 13:09:59] [plmatch.py:  988]: DUET CLIP-confidence delay applied: cycle=3; delayed=0; first_cycle_only=True
+[26/08/02 13:09:59] [plmatch.py: 1097]: Number of valid pseudo-labeled samples: 12603/13847; Accuracy = 90.39%
+[26/08/02 13:09:59] [plmatch.py: 1144]: Mixed output with valid mask: 91.13%
+[26/08/02 13:09:59] [plmatch.py: 1154]: all_mix_output Accuracy = 87.69%; clip_output_accuracy = 87.25%; pure_output_accuracy = 84.50%;
+[26/08/02 13:10:14] [plmatch.py:  363]: CLIP visual Accuracy = 87.77%;
+[26/08/02 13:12:23] [plmatch.py:  736]: Task: TV, Iter:217/868; Cycle: 3/4; Accuracy = 86.85%; classifier_loss = 0.20751354098320007
+97.15 81.55 85.97 76.0 96.72 92.96 92.96 81.75 91.67 93.07 90.39 62.06
+[26/08/02 13:14:34] [plmatch.py:  736]: Task: TV, Iter:434/868; Cycle: 3/4; Accuracy = 87.10%; classifier_loss = 0.36854225397109985
+96.9 81.96 86.2 77.44 96.4 92.92 92.32 83.62 91.21 94.39 91.22 60.56
+[26/08/02 13:16:46] [plmatch.py:  736]: Task: TV, Iter:651/868; Cycle: 3/4; Accuracy = 87.01%; classifier_loss = 0.3512991666793823
+97.83 81.9 86.67 75.98 97.46 93.83 93.94 80.3 91.6 92.11 92.37 60.15
+[26/08/02 13:18:57] [plmatch.py:  736]: Task: TV, Iter:868/868; Cycle: 3/4; Accuracy = 87.06%; classifier_loss = 0.30476027727127075
+97.67 80.98 87.23 77.48 96.67 93.49 94.1 82.7 91.73 92.55 89.49 60.58
+[26/08/02 13:19:32] [plmatch.py:  988]: DUET CLIP-confidence delay applied: cycle=4; delayed=0; first_cycle_only=True
+[26/08/02 13:19:32] [plmatch.py: 1097]: Number of valid pseudo-labeled samples: 13063/13847; Accuracy = 89.76%
+[26/08/02 13:19:32] [plmatch.py: 1144]: Mixed output with valid mask: 90.52%
+[26/08/02 13:19:32] [plmatch.py: 1154]: all_mix_output Accuracy = 88.27%; clip_output_accuracy = 87.63%; pure_output_accuracy = 86.21%;
+[26/08/02 13:19:47] [plmatch.py:  363]: CLIP visual Accuracy = 88.18%;
+[26/08/02 13:22:04] [plmatch.py:  736]: Task: TV, Iter:217/868; Cycle: 4/4; Accuracy = 87.51%; classifier_loss = 0.18560877442359924
+97.78 80.98 84.14 77.24 96.8 93.35 94.41 84.25 92.97 93.47 92.35 62.36
+[26/08/02 13:24:15] [plmatch.py:  736]: Task: TV, Iter:434/868; Cycle: 4/4; Accuracy = 87.83%; classifier_loss = 0.4394274353981018
+97.89 82.1 86.57 77.1 97.14 94.94 94.31 81.45 92.37 94.17 92.68 63.21
+[26/08/02 13:26:29] [plmatch.py:  736]: Task: TV, Iter:651/868; Cycle: 4/4; Accuracy = 87.80%; classifier_loss = 0.20105810463428497
+97.26 82.07 84.14 79.65 96.1 94.46 94.08 85.4 94.24 92.99 91.55 61.7
+[26/08/02 13:28:47] [plmatch.py:  736]: Task: TV, Iter:868/868; Cycle: 4/4; Accuracy = 87.97%; classifier_loss = 0.21557259559631348
+97.34 83.8 84.8 80.11 96.91 94.12 93.82 84.38 92.37 93.77 90.89 63.28
+Running time: 2369.11 Seconds
+{
+  "decision": "visda_run_complete",
+  "metric": "mean per-class accuracy",
+  "selection_warning": "peak reads validation labels and is oracle-only",
+  "num_checkpoints": 16,
+  "final": {
+    "iteration": 868,
+    "max_iteration": 868,
+    "cycle": 4,
+    "max_cycle": 4,
+    "accuracy": 87.97,
+    "class_accuracy": [
+      97.34,
+      83.8,
+      84.8,
+      80.11,
+      96.91,
+      94.12,
+      93.82,
+      84.38,
+      92.37,
+      93.77,
+      90.89,
+      63.28
+    ]
+  },
+  "oracle_peak": {
+    "iteration": 868,
+    "max_iteration": 868,
+    "cycle": 4,
+    "max_cycle": 4,
+    "accuracy": 87.97,
+    "class_accuracy": [
+      97.34,
+      83.8,
+      84.8,
+      80.11,
+      96.91,
+      94.12,
+      93.82,
+      84.38,
+      92.37,
+      93.77,
+      90.89,
+      63.28
+    ]
+  },
+  "peak_minus_final": 0.0,
+  "classes": [
+    {
+      "class": "aeroplane",
+      "final_accuracy": 97.34,
+      "peak_checkpoint_accuracy": 97.34
+    },
+    {
+      "class": "bicycle",
+      "final_accuracy": 83.8,
+      "peak_checkpoint_accuracy": 83.8
+    },
+    {
+      "class": "bus",
+      "final_accuracy": 84.8,
+      "peak_checkpoint_accuracy": 84.8
+    },
+    {
+      "class": "car",
+      "final_accuracy": 80.11,
+      "peak_checkpoint_accuracy": 80.11
+    },
+    {
+      "class": "horse",
+      "final_accuracy": 96.91,
+      "peak_checkpoint_accuracy": 96.91
+    },
+    {
+      "class": "knife",
+      "final_accuracy": 94.12,
+      "peak_checkpoint_accuracy": 94.12
+    },
+    {
+      "class": "motorcycle",
+      "final_accuracy": 93.82,
+      "peak_checkpoint_accuracy": 93.82
+    },
+    {
+      "class": "person",
+      "final_accuracy": 84.38,
+      "peak_checkpoint_accuracy": 84.38
+    },
+    {
+      "class": "plant",
+      "final_accuracy": 92.37,
+      "peak_checkpoint_accuracy": 92.37
+    },
+    {
+      "class": "skateboard",
+      "final_accuracy": 93.77,
+      "peak_checkpoint_accuracy": 93.77
+    },
+    {
+      "class": "train",
+      "final_accuracy": 90.89,
+      "peak_checkpoint_accuracy": 90.89
+    },
+    {
+      "class": "truck",
+      "final_accuracy": 63.28,
+      "peak_checkpoint_accuracy": 63.28
+    }
+  ],
+  "next": "compare with same-source VisDA baselines, then run adaptation seeds 2021/2022"
+}
+{
+  "decision": "REJECT_CLIP_CONFIDENCE_DELAY_PROXY",
+  "metric": "VisDA mean per-class accuracy at the final checkpoint",
+  "control_provenance": "matched_current_source_and_proxy_hashes",
+  "control_provenance_limitations": [],
+  "control_final": 87.93,
+  "candidate_final": 87.97,
+  "final_delta": 0.04,
+  "car_truck_mean_delta": 0.115,
+  "other10_mean_delta": 0.015,
+  "class_deltas": {
+    "aeroplane": -0.11,
+    "bicycle": 0.17,
+    "bus": -0.02,
+    "car": -0.31,
+    "horse": 0.04,
+    "knife": 0.14,
+    "motorcycle": -0.09,
+    "person": 0.2,
+    "plant": -0.09,
+    "skateboard": 0.21,
+    "train": -0.3,
+    "truck": 0.54
+  },
+  "car_truck_exchange_observed": true,
+  "thresholds": {
+    "min_final_macro_improvement_pp": 0.2,
+    "max_individual_car_truck_regression_pp": 0.5,
+    "selection_uses_oracle_peak": false
+  },
+  "checks": {
+    "matched_four_cycle_contract": true,
+    "final_macro_improvement_at_least_0.20pp": false,
+    "car_truck_mean_noninferior": true,
+    "individual_car_truck_regression_at_most_0.50pp": true,
+    "other_ten_mean_noninferior": true
+  },
+  "next": "stop; do not run full VisDA",
+  "candidate": "cycle1_class_balanced_bottom10_clip_confidence_delay"
+}
+==> Gate: output/uda/VISDA-C/duet_clip_confidence_delay_visda_proxy25_seed2020_gate.json
+==> Even PASS does not authorize or start a full VisDA run

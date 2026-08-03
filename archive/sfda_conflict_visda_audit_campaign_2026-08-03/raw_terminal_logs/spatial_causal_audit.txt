@@ -1,0 +1,241 @@
+(base) root@k0hauxeo3dlc-yttrve499c9k-main:/hyperai/home/vlm-sfda-conflict/duet-sfda-main# bash tools/run_visda_conflict_spatial_causal_audit.sh
+==> Archived incomplete audit: output/uda/VISDA-C/TV/plmatch_visda_spatial_causal_audit_seed2020.incomplete_20260801_140904
+==> Frozen VisDA spatial-causal conflict audit
+==> Same task model and CLIP ViT-B/32; 1,024 rows x 64 masks
+==> No optimizer, no backward, no adaptation, no checkpoints
+[26/08/01 14:09:09] [conf.py:  434]: PyTorch Version: torch=2.8.0+cu128, cuda=12.8
+[26/08/01 14:09:09] [conf.py:  435]: ACTIVE:
+  ADAPTATION_LIST: 
+  ARCH: ViT-B/32
+  BETA: 0.99
+  CLS_PAR: 0.4
+  CON_PAR: 0.2
+  CTX_INIT: a_photo_of_a
+  CYCLE: 8
+  ENT: True
+  EPSILON: 1e-05
+  FINE_LR: 1e-07
+  GENT: True
+  GENT_PAR: 0.1
+  IIC_PAR: 1.0
+  KL_PAR: 0.4
+  LOAD: None
+  N_CTX: 4
+  Q_VALUE: 1.05
+  TTA_STEPS: 1
+ADACONTRAST:
+  ALPHA: 1.0
+  BETA: 1.0
+  CE_SUP_TYPE: weak_strong
+  CE_TYPE: standard
+  CONTRAST_TYPE: class_aware
+  DIST_TYPE: cosine
+  ETA: 1.0
+  FULL_PROGRESS: 0
+  GAMMA: 0.2
+  NUM_NEIGHBORS: 10
+  OPTIM_COS: True
+  OPTIM_EXP: False
+  REFINE_METHOD: nearest_neighbors
+  SCHEDULE: [10, 20]
+CKPT_DIR: .
+CKPT_PATH: 
+COWA:
+  ALPHA: 0.2
+  COEFF: JMDS
+  DISTANCE: cosine
+  EPSILON: 1e-05
+  EPSILON2: 1e-06
+  PICKLE: False
+  WARM: 0.0
+CUDNN:
+  BENCHMARK: True
+DA: uda
+DATA_DIR: /home/sfda/data/
+DESC: 
+DIFO:
+  ARCH: ViT-B/32
+  CLS_PAR: 0.4
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 1.0
+  IIC_PAR: 1.0
+  LOAD: None
+  N_CTX: 4
+  TTA_STEPS: 1
+DUET_BOUNDARY:
+  TOP_FRACTION: 0.2
+DUET_FCP:
+  POWER: 0.5
+FAILURE_AUDIT:
+  DIR: failure_audit
+  ENABLED: False
+  FEATURE_DTYPE: float16
+FOLDER: ./data/
+GKD:
+  CLS_PAR: 0.3
+  DISTANCE: cosine
+  ENT: True
+  ENT_PAR: 1.0
+  EPSILON: 1e-05
+  GENT: True
+  THRESHOLD: 0.0
+GPU_ID: 0
+ISSAVE: False
+LCFD:
+  ARCH: ViT-B/32
+  CLS_PAR: 0.4
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 1.0
+  LOSS_FUNC: sce
+  N_CTX: 4
+  TTA_STEPS: 1
+LOG_DEST: plmatch_260801_140909.txt
+LOG_TIME: 260801_140909
+MODEL:
+  ADAPTATION: source
+  ARCH: resnet101
+  EPISODIC: False
+  METHOD: plmatch_visda_spatial_causal_audit_seed2020
+  WEIGHTS: IMAGENET1K_V1
+NRC:
+  EPSILON: 1e-05
+  K: 5
+  KK: 4
+NUM_WORKERS: 4
+OPTIM:
+  DAMPENING: 0.0
+  LR: 0.001
+  LR_DECAY1: 0.1
+  LR_DECAY2: 1
+  LR_DECAY3: 0.01
+  METHOD: SGD
+  MOMENTUM: 0.9
+  NESTEROV: True
+  WD: 0.001
+PLUE:
+  CTR: True
+  EPSILON: 1e-05
+  LABEL_REFINEMENT: True
+  NEG_L: True
+  NUM_NEIGHBORS: 10
+  REWEIGHTING: True
+  TEMPORAL_LENGTH: 5
+ProDe:
+  ARCH: ViT-B/32
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 0.1
+  IIC_PAR: 1.3
+  LOAD: None
+  N_CTX: 4
+  TTA_STEPS: 1
+SAVE_DIR: ./output
+SCLM:
+  CLS_PAR: 0.3
+  CLS_SNT: 0.1
+  CONFI_PAR: 0.3
+  DISTANCE: cosine
+  ENT: True
+  ENT_PAR: 1.0
+  EPSILON: 1e-05
+  GENT: True
+  INITC_PAR: 0.3
+  NEW_ENT_PAR: 0.3
+  THRESHOLD: 0.0
+SETTING:
+  DATASET: VISDA-C
+  OUTPUT_SRC: source
+  S: 0
+  SEED: 2020
+  T: 1
+SHOT:
+  CLS_PAR: 0.3
+  DISTANCE: cosine
+  ENT: True
+  ENT_PAR: 1.0
+  EPSILON: 1e-05
+  GENT: True
+  THRESHOLD: 0.0
+SOURCE:
+  EPSILON: 1e-05
+  TRTE: val
+TEST:
+  BATCH_SIZE: 64
+  INTERVAL: 4
+  MAX_EPOCH: 4
+TPDS:
+  DISTANCE: cosine
+  EPSILON: 1e-05
+  THRESHOLD: 0.0
+TSD:
+  ARCH: ViT-B/32
+  CLS_PAR: 0.4
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 1.0
+  IIC_PAR: 1.0
+  LENT_PAR: 0.05
+  LOAD: None
+  N_CTX: 4
+  TTA_STEPS: 1
+bottleneck: 512
+class_num: 12
+domain: ['train', 'validation']
+name: TV
+name_file: ./data/VISDA-C/classname.txt
+name_src: T
+output_dir: ./output/uda/VISDA-C/TV/plmatch_visda_spatial_causal_audit_seed2020
+output_dir_src: ./source/uda/VISDA-C/T
+/usr/local/lib/python3.10/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
+  warnings.warn(
+/usr/local/lib/python3.10/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=ResNet101_Weights.IMAGENET1K_V1`. You can also use `weights=ResNet101_Weights.DEFAULT` to get the most up-to-date weights.
+  warnings.warn(msg)
+/usr/local/lib/python3.10/site-packages/torch/nn/utils/weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+Wrote label-free signals: output/uda/VISDA-C/TV/plmatch_visda_spatial_causal_audit_seed2020/spatial_causal_audit/visda_conflict_spatial_causal_signals.csv
+Wrote label-free tensor signals: output/uda/VISDA-C/TV/plmatch_visda_spatial_causal_audit_seed2020/spatial_causal_audit/visda_conflict_spatial_causal_signals.npz
+Locked signals before oracle labels: output/uda/VISDA-C/TV/plmatch_visda_spatial_causal_audit_seed2020/spatial_causal_audit/visda_conflict_spatial_causal_signal_lock.json
+Wrote oracle diagnostic: output/uda/VISDA-C/TV/plmatch_visda_spatial_causal_audit_seed2020/spatial_causal_audit/visda_conflict_spatial_causal_oracle_diagnostic.csv
+Wrote classwise oracle diagnostic: output/uda/VISDA-C/TV/plmatch_visda_spatial_causal_audit_seed2020/spatial_causal_audit/visda_conflict_spatial_causal_classwise_oracle_diagnostic.csv
+Wrote summary: output/uda/VISDA-C/TV/plmatch_visda_spatial_causal_audit_seed2020/spatial_causal_audit/visda_conflict_spatial_causal_summary.json
+{
+  "decision": "REJECT",
+  "checks": {
+    "baseline_reproduced": true,
+    "median_split_half_stability_at_least_0.80": false,
+    "balanced_gain_positive": false,
+    "balanced_gain_ci_lower_positive": false,
+    "car_truck_gain_at_least_3pp": false,
+    "eligible_top2_rescue_at_least_20pct": true,
+    "car_net_corrections_nonnegative": true,
+    "truck_net_corrections_nonnegative": false,
+    "selector_changes_fixed_clip": true
+  }
+}
+{
+  "decision": "REJECT",
+  "checks": {
+    "baseline_reproduced": true,
+    "median_split_half_stability_at_least_0.80": false,
+    "balanced_gain_positive": false,
+    "balanced_gain_ci_lower_positive": false,
+    "car_truck_gain_at_least_3pp": false,
+    "eligible_top2_rescue_at_least_20pct": true,
+    "car_net_corrections_nonnegative": true,
+    "truck_net_corrections_nonnegative": false,
+    "selector_changes_fixed_clip": true
+  },
+  "runtime_seconds": 301.3876512371935
+}
+==> Audit complete: output/uda/VISDA-C/TV/plmatch_visda_spatial_causal_audit_seed2020/spatial_causal_audit/visda_conflict_spatial_causal_summary.json
+==> PASS_OFFLINE_GATE still does not authorize or start training

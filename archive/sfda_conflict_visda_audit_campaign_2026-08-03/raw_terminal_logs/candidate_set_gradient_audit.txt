@@ -1,0 +1,133 @@
+(base) root@k0hauxeo3dlc-yttrve499c9k-main:/hyperai/home/vlm-sfda-conflict/duet-sfda-main# bash tools/run_visda_conflict_candidate_set_gradient_audit.sh
+==> CPU-only exact candidate-set logit-gradient audit
+==> Compares DUET CLIP KL, top-1 set loss, and top-2 set loss
+==> No image/model/checkpoint load, forward, backward, optimizer, or training
+Wrote label-free directions: output/uda/VISDA-C/TV/plmatch_visda_candidate_set_gradient_audit_seed2020/candidate_set_gradient_audit/visda_conflict_candidate_set_gradient_label_free.npz
+Wrote signal lock: output/uda/VISDA-C/TV/plmatch_visda_candidate_set_gradient_audit_seed2020/candidate_set_gradient_audit/visda_conflict_candidate_set_gradient_signal_lock.json
+Wrote oracle diagnostic: output/uda/VISDA-C/TV/plmatch_visda_candidate_set_gradient_audit_seed2020/candidate_set_gradient_audit/visda_conflict_candidate_set_gradient_oracle_diagnostic.csv
+Wrote classwise oracle diagnostic: output/uda/VISDA-C/TV/plmatch_visda_candidate_set_gradient_audit_seed2020/candidate_set_gradient_audit/visda_conflict_candidate_set_gradient_classwise_oracle_diagnostic.csv
+Wrote summary: output/uda/VISDA-C/TV/plmatch_visda_candidate_set_gradient_audit_seed2020/candidate_set_gradient_audit/visda_conflict_candidate_set_gradient_summary.json
+Wrote markdown summary: output/uda/VISDA-C/TV/plmatch_visda_candidate_set_gradient_audit_seed2020/candidate_set_gradient_audit/visda_conflict_candidate_set_gradient_summary.md
+{
+  "decision": "REJECT",
+  "checks": {
+    "input_contract_valid": true,
+    "top2_cosine_beats_clip_with_positive_ci": false,
+    "top2_projection_beats_clip_with_positive_ci": false,
+    "top2_first_order_beats_clip_with_positive_ci": false,
+    "top2_cosine_beats_top1_with_positive_ci": false,
+    "top2_projection_beats_top1_with_positive_ci": true,
+    "top2_first_order_beats_top1_with_positive_ci": true,
+    "class_macro_first_order_delta_vs_clip_positive": false,
+    "car_first_order_delta_vs_clip_nonnegative": false,
+    "person_first_order_delta_vs_clip_nonnegative": false,
+    "truck_first_order_delta_vs_clip_nonnegative": false,
+    "harmful_fraction_not_above_clip": false
+  }
+}
+{
+  "decision": "REJECT",
+  "checks": {
+    "input_contract_valid": true,
+    "top2_cosine_beats_clip_with_positive_ci": false,
+    "top2_projection_beats_clip_with_positive_ci": false,
+    "top2_first_order_beats_clip_with_positive_ci": false,
+    "top2_cosine_beats_top1_with_positive_ci": false,
+    "top2_projection_beats_top1_with_positive_ci": true,
+    "top2_first_order_beats_top1_with_positive_ci": true,
+    "class_macro_first_order_delta_vs_clip_positive": false,
+    "car_first_order_delta_vs_clip_nonnegative": false,
+    "person_first_order_delta_vs_clip_nonnegative": false,
+    "truck_first_order_delta_vs_clip_nonnegative": false,
+    "harmful_fraction_not_above_clip": false
+  },
+  "method_metrics": {
+    "clip_kl": {
+      "mean_cosine": 0.7239393700812973,
+      "mean_oracle_unit_projection": 0.7651952344490697,
+      "mean_first_order": 1.004239726656062,
+      "mean_direction_norm": 1.009236048261522,
+      "joint_nonzero_fraction_pct": 100.0,
+      "helpful_fraction_pct": 89.41426296230756,
+      "harmful_fraction_pct": 10.585737037692445,
+      "neutral_fraction_pct": 0.0
+    },
+    "top1_set": {
+      "mean_cosine": -0.21296659129663073,
+      "mean_oracle_unit_projection": -0.033829768809515416,
+      "mean_first_order": -0.053285052041699865,
+      "mean_direction_norm": 0.25538988014055364,
+      "joint_nonzero_fraction_pct": 98.97363298531234,
+      "helpful_fraction_pct": 18.84622190762697,
+      "harmful_fraction_pct": 80.12387188108299,
+      "neutral_fraction_pct": 1.029906211290037
+    },
+    "top2_set": {
+      "mean_cosine": -0.25245431965416815,
+      "mean_oracle_unit_projection": -0.014334375650967502,
+      "mean_first_order": -0.02143344270899914,
+      "mean_direction_norm": 0.0985166435024295,
+      "joint_nonzero_fraction_pct": 98.0428242788887,
+      "helpful_fraction_pct": 17.126172358874538,
+      "harmful_fraction_pct": 80.90249513360467,
+      "neutral_fraction_pct": 1.9713325075207928
+    }
+  },
+  "comparisons": {
+    "versus_clip_kl": {
+      "cosine": {
+        "mean_difference": -0.9763936897354653,
+        "paired_bootstrap_95_ci": [
+          -0.9868070741931642,
+          -0.9663782386446471
+        ]
+      },
+      "oracle_unit_projection": {
+        "mean_difference": -0.7795296101000372,
+        "paired_bootstrap_95_ci": [
+          -0.7860782247059519,
+          -0.7728623128507227
+        ]
+      },
+      "first_order": {
+        "mean_difference": -1.0256731693650611,
+        "paired_bootstrap_95_ci": [
+          -1.0326119775589306,
+          -1.0181588124311904
+        ]
+      }
+    },
+    "versus_top1_set": {
+      "cosine": {
+        "mean_difference": -0.039487728357537444,
+        "paired_bootstrap_95_ci": [
+          -0.04181381736523322,
+          -0.0370970770838439
+        ]
+      },
+      "oracle_unit_projection": {
+        "mean_difference": 0.01949539315854791,
+        "paired_bootstrap_95_ci": [
+          0.018172584864127334,
+          0.02078445568102589
+        ]
+      },
+      "first_order": {
+        "mean_difference": 0.031851609332700724,
+        "paired_bootstrap_95_ci": [
+          0.030800185464185854,
+          0.03290066997149833
+        ]
+      }
+    }
+  },
+  "class_macro_first_order_delta_vs_clip": -1.082892129664859,
+  "hard_class_first_order_delta_vs_clip": {
+    "car": -0.35321938707128053,
+    "person": -1.0742104456920147,
+    "truck": -1.2206095487504314
+  },
+  "runtime_seconds": 2.735484555363655
+}
+==> Audit complete: output/uda/VISDA-C/TV/plmatch_visda_candidate_set_gradient_audit_seed2020/candidate_set_gradient_audit/visda_conflict_candidate_set_gradient_summary.json
+==> PASS_SET_GRADIENT_PREFLIGHT authorizes one matched proxy design only, never training

@@ -1,0 +1,271 @@
+base) root@k0hauxeo3dlc-yttrve499c9k-main:/hyperai/home/vlm-sfda-conflict/duet-sfda-main# bash tools/run_visda_conflict_pcgrad_parameter_audit.sh
+==> Evidence lock passed: output -> frozen head -> exact parameter audit
+==> One pure arithmetic-DUET cycle, then exact no-update parameter audit
+==> Ten fixed batches: 100 unresolved conflicts + 540 admitted context rows
+==> Target labels enter only after selection and per-batch gradient locks
+==> Expected GPU time: about 12-16 minutes; no cycle-2 optimizer step
+[26/08/02 16:59:16] [conf.py:  452]: PyTorch Version: torch=2.8.0+cu128, cuda=12.8
+[26/08/02 16:59:16] [conf.py:  453]: ACTIVE:
+  ADAPTATION_LIST: data/VISDA-C/validation_proxy25_seed2020_list.txt
+  ARCH: ViT-B/32
+  BETA: 0.99
+  CLS_PAR: 0.4
+  CON_PAR: 0.2
+  CTX_INIT: a_photo_of_a
+  CYCLE: 2
+  ENT: True
+  EPSILON: 1e-05
+  FINE_LR: 1e-07
+  GENT: True
+  GENT_PAR: 0.1
+  IIC_PAR: 1.0
+  KL_PAR: 0.4
+  LOAD: None
+  N_CTX: 4
+  Q_VALUE: 1.05
+  TTA_STEPS: 1
+ADACONTRAST:
+  ALPHA: 1.0
+  BETA: 1.0
+  CE_SUP_TYPE: weak_strong
+  CE_TYPE: standard
+  CONTRAST_TYPE: class_aware
+  DIST_TYPE: cosine
+  ETA: 1.0
+  FULL_PROGRESS: 0
+  GAMMA: 0.2
+  NUM_NEIGHBORS: 10
+  OPTIM_COS: True
+  OPTIM_EXP: False
+  REFINE_METHOD: nearest_neighbors
+  SCHEDULE: [10, 20]
+CKPT_DIR: .
+CKPT_PATH: 
+COWA:
+  ALPHA: 0.2
+  COEFF: JMDS
+  DISTANCE: cosine
+  EPSILON: 1e-05
+  EPSILON2: 1e-06
+  PICKLE: False
+  WARM: 0.0
+CUDNN:
+  BENCHMARK: True
+DA: uda
+DATA_DIR: /home/sfda/data/
+DESC: 
+DIFO:
+  ARCH: ViT-B/32
+  CLS_PAR: 0.4
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 1.0
+  IIC_PAR: 1.0
+  LOAD: None
+  N_CTX: 4
+  TTA_STEPS: 1
+DUET_BOUNDARY:
+  TOP_FRACTION: 0.2
+DUET_CLIP_DELAY:
+  FRACTION: 0.1
+DUET_FCP:
+  POWER: 0.5
+FAILURE_AUDIT:
+  DIR: failure_audit
+  ENABLED: False
+  FEATURE_DTYPE: float16
+  STOP_AFTER_PRE_CYCLE: 0
+FOLDER: ./data/
+GKD:
+  CLS_PAR: 0.3
+  DISTANCE: cosine
+  ENT: True
+  ENT_PAR: 1.0
+  EPSILON: 1e-05
+  GENT: True
+  THRESHOLD: 0.0
+GPU_ID: 0
+ISSAVE: False
+LCFD:
+  ARCH: ViT-B/32
+  CLS_PAR: 0.4
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 1.0
+  LOSS_FUNC: sce
+  N_CTX: 4
+  TTA_STEPS: 1
+LOG_DEST: plmatch_260802_165916.txt
+LOG_TIME: 260802_165916
+MODEL:
+  ADAPTATION: source
+  ARCH: resnet101
+  EPISODIC: False
+  METHOD: plmatch_pcgrad_parameter_audit_seed2020
+  WEIGHTS: IMAGENET1K_V1
+NRC:
+  EPSILON: 1e-05
+  K: 5
+  KK: 4
+NUM_WORKERS: 4
+OPTIM:
+  DAMPENING: 0.0
+  LR: 0.001
+  LR_DECAY1: 0.1
+  LR_DECAY2: 1
+  LR_DECAY3: 0.01
+  METHOD: SGD
+  MOMENTUM: 0.9
+  NESTEROV: True
+  WD: 0.001
+PCGRAD_PARAMETER_AUDIT:
+  DIR: conflict_pcgrad_parameter_audit
+  ENABLED: True
+PLUE:
+  CTR: True
+  EPSILON: 1e-05
+  LABEL_REFINEMENT: True
+  NEG_L: True
+  NUM_NEIGHBORS: 10
+  REWEIGHTING: True
+  TEMPORAL_LENGTH: 5
+ProDe:
+  ARCH: ViT-B/32
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 0.1
+  IIC_PAR: 1.3
+  LOAD: None
+  N_CTX: 4
+  TTA_STEPS: 1
+SAVE_DIR: ./output
+SCLM:
+  CLS_PAR: 0.3
+  CLS_SNT: 0.1
+  CONFI_PAR: 0.3
+  DISTANCE: cosine
+  ENT: True
+  ENT_PAR: 1.0
+  EPSILON: 1e-05
+  GENT: True
+  INITC_PAR: 0.3
+  NEW_ENT_PAR: 0.3
+  THRESHOLD: 0.0
+SETTING:
+  DATASET: VISDA-C
+  OUTPUT_SRC: source
+  S: 0
+  SEED: 2020
+  T: 1
+SHOT:
+  CLS_PAR: 0.3
+  DISTANCE: cosine
+  ENT: True
+  ENT_PAR: 1.0
+  EPSILON: 1e-05
+  GENT: True
+  THRESHOLD: 0.0
+SOURCE:
+  EPSILON: 1e-05
+  TRTE: val
+TEST:
+  BATCH_SIZE: 64
+  INTERVAL: 4
+  MAX_EPOCH: 4
+TPDS:
+  DISTANCE: cosine
+  EPSILON: 1e-05
+  THRESHOLD: 0.0
+TSD:
+  ARCH: ViT-B/32
+  CLS_PAR: 0.4
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 1.0
+  IIC_PAR: 1.0
+  LENT_PAR: 0.05
+  LOAD: None
+  N_CTX: 4
+  TTA_STEPS: 1
+bottleneck: 512
+class_num: 12
+domain: ['train', 'validation']
+name: TV
+name_file: ./data/VISDA-C/classname.txt
+name_src: T
+output_dir: ./output/uda/VISDA-C/TV/plmatch_pcgrad_parameter_audit_seed2020
+output_dir_src: ./source/uda/VISDA-C/T
++++++++++++++++++++IB+++++++++++++++++++++
+using plmatch method
+[26/08/02 16:59:16] [plmatch.py:  479]: DUET first-cycle prior: enabled=False; power=0.000
+[26/08/02 16:59:16] [plmatch.py:  485]: DUET boundary router: enabled=False; first_cycle_only=True; top_fraction=0.200
+[26/08/02 16:59:16] [plmatch.py:  491]: DUET attribute reliability KL: enabled=False; first_cycle_only=True; target=unresolved_conflicts
+[26/08/02 16:59:16] [plmatch.py:  495]: DUET support-conditioned CLIP: enabled=False; first_cycle_only=True; support=task_clip_top2_union; target=unresolved_conflicts
+[26/08/02 16:59:16] [plmatch.py:  501]: DUET support-conditioned CLIP memory: enabled=False; memory=cycle1_task_clip_conflicts; target=currently_unresolved; support=task_clip_top2_union
+[26/08/02 16:59:16] [plmatch.py:  508]: DUET CLIP-confidence delay: enabled=False; first_cycle_only=True; per_pseudo_class_fraction=0.100
+[26/08/02 16:59:16] [plmatch.py:  515]: DUET exact PCGrad parameter audit: enabled=True; cycle=2; pure_arithmetic_duet=True; optimizer_updates_in_audit=0
+100%|███████████████████████████████████████| 338M/338M [00:40<00:00, 8.71MiB/s]
+[26/08/02 16:59:59] [plmatch.py:  216]: PLMatch adaptation proxy list: data/VISDA-C/validation_proxy25_seed2020_list.txt; adaptation_samples=13847; full_evaluation_samples=55388
+/usr/local/lib/python3.10/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
+  warnings.warn(
+/usr/local/lib/python3.10/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=ResNet101_Weights.IMAGENET1K_V1`. You can also use `weights=ResNet101_Weights.DEFAULT` to get the most up-to-date weights.
+  warnings.warn(msg)
+/usr/local/lib/python3.10/site-packages/torch/nn/utils/weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+train_clip
+[26/08/02 17:00:53] [plmatch.py: 1142]: Number of valid pseudo-labeled samples: 6777/13847; Accuracy = 94.11%
+[26/08/02 17:00:53] [plmatch.py: 1189]: Mixed output with valid mask: 94.11%
+[26/08/02 17:00:53] [plmatch.py: 1199]: all_mix_output Accuracy = 73.71%; clip_output_accuracy = 82.96%; pure_output_accuracy = 51.19%;
+[26/08/02 17:01:11] [plmatch.py:  364]: CLIP visual Accuracy = 85.37%;
+[26/08/02 17:03:29] [plmatch.py:  781]: Task: TV, Iter:217/868; Cycle: 1/2; Accuracy = 79.94%; classifier_loss = 0.32968050241470337
+96.32 74.85 83.03 72.47 94.16 78.17 90.94 61.0 84.46 84.61 89.8 49.46
+[26/08/02 17:05:44] [plmatch.py:  781]: Task: TV, Iter:434/868; Cycle: 1/2; Accuracy = 81.59%; classifier_loss = 0.5139138698577881
+95.94 74.65 84.88 73.99 95.89 79.52 92.68 66.9 86.57 87.81 89.19 51.08
+[26/08/02 17:08:01] [plmatch.py:  781]: Task: TV, Iter:651/868; Cycle: 1/2; Accuracy = 81.97%; classifier_loss = 0.2911187410354614
+96.93 77.15 85.14 73.46 96.14 79.86 91.77 65.42 86.5 89.7 90.18 51.41
+[26/08/02 17:10:16] [plmatch.py:  781]: Task: TV, Iter:868/868; Cycle: 1/2; Accuracy = 81.66%; classifier_loss = 0.28862881660461426
+96.98 76.2 83.52 73.86 96.31 81.98 92.86 63.68 85.45 89.26 89.83 50.05
+[26/08/02 17:10:58] [plmatch.py: 1142]: Number of valid pseudo-labeled samples: 11810/13847; Accuracy = 90.81%
+[26/08/02 17:10:58] [plmatch.py: 1189]: Mixed output with valid mask: 91.72%
+[26/08/02 17:10:58] [plmatch.py: 1199]: all_mix_output Accuracy = 86.63%; clip_output_accuracy = 86.60%; pure_output_accuracy = 80.71%;
+{
+  "decision": "EXACT_PARAMETER_EVIDENCE_CAPTURED",
+  "unresolved_conflicts": 2037,
+  "audited_conflicts": 100,
+  "output_pcgrad_active_conflicts": 36,
+  "cycle2_optimizer_steps": 0
+}
+[26/08/02 17:11:14] [plmatch.py:  694]: PCGrad exact parameter audit stop: after_pre_cycle=2; cycle2_optimizer_steps=0; parameters_updated_by_audit=False
+Running time: 718.3 Seconds
+{
+  "decision": "REJECT",
+  "checks": {
+    "input_contract_valid": true,
+    "pure_duet_cycle1_replay_error_at_most_0_10pp": true,
+    "audits_at_least_5pct_of_unresolved_conflicts": false,
+    "output_pcgrad_active_coverage_at_least_5pct": true,
+    "parameter_cosine_gain_ci_lower_positive": false,
+    "parameter_projection_gain_ci_lower_positive": false,
+    "parameter_first_order_gain_ci_lower_positive": false,
+    "parameter_negative_burden_not_worse": true,
+    "parameter_helpful_retention_at_least_99pct": true,
+    "parameter_mean_norm_inflation_at_most_1_5x": true,
+    "at_least_80pct_batches_have_positive_first_order_delta": false,
+    "car_parameter_first_order_delta_nonnegative": true,
+    "person_parameter_first_order_delta_nonnegative": true,
+    "truck_parameter_first_order_delta_nonnegative": true,
+    "other_nine_parameter_first_order_delta_nonnegative": false
+  }
+}
+Wrote exact parameter summary: output/uda/VISDA-C/TV/plmatch_pcgrad_parameter_audit_seed2020/conflict_pcgrad_parameter_audit/visda_conflict_pcgrad_parameter_summary.json
+==> Exact parameter audit complete: output/uda/VISDA-C/TV/plmatch_pcgrad_parameter_audit_seed2020/conflict_pcgrad_parameter_audit/visda_conflict_pcgrad_parameter_summary.json
+==> PASS authorizes exactly one matched proxy25 design, never a full run
+(base) root@k0hauxeo3dlc-yttrve499c9k-main:/hyperai/home/vlm-sfda-conflict/duet-sfda-main# 

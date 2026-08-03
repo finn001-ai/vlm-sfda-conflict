@@ -1,0 +1,208 @@
+[26/08/01 17:02:01] [plmatch.py:  418]: DUET attribute reliability KL: enabled=True; first_cycle_only=True; target=unresolved_conflicts
+100%|███████████████████████████████████████| 338M/338M [00:20<00:00, 17.3MiB/s]
+[26/08/01 17:02:23] [plmatch.py:  207]: PLMatch adaptation proxy list: data/VISDA-C/validation_proxy25_seed2020_list.txt; adaptation_samples=13847; full_evaluation_samples=55388
+/usr/local/lib/python3.10/site-packages/torchvision/models/_utils.py:208: UserWarning: The parameter 'pretrained' is deprecated since 0.13 and may be removed in the future, please use 'weights' instead.
+  warnings.warn(
+/usr/local/lib/python3.10/site-packages/torchvision/models/_utils.py:223: UserWarning: Arguments other than a weight enum or `None` for 'weights' are deprecated since 0.13 and may be removed in the future. The current behavior is equivalent to passing `weights=ResNet101_Weights.IMAGENET1K_V1`. You can also use `weights=ResNet101_Weights.DEFAULT` to get the most up-to-date weights.
+  warnings.warn(msg)
+/usr/local/lib/python3.10/site-packages/torch/nn/utils/weight_norm.py:144: FutureWarning: `torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`.
+  WeightNorm.apply(module, name, dim)
+[26/08/01 17:02:26] [plmatch.py:  513]: DUET attribute text contract: classes=12; templates=2; families=4; target_labels=False; fitted_thresholds=False
+train_clip
+[26/08/01 17:03:00] [plmatch.py:  897]: DUET attribute reliability KL applied: cycle=1; active_conflicts=7070; changed_top1=259; mean_weight=0.199064; target_labels=False; fitted_thresholds=False
+[26/08/01 17:03:00] [plmatch.py:  929]: Number of valid pseudo-labeled samples: 6777/13847; Accuracy = 94.11%
+[26/08/01 17:03:00] [plmatch.py:  976]: Mixed output with valid mask: 94.11%
+[26/08/01 17:03:00] [plmatch.py:  986]: all_mix_output Accuracy = 73.70%; clip_output_accuracy = 82.96%; pure_output_accuracy = 51.19%;
+[26/08/01 17:03:14] [plmatch.py:  355]: CLIP visual Accuracy = 85.37%;
+[26/08/01 17:05:03] [plmatch.py:  646]: Task: TV, Iter:217/868; Cycle: 1/4; Accuracy = 79.95%; classifier_loss = 0.32328540086746216
+96.41 74.82 82.84 73.08 94.18 78.17 90.96 60.92 84.61 84.61 89.73 49.08
+[26/08/01 17:06:37] [plmatch.py:  646]: Task: TV, Iter:434/868; Cycle: 1/4; Accuracy = 81.65%; classifier_loss = 0.5272951722145081
+95.94 74.71 84.69 74.6 95.93 79.9 92.68 66.92 86.57 87.86 89.12 50.9
+[26/08/01 17:08:06] [plmatch.py:  646]: Task: TV, Iter:651/868; Cycle: 1/4; Accuracy = 81.98%; classifier_loss = 0.2949333190917969
+96.82 77.21 85.01 73.91 96.16 80.1 91.7 65.25 86.52 89.61 90.13 51.39
+[26/08/01 17:09:41] [plmatch.py:  646]: Task: TV, Iter:868/868; Cycle: 1/4; Accuracy = 81.73%; classifier_loss = 0.2923641800880432
+97.01 76.23 83.3 74.28 96.33 82.27 92.94 63.68 85.6 89.22 89.78 50.16
+[26/08/01 17:10:12] [plmatch.py:  907]: DUET attribute reliability KL applied: cycle=2; active_conflicts=0; changed_top1=0; mean_weight=0.000000; first_cycle_only=True
+[26/08/01 17:10:12] [plmatch.py:  929]: Number of valid pseudo-labeled samples: 11804/13847; Accuracy = 90.88%
+[26/08/01 17:10:12] [plmatch.py:  976]: Mixed output with valid mask: 91.78%
+[26/08/01 17:10:12] [plmatch.py:  986]: all_mix_output Accuracy = 86.64%; clip_output_accuracy = 86.60%; pure_output_accuracy = 80.74%;
+[26/08/01 17:10:25] [plmatch.py:  355]: CLIP visual Accuracy = 87.17%;
+[26/08/01 17:11:58] [plmatch.py:  646]: Task: TV, Iter:217/868; Cycle: 2/4; Accuracy = 84.92%; classifier_loss = 0.21009758114814758
+97.23 78.01 83.2 78.47 96.4 91.57 92.08 78.08 89.87 89.52 90.01 54.56
+[26/08/01 17:13:31] [plmatch.py:  646]: Task: TV, Iter:434/868; Cycle: 2/4; Accuracy = 85.67%; classifier_loss = 0.2783931493759155
+96.76 82.47 85.33 75.46 96.7 89.2 92.98 76.18 90.59 92.68 91.88 57.77
+[26/08/01 17:15:05] [plmatch.py:  646]: Task: TV, Iter:651/868; Cycle: 2/4; Accuracy = 85.72%; classifier_loss = 0.2674204707145691
+97.26 80.23 86.2 75.59 96.55 91.13 93.58 78.2 90.2 92.68 91.43 55.57
+[26/08/01 17:16:39] [plmatch.py:  646]: Task: TV, Iter:868/868; Cycle: 2/4; Accuracy = 85.61%; classifier_loss = 0.30727237462997437
+97.81 79.86 85.44 76.5 96.95 91.33 93.17 77.28 90.48 92.46 90.37 55.71
+[26/08/01 17:17:03] [plmatch.py:  907]: DUET attribute reliability KL applied: cycle=3; active_conflicts=0; changed_top1=0; mean_weight=0.000000; first_cycle_only=True
+[26/08/01 17:17:03] [plmatch.py:  929]: Number of valid pseudo-labeled samples: 12697/13847; Accuracy = 90.03%
+[26/08/01 17:17:03] [plmatch.py:  976]: Mixed output with valid mask: 90.82%
+[26/08/01 17:17:03] [plmatch.py:  986]: all_mix_output Accuracy = 87.76%; clip_output_accuracy = 87.33%; pure_output_accuracy = 84.62%;
+[26/08/01 17:17:16] [plmatch.py:  355]: CLIP visual Accuracy = 87.74%;
+[26/08/01 17:18:52] [plmatch.py:  646]: Task: TV, Iter:217/868; Cycle: 3/4; Accuracy = 86.90%; classifier_loss = 0.20384646952152252
+97.2 81.32 85.99 76.4 96.72 93.4 93.1 81.7 91.65 93.03 90.84 61.45
+[26/08/01 17:20:26] [plmatch.py:  646]: Task: TV, Iter:434/868; Cycle: 3/4; Accuracy = 87.13%; classifier_loss = 0.3672325611114502
+96.98 81.93 85.99 77.98 96.38 93.06 92.46 83.65 91.38 94.26 91.57 59.86
+[26/08/01 17:22:03] [plmatch.py:  646]: Task: TV, Iter:651/868; Cycle: 3/4; Accuracy = 87.05%; classifier_loss = 0.34972888231277466
+97.89 81.67 86.67 76.31 97.42 94.27 93.94 80.23 91.82 92.11 92.78 59.5
+[26/08/01 17:23:39] [plmatch.py:  646]: Task: TV, Iter:868/868; Cycle: 3/4; Accuracy = 87.10%; classifier_loss = 0.304335355758667
+97.72 81.01 87.27 77.98 96.72 93.69 94.19 82.58 91.89 92.24 89.99 59.88
+[26/08/01 17:24:02] [plmatch.py:  907]: DUET attribute reliability KL applied: cycle=4; active_conflicts=0; changed_top1=0; mean_weight=0.000000; first_cycle_only=True
+[26/08/01 17:24:02] [plmatch.py:  929]: Number of valid pseudo-labeled samples: 13129/13847; Accuracy = 89.53%
+[26/08/01 17:24:02] [plmatch.py:  976]: Mixed output with valid mask: 90.36%
+[26/08/01 17:24:02] [plmatch.py:  986]: all_mix_output Accuracy = 88.27%; clip_output_accuracy = 87.71%; pure_output_accuracy = 86.33%;
+[26/08/01 17:24:16] [plmatch.py:  355]: CLIP visual Accuracy = 88.20%;
+[26/08/01 17:25:52] [plmatch.py:  646]: Task: TV, Iter:217/868; Cycle: 4/4; Accuracy = 87.51%; classifier_loss = 0.18368789553642273
+97.75 80.69 84.2 77.7 96.82 93.45 94.63 83.98 93.03 93.47 92.56 61.79
+[26/08/01 17:27:30] [plmatch.py:  646]: Task: TV, Iter:434/868; Cycle: 4/4; Accuracy = 87.84%; classifier_loss = 0.43898892402648926
+97.97 82.19 86.57 77.4 97.19 95.04 94.5 81.3 92.33 94.17 92.97 62.42
+[26/08/01 17:29:07] [plmatch.py:  646]: Task: TV, Iter:651/868; Cycle: 4/4; Accuracy = 87.75%; classifier_loss = 0.20239348709583282
+97.28 81.93 84.05 80.14 96.08 94.31 94.12 85.28 94.22 92.9 91.78 60.89
+[26/08/01 17:30:43] [plmatch.py:  646]: Task: TV, Iter:868/868; Cycle: 4/4; Accuracy = 87.94%; classifier_loss = 0.22525256872177124
+97.48 83.65 84.9 80.55 96.89 94.07 93.91 84.12 92.37 93.6 91.22 62.47
+Running time: 1721.74 Seconds
+{
+  "decision": "visda_run_complete",
+  "metric": "mean per-class accuracy",
+  "selection_warning": "peak reads validation labels and is oracle-only",
+  "num_checkpoints": 16,
+  "final": {
+    "iteration": 868,
+    "max_iteration": 868,
+    "cycle": 4,
+    "max_cycle": 4,
+    "accuracy": 87.94,
+    "class_accuracy": [
+      97.48,
+      83.65,
+      84.9,
+      80.55,
+      96.89,
+      94.07,
+      93.91,
+      84.12,
+      92.37,
+      93.6,
+      91.22,
+      62.47
+    ]
+  },
+  "oracle_peak": {
+    "iteration": 868,
+    "max_iteration": 868,
+    "cycle": 4,
+    "max_cycle": 4,
+    "accuracy": 87.94,
+    "class_accuracy": [
+      97.48,
+      83.65,
+      84.9,
+      80.55,
+      96.89,
+      94.07,
+      93.91,
+      84.12,
+      92.37,
+      93.6,
+      91.22,
+      62.47
+    ]
+  },
+  "peak_minus_final": 0.0,
+  "classes": [
+    {
+      "class": "aeroplane",
+      "final_accuracy": 97.48,
+      "peak_checkpoint_accuracy": 97.48
+    },
+    {
+      "class": "bicycle",
+      "final_accuracy": 83.65,
+      "peak_checkpoint_accuracy": 83.65
+    },
+    {
+      "class": "bus",
+      "final_accuracy": 84.9,
+      "peak_checkpoint_accuracy": 84.9
+    },
+    {
+      "class": "car",
+      "final_accuracy": 80.55,
+      "peak_checkpoint_accuracy": 80.55
+    },
+    {
+      "class": "horse",
+      "final_accuracy": 96.89,
+      "peak_checkpoint_accuracy": 96.89
+    },
+    {
+      "class": "knife",
+      "final_accuracy": 94.07,
+      "peak_checkpoint_accuracy": 94.07
+    },
+    {
+      "class": "motorcycle",
+      "final_accuracy": 93.91,
+      "peak_checkpoint_accuracy": 93.91
+    },
+    {
+      "class": "person",
+      "final_accuracy": 84.12,
+      "peak_checkpoint_accuracy": 84.12
+    },
+    {
+      "class": "plant",
+      "final_accuracy": 92.37,
+      "peak_checkpoint_accuracy": 92.37
+    },
+    {
+      "class": "skateboard",
+      "final_accuracy": 93.6,
+      "peak_checkpoint_accuracy": 93.6
+    },
+    {
+      "class": "train",
+      "final_accuracy": 91.22,
+      "peak_checkpoint_accuracy": 91.22
+    },
+    {
+      "class": "truck",
+      "final_accuracy": 62.47,
+      "peak_checkpoint_accuracy": 62.47
+    }
+  ],
+  "next": "compare with same-source VisDA baselines, then run adaptation seeds 2021/2022"
+}
+{
+  "decision": "REJECT_ATTRIBUTE_RELIABILITY_PROXY",
+  "metric": "VisDA mean per-class accuracy at the final checkpoint",
+  "control_provenance": "matched_current_source_and_proxy_hashes",
+  "control_provenance_limitations": [],
+  "control_final": 87.93,
+  "candidate_final": 87.94,
+  "final_delta": 0.01,
+  "hard_mean_delta": -0.0667,
+  "other9_mean_delta": 0.0244,
+  "car_truck_mean_delta": -0.07,
+  "hard_class_deltas": {
+    "car": 0.13,
+    "person": -0.06,
+    "truck": -0.27
+  },
+  "car_truck_exchange_observed": true,
+  "thresholds": {
+    "min_final_macro_improvement_pp": 0.2,
+    "max_hard_or_other9_mean_regression_pp": 0.0,
+    "selection_uses_oracle_peak": false
+  },
+  "checks": {
+    "matched_four_cycle_contract": true,
+    "final_macro_improvement_at_least_0.20pp": false,
+    "car_person_truck_mean_noninferior": false,
+    "other_nine_mean_noninferior": true
+  },
+  "next": "stop; do not run full VisDA"
+}
+==> Gate: output/uda/VISDA-C/duet_attribute_reliability_kl_visda_proxy25_seed2020_gate.json
+==> Even PASS does not authorize or start a full VisDA run

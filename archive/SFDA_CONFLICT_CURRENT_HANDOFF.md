@@ -1,5 +1,11 @@
 # SFDA Conflict Project: Current Handoff
 
+> 2026-08-03 更新：CT-DUET 之后的 VisDA 冲突审计、proxy 候选、代码提交链
+> 和当前可取得的数据已统一归档到
+> `archive/sfda_conflict_visda_audit_campaign_2026-08-03/`。该轮没有候选
+> 获准进入 full VisDA；当前安全基线仍是原始 DUET final `91.50`。下文保留
+> 2026-07-24 的历史 handoff，阅读新任务时应先看新归档 README。
+
 Last updated: 2026-07-24
 
 This is the canonical handoff for starting a new conversation. It consolidates

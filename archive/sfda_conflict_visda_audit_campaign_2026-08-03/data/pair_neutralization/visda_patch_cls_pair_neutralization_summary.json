@@ -1,0 +1,349 @@
+{
+  "decision": "REJECT",
+  "candidate": "patch_selected_task_clip_pair_mass_neutralization",
+  "candidate_contract": {
+    "new_information": "locked_patch_to_cls_task_rescue_selector",
+    "changed_target_entries": "task_and_clip_top1_only",
+    "candidate_pair_total_mass_preserved": true,
+    "noncandidate_probabilities_preserved": true,
+    "task_hard_pseudo_labels_added": false,
+    "admission_mask_changed": false,
+    "consistency_changed": false,
+    "loss_coefficients_changed": false,
+    "fitted_thresholds": false,
+    "target_label_rule": false
+  },
+  "input_contract": {
+    "passed": true,
+    "checks": {
+      "source_lock_is_label_free": true,
+      "source_signal_hash_matches_lock": true,
+      "expected_shapes": true,
+      "query_indices_unique": true,
+      "candidate_rows_are_conflicts": true,
+      "recovered_clip_target_is_probability": true,
+      "neutral_target_is_probability": true,
+      "mass_moves_from_clip_to_task": true,
+      "all_label_free_values_finite": true,
+      "source_classifier_shape": true
+    }
+  },
+  "label_free_metrics": {
+    "selected_samples": 613,
+    "selected_conflict_coverage_pct": 2.897660127629402,
+    "mean_transferred_clip_to_task_mass": 0.20812774037765172,
+    "minimum_transferred_clip_to_task_mass": 0.000614924341474532,
+    "recovered_clip_target_replay_max_abs_error": 3.9705781718080146e-10,
+    "nonpair_target_max_abs_error": 0.0,
+    "candidate_pair_mass_max_abs_error": 1.1102230246251565e-16,
+    "max_full_target_class_mass_shift_pp": 0.1667737084035606,
+    "candidate_to_baseline_feature_mean_norm_ratio": 0.7860499032117774
+  },
+  "oracle_diagnostic": {
+    "explicit_oracle_diagnostic": true,
+    "labels_read_only_after_signal_lock": true,
+    "source_kl_suppression_reject_preserved": true,
+    "heldout_selector_passed": true,
+    "versus_original_duet": {
+      "output": {
+        "cosine": {
+          "samples": 613,
+          "baseline_mean": 0.18379606516523964,
+          "candidate_mean": 0.24988236982827047,
+          "mean_difference": 0.06608630466303081,
+          "paired_bootstrap_95_ci": [
+            0.05745988102730904,
+            0.0756193747372845
+          ]
+        },
+        "oracle_unit_projection": {
+          "samples": 613,
+          "baseline_mean": 0.0013002235212660708,
+          "candidate_mean": 0.0013610192456550137,
+          "mean_difference": 6.079572438894341e-05,
+          "paired_bootstrap_95_ci": [
+            -1.9102326007902048e-05,
+            0.00013679031515954223
+          ]
+        },
+        "first_order": {
+          "samples": 613,
+          "baseline_mean": 0.0023904213366887582,
+          "candidate_mean": 0.0021160327458520927,
+          "mean_difference": -0.0002743885908366656,
+          "paired_bootstrap_95_ci": [
+            -0.00037706992729661786,
+            -0.00017927402745344652
+          ]
+        }
+      },
+      "feature": {
+        "cosine": {
+          "samples": 613,
+          "baseline_mean": 0.191385386717661,
+          "candidate_mean": 0.25840876097201737,
+          "mean_difference": 0.06702337425435637,
+          "paired_bootstrap_95_ci": [
+            0.05730483594056827,
+            0.0765105213860767
+          ]
+        },
+        "oracle_unit_projection": {
+          "samples": 613,
+          "baseline_mean": 0.0012417414196201726,
+          "candidate_mean": 0.0012953101765034922,
+          "mean_difference": 5.356875688331977e-05,
+          "paired_bootstrap_95_ci": [
+            -1.6541897014035367e-05,
+            0.00012324203539384912
+          ]
+        },
+        "first_order": {
+          "samples": 613,
+          "baseline_mean": 0.0021213585659937673,
+          "candidate_mean": 0.0018762830582700115,
+          "mean_difference": -0.000245075507723756,
+          "paired_bootstrap_95_ci": [
+            -0.0003264731232924905,
+            -0.0001595465880641344
+          ]
+        }
+      }
+    },
+    "versus_full_kl_suppression": {
+      "output": {
+        "cosine": {
+          "samples": 613,
+          "baseline_mean": 0.5057612545208027,
+          "candidate_mean": 0.24988236982827047,
+          "mean_difference": -0.2558788846925322,
+          "paired_bootstrap_95_ci": [
+            -0.3019061754119265,
+            -0.21020490512079743
+          ]
+        },
+        "oracle_unit_projection": {
+          "samples": 613,
+          "baseline_mean": 0.001248548282955197,
+          "candidate_mean": 0.0013610192456550137,
+          "mean_difference": 0.00011247096269981686,
+          "paired_bootstrap_95_ci": [
+            -1.8823358634433585e-05,
+            0.00023587832157915276
+          ]
+        },
+        "first_order": {
+          "samples": 613,
+          "baseline_mean": 0.0012274252138536877,
+          "candidate_mean": 0.0021160327458520927,
+          "mean_difference": 0.0008886075319984054,
+          "paired_bootstrap_95_ci": [
+            0.0007331207128908915,
+            0.00103930240806508
+          ]
+        }
+      },
+      "feature": {
+        "cosine": {
+          "samples": 613,
+          "baseline_mean": 0.5071717132430824,
+          "candidate_mean": 0.25840876097201737,
+          "mean_difference": -0.24876295227106504,
+          "paired_bootstrap_95_ci": [
+            -0.2954859096203838,
+            -0.20424047922024288
+          ]
+        },
+        "oracle_unit_projection": {
+          "samples": 613,
+          "baseline_mean": 0.0011662945064570358,
+          "candidate_mean": 0.0012953101765034922,
+          "mean_difference": 0.0001290156700464565,
+          "paired_bootstrap_95_ci": [
+            1.6267831715016525e-05,
+            0.0002458014639667491
+          ]
+        },
+        "first_order": {
+          "samples": 613,
+          "baseline_mean": 0.0010705598872476094,
+          "candidate_mean": 0.0018762830582700115,
+          "mean_difference": 0.000805723171022402,
+          "paired_bootstrap_95_ci": [
+            0.0006653447723931095,
+            0.0009441852817513093
+          ]
+        }
+      }
+    },
+    "output_negative_burden_baseline": -8.782871505627665e-05,
+    "output_negative_burden_candidate": -4.0346763685631175e-05,
+    "feature_negative_burden_baseline": -7.712242785438849e-05,
+    "feature_negative_burden_candidate": -3.650614854454577e-05,
+    "feature_helpful_retention_pct": 87.00503721282885,
+    "class_macro_feature_first_order_delta": -0.0005515279162369547,
+    "car_feature_first_order_delta": 0.00011435254880547885,
+    "person_feature_first_order_delta": -0.0020044768827163096,
+    "truck_feature_first_order_delta": -0.001148470982215687,
+    "other_nine_feature_first_order_delta": -0.00039774885319077103,
+    "classwise": [
+      {
+        "class_index": 0,
+        "class": "aeroplane",
+        "selected_samples": 4,
+        "baseline_mean_feature_first_order": 0.0028982534281014297,
+        "candidate_mean_feature_first_order": 0.0020819952682943014,
+        "candidate_minus_baseline_mean_feature_first_order": -0.000816258159807128,
+        "oracle_usage": "diagnostic_only_after_pair_neutralization_signal_lock"
+      },
+      {
+        "class_index": 1,
+        "class": "bicycle",
+        "selected_samples": 28,
+        "baseline_mean_feature_first_order": 0.00295012213988577,
+        "candidate_mean_feature_first_order": 0.002442306095342204,
+        "candidate_minus_baseline_mean_feature_first_order": -0.0005078160445435662,
+        "oracle_usage": "diagnostic_only_after_pair_neutralization_signal_lock"
+      },
+      {
+        "class_index": 2,
+        "class": "bus",
+        "selected_samples": 16,
+        "baseline_mean_feature_first_order": 0.005147145248959543,
+        "candidate_mean_feature_first_order": 0.0041080848913558395,
+        "candidate_minus_baseline_mean_feature_first_order": -0.0010390603576037028,
+        "oracle_usage": "diagnostic_only_after_pair_neutralization_signal_lock"
+      },
+      {
+        "class_index": 3,
+        "class": "car",
+        "selected_samples": 251,
+        "baseline_mean_feature_first_order": 0.0012401345096802695,
+        "candidate_mean_feature_first_order": 0.001354487058485748,
+        "candidate_minus_baseline_mean_feature_first_order": 0.00011435254880547885,
+        "oracle_usage": "diagnostic_only_after_pair_neutralization_signal_lock"
+      },
+      {
+        "class_index": 4,
+        "class": "horse",
+        "selected_samples": 8,
+        "baseline_mean_feature_first_order": 0.0018005823866590574,
+        "candidate_mean_feature_first_order": 0.0014135569822172672,
+        "candidate_minus_baseline_mean_feature_first_order": -0.00038702540444179027,
+        "oracle_usage": "diagnostic_only_after_pair_neutralization_signal_lock"
+      },
+      {
+        "class_index": 5,
+        "class": "knife",
+        "selected_samples": 4,
+        "baseline_mean_feature_first_order": 0.004335672676225792,
+        "candidate_mean_feature_first_order": 0.003860759711153324,
+        "candidate_minus_baseline_mean_feature_first_order": -0.0004749129650724681,
+        "oracle_usage": "diagnostic_only_after_pair_neutralization_signal_lock"
+      },
+      {
+        "class_index": 6,
+        "class": "motorcycle",
+        "selected_samples": 37,
+        "baseline_mean_feature_first_order": 0.0011639753843926876,
+        "candidate_mean_feature_first_order": 0.0012739759058791637,
+        "candidate_minus_baseline_mean_feature_first_order": 0.00011000052148647644,
+        "oracle_usage": "diagnostic_only_after_pair_neutralization_signal_lock"
+      },
+      {
+        "class_index": 7,
+        "class": "person",
+        "selected_samples": 48,
+        "baseline_mean_feature_first_order": 0.00569565423086451,
+        "candidate_mean_feature_first_order": 0.0036911773481482,
+        "candidate_minus_baseline_mean_feature_first_order": -0.0020044768827163096,
+        "oracle_usage": "diagnostic_only_after_pair_neutralization_signal_lock"
+      },
+      {
+        "class_index": 8,
+        "class": "plant",
+        "selected_samples": 130,
+        "baseline_mean_feature_first_order": 0.0008833490256588339,
+        "candidate_mean_feature_first_order": 0.001105627057732783,
+        "candidate_minus_baseline_mean_feature_first_order": 0.0002222780320739494,
+        "oracle_usage": "diagnostic_only_after_pair_neutralization_signal_lock"
+      },
+      {
+        "class_index": 9,
+        "class": "skateboard",
+        "selected_samples": 15,
+        "baseline_mean_feature_first_order": 0.002563937688266282,
+        "candidate_mean_feature_first_order": 0.00221214249296209,
+        "candidate_minus_baseline_mean_feature_first_order": -0.00035179519530419194,
+        "oracle_usage": "diagnostic_only_after_pair_neutralization_signal_lock"
+      },
+      {
+        "class_index": 10,
+        "class": "train",
+        "selected_samples": 14,
+        "baseline_mean_feature_first_order": 0.0020587113174295618,
+        "candidate_mean_feature_first_order": 0.001723561211925044,
+        "candidate_minus_baseline_mean_feature_first_order": -0.00033515010550451776,
+        "oracle_usage": "diagnostic_only_after_pair_neutralization_signal_lock"
+      },
+      {
+        "class_index": 11,
+        "class": "truck",
+        "selected_samples": 58,
+        "baseline_mean_feature_first_order": 0.004866311072517478,
+        "candidate_mean_feature_first_order": 0.003717840090301791,
+        "candidate_minus_baseline_mean_feature_first_order": -0.001148470982215687,
+        "oracle_usage": "diagnostic_only_after_pair_neutralization_signal_lock"
+      }
+    ]
+  },
+  "gate": {
+    "decision": "REJECT",
+    "checks": {
+      "input_contract_valid": true,
+      "source_kl_suppression_reject_preserved": true,
+      "heldout_selector_gate_passed": true,
+      "selected_coverage_between_2_and_10pct": true,
+      "recovered_clip_target_error_at_most_5e_6": true,
+      "nonpair_target_probability_unchanged": true,
+      "candidate_pair_mass_preserved": true,
+      "output_first_order_gain_vs_duet_ci_lower_positive": false,
+      "feature_first_order_gain_vs_duet_ci_lower_positive": false,
+      "output_first_order_gain_vs_suppression_ci_lower_positive": true,
+      "feature_first_order_gain_vs_suppression_ci_lower_positive": true,
+      "output_negative_burden_not_worse": true,
+      "feature_negative_burden_not_worse": true,
+      "feature_helpful_retention_at_least_99pct": false,
+      "feature_mean_norm_inflation_at_most_1_5x": true,
+      "max_full_target_class_mass_shift_at_most_1pp": true,
+      "class_macro_feature_first_order_delta_positive": false,
+      "car_feature_first_order_delta_nonnegative": true,
+      "person_feature_first_order_delta_nonnegative": false,
+      "truck_feature_first_order_delta_nonnegative": false,
+      "other_nine_feature_first_order_delta_nonnegative": false
+    },
+    "exact_parameter_audit_authorized": false,
+    "proxy_authorized": false,
+    "training_authorized": false
+  },
+  "outputs": {
+    "label_free_signal": "output/uda/VISDA-C/TV/plmatch_visda_feature_gravity_audit_seed2020/feature_gravity_audit/patch_cls_holdout_audit/kl_suppression_impact_audit/pair_neutralization_audit/visda_patch_cls_pair_neutralization_label_free.npz",
+    "signal_lock": "output/uda/VISDA-C/TV/plmatch_visda_feature_gravity_audit_seed2020/feature_gravity_audit/patch_cls_holdout_audit/kl_suppression_impact_audit/pair_neutralization_audit/visda_patch_cls_pair_neutralization_signal_lock.json",
+    "oracle_diagnostic": "output/uda/VISDA-C/TV/plmatch_visda_feature_gravity_audit_seed2020/feature_gravity_audit/patch_cls_holdout_audit/kl_suppression_impact_audit/pair_neutralization_audit/visda_patch_cls_pair_neutralization_oracle_diagnostic.csv",
+    "classwise_oracle_diagnostic": "output/uda/VISDA-C/TV/plmatch_visda_feature_gravity_audit_seed2020/feature_gravity_audit/patch_cls_holdout_audit/kl_suppression_impact_audit/pair_neutralization_audit/visda_patch_cls_pair_neutralization_classwise_oracle_diagnostic.csv",
+    "markdown": "output/uda/VISDA-C/TV/plmatch_visda_feature_gravity_audit_seed2020/feature_gravity_audit/patch_cls_holdout_audit/kl_suppression_impact_audit/pair_neutralization_audit/visda_patch_cls_pair_neutralization_summary.md"
+  },
+  "safety": {
+    "target_images_loaded": false,
+    "resnet_bottleneck_or_clip_loaded": false,
+    "classifier_checkpoint_loaded_on_cpu": true,
+    "model_forward_calls": 0,
+    "backward_calls": 0,
+    "optimizer_constructed": false,
+    "parameter_updates": 0,
+    "proxy_authorized": false,
+    "training_authorized": false
+  },
+  "next": "close the complete patch-to-CLS branch without GPU work",
+  "runtime_seconds": 0.541485570371151
+}

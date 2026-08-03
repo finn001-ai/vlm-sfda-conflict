@@ -1,0 +1,47 @@
+c29342c1541a7bf0f7003ea3d20d8100b2e8593b|c29342c|2026-08-01T16:43:37+08:00|提交
+a4c97d2c3d65b35ebd6d297dddde858a7b664a1d|a4c97d2|2026-08-01T17:14:59+08:00|feat: add first-cycle DUET boundary router
+932e5f0ee1ed3fadc145046c73d11f07ee0139c8|932e5f0|2026-08-01T17:26:24+08:00|fix: reuse archived DUET proxy control
+73d62ee7a55ef1704b8bd3e8f7ce3983ae6da650|73d62ee|2026-08-01T20:13:09+08:00|Add VisDA feature-gravity offline audit
+b9db72626ab73a03febeae3130896fb66d09fd15|b9db726|2026-08-01T20:32:19+08:00|fix: stabilize feature-gravity gradient audit
+4f4d126119f3cdbb574c287acdc6a60942ab47ec|4f4d126|2026-08-01T21:55:50+08:00|Add frozen VisDA spatial causal audit
+773f245586e0ee0d96d97bf0af020a14cdeb118d|773f245|2026-08-01T22:08:29+08:00|Fix spatial audit weak-view replay
+9bb35d53b66cb3f8f91fae273d3049096b781caa|9bb35d5|2026-08-01T22:49:02+08:00|Add VisDA pairwise attribute offline audit
+133931db17b6ae06873584d91a2243296dc029e8|133931d|2026-08-02T00:13:49+08:00|Add VisDA attribute mass offline audit
+0850f47c5155d4d5cacd3bef26eb67cdfa14c0e0|0850f47|2026-08-02T00:35:40+08:00|Add VisDA entropy-anchored attribute audit
+77460c6cb90230a12699b54e8ca8f930a396e194|77460c6|2026-08-02T00:57:39+08:00|Add DUET attribute reliability proxy
+ad641eda2af477b8402d53264b2dfb0b74d5be1b|ad641ed|2026-08-02T15:25:39+08:00|Add attribute KL influence audit
+2d6c1fa471ae647237958c901e4c48fca682a15e|2d6c1fa|2026-08-02T15:34:51+08:00|Revert "Add attribute KL influence audit"
+c5071e037784c2a2ee72a41701c31cfc2369495d|c5071e0|2026-08-02T15:49:24+08:00|Add VisDA conflict candidate-set audit
+6a8587228c44a0a626e0ab2119627d5d52a5b3d4|6a85872|2026-08-02T16:14:06+08:00|Add VisDA candidate-set gradient audit
+1e77fa097dcde17b283a15c59b40f23f4d4042a9|1e77fa0|2026-08-02T16:16:16+08:00|Normalize locked probabilities before gradient audit
+12e139513e4d1f2958bccfa01588906d0529b36e|12e1395|2026-08-02T16:34:43+08:00|Add support-conditioned CLIP preflight
+bd6beca2b26665514c986d87de558a7be538c26f|bd6beca|2026-08-02T16:50:12+08:00|Add support-conditioned CLIP proxy
+2f5c78b5d27e1e8f8ebd25600ef9298fafd1d0a2|2f5c78b|2026-08-02T17:44:28+08:00|Add cycle-two conflict memory audit
+cb78032db0ede246e529276fba3a8ac25e69bab4|cb78032|2026-08-02T18:01:35+08:00|Reuse completed cycle-two audit snapshots
+9f87da7a97aea8f4cfb43014a96fcbc51cc22d28|9f87da7|2026-08-02T18:15:09+08:00|Fix cycle-two audit JSON booleans
+70f84004815737fc371979daf57be8accc9c4050|70f8400|2026-08-02T18:36:27+08:00|Add unresolved conflict memory proxy
+7e94ee256c5dce0f76a82cd5b96a40b119159c19|7e94ee2|2026-08-02T20:32:06+08:00|Add VisDA agreement rank-residual audit
+2235c8e3b4fdb7f256a9964e772d974e1f0fcd60|2235c8e|2026-08-02T20:46:37+08:00|Add CLIP confidence admission delay proxy
+a7964ca5a6e3cddc344726b193c5945b969d9687|a7964ca|2026-08-02T21:51:37+08:00|Add VisDA agreement confidence weight audit
+ceffda7cc1f39dc41ff356fa0f3b2d0f65685d33|ceffda7|2026-08-02T22:06:10+08:00|Add VisDA shared runner-up agreement audit
+689a3ae01652df5a3ef2a981fe390ffe5d5aa07d|689a3ae|2026-08-02T22:29:26+08:00|Add VisDA stale agreement revocation audit
+be3a6d8417c62bc43805fd73242efde2e496224c|be3a6d8|2026-08-02T22:57:35+08:00|Add VisDA DVO candidate-target audit
+e383da64be37f3404537004384f949b8fc308098|e383da6|2026-08-02T23:19:50+08:00|Add VisDA agreement-neighbor CLIP audit
+a2a410abd07f4f63c7cf0f9f051e07deab3acea7|a2a410a|2026-08-02T23:35:00+08:00|Add VisDA cycle-2 neighbor timing audit
+33bf1bec313be5735185c872d55a815307f42a87|33bf1be|2026-08-03T00:04:56+08:00|Add VisDA conflict gradient interference audit
+deda66acae499dcea09ae156a1e8c1b96938bd2f|deda66a|2026-08-03T00:20:40+08:00|Add frozen-head PCGrad feature audit
+6717d15cdfce1e036fd12145b8bfdf59b0de9d54|6717d15|2026-08-03T00:56:51+08:00|Add exact VisDA PCGrad parameter preflight
+fc5cd4150a6139d9f98d10c935f5bd8fe404fbd6|fc5cd41|2026-08-03T02:01:09+08:00|Add compatibility-controlled VisDA PCGrad proxy
+08b2d9594cffb45b504d3005b061a1e802751069|08b2d95|2026-08-03T03:09:01+08:00|Add VisDA prototype transport preflight
+207a3b2275f66f0474368ef6d341e3ab29d1101f|207a3b2|2026-08-03T03:18:33+08:00|Allow bounded classifier replay ties
+52ddaa7520d679e0daaf0a97bcbca407cb2e9988|52ddaa7|2026-08-03T03:41:05+08:00|Add isolated VSFOT alignment preflight
+ca29bc452498187459f711a044b7e37644a8fa37|ca29bc4|2026-08-03T04:04:12+08:00|Add agreement transport full-gradient preflight
+1790c54c9f959d000ac45ab8cd6a19b9bb49d6de|1790c54|2026-08-03T12:04:40+08:00|Add agreement-conditioned GMM preflight
+84f278812d758177bb3a1dec16d546f7ea354134|84f2788|2026-08-03T12:23:16+08:00|Add VisDA temporal mutual-rise preflight
+f10a5316650c95f3539f838837fb2db4685182f5|f10a531|2026-08-03T12:50:16+08:00|Add VisDA agreement label-impact preflight
+bddac975c99e34a44a8eed316718100be0dba44a|bddac97|2026-08-03T13:23:34+08:00|Add VisDA patch-to-CLS contribution preflight
+8e5de67b5a656316c81159980706bd23e0cf8ab3|8e5de67|2026-08-03T13:59:54+08:00|Add held-out patch contribution risk audit
+3b1ccb9dd35f6d447a47c19ae871559282eb8665|3b1ccb9|2026-08-03T14:05:40+08:00|Fix held-out conflict count contract
+e7d819996dc98714f92ecf1da066273ed8096236|e7d8199|2026-08-03T14:21:02+08:00|Add patch-selected KL suppression impact audit
+d521a5f4686fab1ad60b6030b7d14834f5c7fe97|d521a5f|2026-08-03T14:43:46+08:00|Add patch temporal persistence audit
+f661d900d8f2a8c2cfea6ad6178aa1f6f1104f45|f661d90|2026-08-03T15:13:29+08:00|Add patch pair-neutralization impact audit

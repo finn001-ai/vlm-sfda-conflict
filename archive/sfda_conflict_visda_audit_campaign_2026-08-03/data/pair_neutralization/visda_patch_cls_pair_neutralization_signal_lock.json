@@ -1,0 +1,85 @@
+{
+  "phase": "LABEL_FREE_VISDA_PATCH_CLS_PAIR_NEUTRALIZATION_LOCK",
+  "contains_target_labels": false,
+  "oracle_artifacts_not_read_before_lock": true,
+  "candidate": "patch_selected_task_clip_pair_mass_neutralization",
+  "candidate_contract": {
+    "new_information": "locked_patch_to_cls_task_rescue_selector",
+    "changed_target_entries": "task_and_clip_top1_only",
+    "candidate_pair_total_mass_preserved": true,
+    "noncandidate_probabilities_preserved": true,
+    "task_hard_pseudo_labels_added": false,
+    "admission_mask_changed": false,
+    "consistency_changed": false,
+    "loss_coefficients_changed": false,
+    "fitted_thresholds": false,
+    "target_label_rule": false
+  },
+  "predeclared_gate": {
+    "selected_coverage_pct": [
+      2.0,
+      10.0
+    ],
+    "target_replay_max_abs_error": "<=5e-6",
+    "nonpair_probability_and_pair_mass_error": "<=1e-12",
+    "output_and_feature_first_order_ci_lower_vs_duet": ">0",
+    "output_and_feature_first_order_ci_lower_vs_suppression": ">0",
+    "negative_burden": "not_worse_than_duet",
+    "feature_helpful_retention_pct": ">=99",
+    "feature_mean_norm_inflation": "<=1.5x",
+    "max_full_target_class_mass_shift_pp": "<=1",
+    "class_macro_car_person_truck_other9_feature_delta": "nonnegative"
+  },
+  "input_contract_checks": {
+    "source_lock_is_label_free": true,
+    "source_signal_hash_matches_lock": true,
+    "expected_shapes": true,
+    "query_indices_unique": true,
+    "candidate_rows_are_conflicts": true,
+    "recovered_clip_target_is_probability": true,
+    "neutral_target_is_probability": true,
+    "mass_moves_from_clip_to_task": true,
+    "all_label_free_values_finite": true,
+    "source_classifier_shape": true
+  },
+  "label_free_metrics": {
+    "selected_samples": 613,
+    "selected_conflict_coverage_pct": 2.897660127629402,
+    "mean_transferred_clip_to_task_mass": 0.20812774037765172,
+    "minimum_transferred_clip_to_task_mass": 0.000614924341474532,
+    "recovered_clip_target_replay_max_abs_error": 3.9705781718080146e-10,
+    "nonpair_target_max_abs_error": 0.0,
+    "candidate_pair_mass_max_abs_error": 1.1102230246251565e-16,
+    "max_full_target_class_mass_shift_pp": 0.1667737084035606,
+    "candidate_to_baseline_feature_mean_norm_ratio": 0.7860499032117774
+  },
+  "inputs": {
+    "source_signal": {
+      "path": "output/uda/VISDA-C/TV/plmatch_visda_feature_gravity_audit_seed2020/feature_gravity_audit/patch_cls_holdout_audit/kl_suppression_impact_audit/visda_patch_cls_kl_suppression_impact_label_free.npz",
+      "sha256": "827741f72971031de2570923c8cbfc786c6ee592a030d2e1e2a4abf504c50f91"
+    },
+    "source_lock": {
+      "path": "output/uda/VISDA-C/TV/plmatch_visda_feature_gravity_audit_seed2020/feature_gravity_audit/patch_cls_holdout_audit/kl_suppression_impact_audit/visda_patch_cls_kl_suppression_impact_signal_lock.json",
+      "sha256": "a0a2da9c2602533a569d0c23852783f2bb37d93621ac84313f946b6f26ca1482"
+    },
+    "opaque_source_oracle_sha256": "0006876e54ea7a82eb4dcbbb553463d68bf8f76f3749367fae1d23558fb07a58",
+    "opaque_source_summary_sha256": "47125ec3b2a713fd326bba548aaa439e92ae90dcaed2a0ddcd63ee7e166c4d1d",
+    "source_classifier": {
+      "path": "source/uda/VISDA-C/T/source_C.pt",
+      "sha256": "357c0a232c8a8813f97f40ccf859a23821173193ffc3e1726e790ec44a2bff39",
+      "keys": [
+        "fc.bias",
+        "fc.weight_g",
+        "fc.weight_v"
+      ]
+    }
+  },
+  "signal_npz": {
+    "path": "output/uda/VISDA-C/TV/plmatch_visda_feature_gravity_audit_seed2020/feature_gravity_audit/patch_cls_holdout_audit/kl_suppression_impact_audit/pair_neutralization_audit/visda_patch_cls_pair_neutralization_label_free.npz",
+    "sha256": "99ee797182857f2275f72abe5acabdcee6faa564e5e8cd81983048ab70dd6aac"
+  },
+  "contract_sha256": {
+    "src/utils/patch_cls_pair_neutralization_audit.py": "d0cb9747769d975719274e513bc33a17921064e4803d838de1ce2c1827968848",
+    "tools/audit_visda_patch_cls_pair_neutralization.py": "6da648170eb0d4704fabbcfe6fcc3a4b06cb49b919c0adaf60e32391d249e8dd"
+  }
+}

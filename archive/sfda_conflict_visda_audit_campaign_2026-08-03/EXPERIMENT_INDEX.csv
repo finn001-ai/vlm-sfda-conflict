@@ -1,0 +1,40 @@
+order,family,commit_or_range,evidence_level,decision,key_result,local_artifact_status
+1,boundary-distance and RMS fusion,c29342c,offline oracle diagnostic,REJECT,"RMS/boundary signal did not clear the predeclared selector gate",code only; downloaded diagnostics unavailable
+2,first-cycle boundary router,a4c97d2..932e5f0,matched proxy25,REJECT,"matched candidate failed proxy gate",code only; gate unavailable
+3,feature gravity,73d62ee..b9db726,frozen-model offline audit,REJECT,"completed audit decision REJECT",raw terminal log preserved
+4,spatial causal,4f4d126..773f245,frozen-model offline audit,REJECT,"completed audit decision REJECT",raw terminal log preserved
+5,pairwise CLIP attributes,9bb35d5,offline audit,REJECT,"conflict gain below 1 pp; task-rescue coverage below 5%; truck harmed",code only; result files unavailable
+6,attribute probability mass,133931d,offline audit,REJECT,"soft metrics improved but truck and class-mass checks failed",code only; result files unavailable
+7,entropy-anchored attribute reliability,0850f47,offline audit,REJECT,"conflict accuracy +1.1927 pp but truck/noncar checks failed",code only; result files unavailable
+8,attribute-reliability KL,77460c6,matched proxy25,REJECT,"87.94 vs 87.93; +0.01 pp",raw terminal log preserved
+9,attribute KL influence,ad641ed..2d6c1fa,invalid contract then reverted,REVERTED,"exact intervention contract failed",commit history only
+10,task/CLIP top-2 candidate set,c5071e0,offline oracle diagnostic,REJECT,"top-2 union coverage 93.3888%; car coverage 89.2707% missed 90% gate",code only; result files unavailable
+11,candidate-set gradient,6a85872..1e77fa0,offline exact-gradient audit,REJECT,"set-loss direction failed gate",raw terminal log preserved
+12,support-conditioned CLIP target,12e1395,offline exact-gradient audit,PASS_PREFLIGHT,"retained CLIP support evidence admitted one proxy design",raw terminal log preserved
+13,first-cycle support-conditioned CLIP,bd6beca,matched proxy25,UNVERIFIED_FINAL,"terminal capture is partial and final gate is unavailable",partial raw terminal log preserved
+14,cycle-2 unresolved-memory analysis,2f5c78b..9f87da7,offline snapshot audit,REJECT,"all first-order checks passed except negative-burden check",code only; result files unavailable
+15,unresolved-memory support-conditioned CLIP,70f8400,matched proxy25,REJECT,"87.94 vs 87.93; +0.01 pp",result transcribed from completed gate; local gate unavailable
+16,agreement rank residual,7e94ee2,offline audit,REJECT,"did not beat matched confidence filters",code only; result files unavailable
+17,CLIP-confidence admission delay,2235c8e,matched proxy25,REJECT,"87.97 vs 87.93; +0.04 pp",raw terminal log preserved
+18,agreement confidence weighting,a7964ca,offline full-gradient audit,REJECT,"first-order CI checks failed; car harmed",code only; result files unavailable
+19,shared runner-up partial label,ceffda7,offline exact-gradient audit,REJECT,"failed versus hard top-1 and harmed car/person/truck",code only; result files unavailable
+20,stale-agreement revocation,689a3ae,offline audit,REJECT,"failed matched confidence and first-order gates",code only; result files unavailable
+21,DVO/TMI candidate target,be3a6d8,offline replay audit,REJECT,"projection/first-order positive but cosine/car/negative-burden failed",code only; result files unavailable
+22,agreement-neighbor CLIP cycle 1,e383da6,offline K=5 audit,REJECT,"neighbor label match and matched accuracy gates failed",code only; result files unavailable
+23,agreement-neighbor CLIP cycle 2,a2a410a,offline K=5 audit,REJECT,"timing change did not fix neighbor signal",code only; result files unavailable
+24,KL-consistency output PCGrad,33bf1be,offline output-gradient audit,NEEDS_PARAMETER_AUDIT,"output checks passed; required exact parameter confirmation",code only; result files unavailable
+25,frozen-head PCGrad Jacobian,deda66a,offline feature-gradient audit,NEEDS_EXACT_CONTROL_PARAMETER_AUDIT,"feature-Jacobian checks passed",code only; result files unavailable
+26,exact PCGrad parameter gradients,6717d15,no-update GPU parameter audit,REJECT,"raw symmetric PCGrad failed exact full-gradient gate",raw terminal log preserved
+27,compatibility-controlled PCGrad preflight,fc5cd41,offline locked-batch audit,PASS_EXPLORATORY_PREFLIGHT,"all exploratory compatibility checks passed",code only; result files unavailable
+28,compatibility-controlled PCGrad proxy,fc5cd41,matched proxy25,REJECT,"87.93 vs 87.93; 0.00 pp",raw terminal log preserved
+29,source-prototype transport,08b2d95..207a3b2,offline transport audit,REJECT,"failed all matched accuracy and difficult-class gates",code only; result files unavailable
+30,isolated VSFOT alignment,52ddaa7,offline eight-replay audit,REJECT,"Sinkhorn marginal contract and conflict/control gains failed",code only; result files unavailable
+31,agreement-only transport full gradient,ca29bc4,offline eight-replay audit,REJECT,"negative burden and car checks failed",code only; result files unavailable
+32,agreement-conditioned GMM,1790c54,offline cross-fit audit,REJECT,"stable fit but did not beat matched baselines",code only; result files unavailable
+33,temporal mutual rise,84f2788,offline cycle-2 audit,REJECT,"decision stability and matched accuracy gates failed",code only; result files unavailable
+34,agreement label impact,f10a531,offline Fisher-head audit,REJECT,"stable but did not beat matched baselines; car harmed",code only; result files unavailable
+35,patch-to-CLS contribution,bddac97,frozen CLIP one-forward audit,REJECT,"partition agreement and routed precision failed",code only; result files unavailable
+36,patch risk-control selector,8e5de67..3b1ccb9,offline exploratory plus disjoint holdout,PASS_EXPLORATORY,"613 held-out rescues passed selection-level oracle gate",code only; selector artifacts unavailable
+37,patch-selected KL suppression,e7d8199,offline exact-gradient audit,REJECT,"output and feature first-order CIs failed",code only; result files unavailable
+38,patch temporal persistence,d521a5f,offline cycle-2 inference audit,REJECT,"CI lower bounds and full-proxy projection failed",code only; result files unavailable
+39,patch pair neutralization,f661d90,offline exact-gradient audit,REJECT,"feature delta -0.000245076; CI entirely negative",complete six-file dataset preserved

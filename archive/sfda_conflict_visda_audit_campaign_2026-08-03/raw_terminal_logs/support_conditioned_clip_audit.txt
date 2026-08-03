@@ -1,0 +1,185 @@
+(base) root@k0hauxeo3dlc-yttrve499c9k-main:/hyperai/home/vlm-sfda-conflict/duet-sfda-main# bash tools/run_visda_conflict_support_conditioned_clip_audit.sh
+==> CPU-only support-conditioned CLIP target audit
+==> Candidate keeps CLIP relative mass inside task/CLIP top-2 union
+==> No image/model/checkpoint load, forward, backward, optimizer, or training
+Wrote label-free targets: output/uda/VISDA-C/TV/plmatch_visda_support_conditioned_clip_audit_seed2020/support_conditioned_clip_audit/visda_conflict_support_conditioned_clip_label_free.npz
+Wrote label-free class mass: output/uda/VISDA-C/TV/plmatch_visda_support_conditioned_clip_audit_seed2020/support_conditioned_clip_audit/visda_conflict_support_conditioned_clip_class_mass.csv
+Wrote signal lock: output/uda/VISDA-C/TV/plmatch_visda_support_conditioned_clip_audit_seed2020/support_conditioned_clip_audit/visda_conflict_support_conditioned_clip_signal_lock.json
+Wrote oracle diagnostic: output/uda/VISDA-C/TV/plmatch_visda_support_conditioned_clip_audit_seed2020/support_conditioned_clip_audit/visda_conflict_support_conditioned_clip_oracle_diagnostic.csv
+Wrote classwise oracle diagnostic: output/uda/VISDA-C/TV/plmatch_visda_support_conditioned_clip_audit_seed2020/support_conditioned_clip_audit/visda_conflict_support_conditioned_clip_classwise_oracle_diagnostic.csv
+Wrote summary: output/uda/VISDA-C/TV/plmatch_visda_support_conditioned_clip_audit_seed2020/support_conditioned_clip_audit/visda_conflict_support_conditioned_clip_summary.json
+Wrote markdown summary: output/uda/VISDA-C/TV/plmatch_visda_support_conditioned_clip_audit_seed2020/support_conditioned_clip_audit/visda_conflict_support_conditioned_clip_summary.md
+{
+  "decision": "PASS_SUPPORT_CONDITIONED_CLIP_PREFLIGHT",
+  "checks": {
+    "input_contract_valid": true,
+    "candidate_top1_matches_clip": true,
+    "candidate_cosine_beats_clip_with_positive_ci": true,
+    "candidate_projection_beats_clip_with_positive_ci": true,
+    "candidate_first_order_beats_clip_with_positive_ci": true,
+    "candidate_cosine_beats_top1_union_with_positive_ci": true,
+    "every_class_first_order_delta_vs_clip_nonnegative": true,
+    "candidate_negative_burden_not_worse_than_clip": true,
+    "candidate_negative_burden_not_worse_than_top1_union": true,
+    "candidate_negative_burden_better_than_clip_top2": true,
+    "candidate_full_mass_shift_at_most_1pp": true,
+    "candidate_mass_shift_below_top1_union": true,
+    "candidate_mass_shift_below_clip_top2": true
+  }
+}
+{
+  "decision": "PASS_SUPPORT_CONDITIONED_CLIP_PREFLIGHT",
+  "checks": {
+    "input_contract_valid": true,
+    "candidate_top1_matches_clip": true,
+    "candidate_cosine_beats_clip_with_positive_ci": true,
+    "candidate_projection_beats_clip_with_positive_ci": true,
+    "candidate_first_order_beats_clip_with_positive_ci": true,
+    "candidate_cosine_beats_top1_union_with_positive_ci": true,
+    "every_class_first_order_delta_vs_clip_nonnegative": true,
+    "candidate_negative_burden_not_worse_than_clip": true,
+    "candidate_negative_burden_not_worse_than_top1_union": true,
+    "candidate_negative_burden_better_than_clip_top2": true,
+    "candidate_full_mass_shift_at_most_1pp": true,
+    "candidate_mass_shift_below_top1_union": true,
+    "candidate_mass_shift_below_clip_top2": true
+  },
+  "candidate_label_free": {
+    "mean_retained_clip_mass": 0.9031621114678351,
+    "mean_entropy": 0.4377152017342092,
+    "max_abs_full_target_class_mass_shift_pp": 0.6940471090509377,
+    "class_mass_shift_pp": [
+      -0.16456431275383557,
+      -0.19516810844104882,
+      -0.2590683353295141,
+      0.37363744025518547,
+      -0.16031429727085678,
+      -0.10817360013228089,
+      -0.11067345564008525,
+      0.6940471090509377,
+      0.1776509993050017,
+      -0.1207943015499324,
+      -0.14929195857961505,
+      0.022712821086035125
+    ],
+    "top1_matches_clip": true
+  },
+  "method_metrics": {
+    "clip": {
+      "mean_cosine": 0.7239393700812975,
+      "mean_oracle_unit_projection": 0.7651952344490701,
+      "mean_first_order": 1.004239726656062,
+      "mean_direction_norm": 1.009236048261522,
+      "negative_first_order_burden": -0.008726534520460629,
+      "helpful_fraction_pct": 89.41426296230756,
+      "harmful_fraction_pct": 10.585737037692445,
+      "neutral_fraction_pct": 0.0
+    },
+    "top1_union": {
+      "mean_cosine": 0.7136778388849752,
+      "mean_oracle_unit_projection": 0.8228769290615177,
+      "mean_first_order": 1.0671103973970366,
+      "mean_direction_norm": 1.1138624162751052,
+      "negative_first_order_burden": -0.008606839712758559,
+      "helpful_fraction_pct": 88.58963015395506,
+      "harmful_fraction_pct": 11.410369846044947,
+      "neutral_fraction_pct": 0.0
+    },
+    "clip_top2": {
+      "mean_cosine": 0.72647737671559,
+      "mean_oracle_unit_projection": 0.8102903968990804,
+      "mean_first_order": 1.0573781136447724,
+      "mean_direction_norm": 1.081526430438508,
+      "negative_first_order_burden": -0.009170266932738062,
+      "helpful_fraction_pct": 89.31516545744115,
+      "harmful_fraction_pct": 10.68483454255884,
+      "neutral_fraction_pct": 0.0
+    },
+    "top2_union": {
+      "mean_cosine": 0.7260328309251107,
+      "mean_oracle_unit_projection": 0.792086457649698,
+      "mean_first_order": 1.0333424264232696,
+      "mean_direction_norm": 1.048030801203517,
+      "negative_first_order_burden": -0.008419220183857086,
+      "helpful_fraction_pct": 89.38241019288623,
+      "harmful_fraction_pct": 10.617589807113784,
+      "neutral_fraction_pct": 0.0
+    }
+  },
+  "comparisons": {
+    "versus_clip": {
+      "cosine": {
+        "mean_difference": 0.002093460843813246,
+        "paired_bootstrap_95_ci": [
+          0.0014344358361859284,
+          0.0027216572714883836
+        ]
+      },
+      "oracle_unit_projection": {
+        "mean_difference": 0.026891223200627645,
+        "paired_bootstrap_95_ci": [
+          0.02625653975787063,
+          0.027538351471179313
+        ]
+      },
+      "first_order": {
+        "mean_difference": 0.029102699767207543,
+        "paired_bootstrap_95_ci": [
+          0.028403856440157707,
+          0.02980588848298829
+        ]
+      }
+    },
+    "versus_top1_union": {
+      "cosine": {
+        "mean_difference": 0.012354992040135692,
+        "paired_bootstrap_95_ci": [
+          0.011000435315992207,
+          0.013636339565173556
+        ]
+      },
+      "oracle_unit_projection": {
+        "mean_difference": -0.03079047141181983,
+        "paired_bootstrap_95_ci": [
+          -0.032266531597073225,
+          -0.029309422692152844
+        ]
+      },
+      "first_order": {
+        "mean_difference": -0.03376797097376685,
+        "paired_bootstrap_95_ci": [
+          -0.035410495577908506,
+          -0.03206715344553239
+        ]
+      }
+    },
+    "versus_clip_top2": {
+      "cosine": {
+        "mean_difference": -0.00044454579047914413,
+        "paired_bootstrap_95_ci": [
+          -0.0007543179876301622,
+          -0.0001420808025160681
+        ]
+      },
+      "oracle_unit_projection": {
+        "mean_difference": -0.018203939249382763,
+        "paired_bootstrap_95_ci": [
+          -0.01877868988567625,
+          -0.01763641614142324
+        ]
+      },
+      "first_order": {
+        "mean_difference": -0.02403568722150283,
+        "paired_bootstrap_95_ci": [
+          -0.024649484760161988,
+          -0.023435914051566965
+        ]
+      }
+    }
+  },
+  "minimum_class_first_order_delta_vs_clip": 0.010536559702110537,
+  "class_macro_first_order_delta_vs_clip": 0.026288433712846376,
+  "runtime_seconds": 3.8915577605366707
+}
+==> Audit complete: output/uda/VISDA-C/TV/plmatch_visda_support_conditioned_clip_audit_seed2020/support_conditioned_clip_audit/visda_conflict_support_conditioned_clip_summary.json
+==> PASS_SUPPORT_CONDITIONED_CLIP_PREFLIGHT authorizes one matched proxy design only
