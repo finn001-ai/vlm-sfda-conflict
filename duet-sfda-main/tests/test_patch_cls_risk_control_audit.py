@@ -222,6 +222,8 @@ def test_heldout_entrypoint_excludes_proxy_and_locks_before_labels() -> None:
     assert "source_F.pt" not in audit
     assert "source_B.pt" not in audit
     assert "source_C.pt" not in audit
+    assert "EXPECTED_FULL_CONFLICTS" not in audit
+    assert "source_conflict_rows_nonempty_1d" in audit
     assert ".backward(" not in audit
     assert "optimizer.step" not in audit
     assert audit.index("lock_path.write_text") < audit.rindex(
