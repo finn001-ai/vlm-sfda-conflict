@@ -20,6 +20,7 @@ import src.methods.oh.source as SOURCE
 import src.methods.oh.plmatch as PLMATCH
 import src.methods.oh.duet_boundary_router as DUET_BOUNDARY
 import src.methods.oh.duet_first_cycle_prior as DUET_FCP
+import src.methods.oh.duet_first_cycle_prior_topk_probe as DUET_FCP_TOPK_PROBE
 import src.methods.oh.duet_attribute_reliability_kl as DUET_ATTRIBUTE_KL
 import src.methods.oh.duet_support_conditioned_clip as DUET_SUPPORT_CLIP
 import src.methods.oh.duet_support_conditioned_clip_memory as DUET_SUPPORT_CLIP_MEMORY
@@ -117,6 +118,13 @@ if __name__ == "__main__":
     ):
         print("using plmatch method")
         acc = PLMATCH.train_target(cfg)
+
+    elif (
+        cfg.MODEL.METHOD == "duet_first_cycle_prior_topk_probe"
+        or cfg.MODEL.METHOD.startswith("duet_first_cycle_prior_topk_probe_")
+    ):
+        print("using DUET with first-cycle prior and Top-k conflict probe")
+        acc = DUET_FCP_TOPK_PROBE.train_target(cfg)
 
     elif (
         cfg.MODEL.METHOD == "duet_first_cycle_prior"

@@ -38,6 +38,7 @@ from src.utils.conflict_boundary import (
 )
 from src.utils.failure_audit import save_failure_audit_snapshot
 from src.utils.first_cycle_prior import apply_first_cycle_prior
+from src.utils.topk_conflict_probe import write_topk_conflict_probe
 from src.utils.attribute_reliability import (
     entropy_anchored_attribute_target,
     pairwise_attribute_margin,
@@ -388,6 +389,7 @@ def train_target(
     support_conditioned_clip_memory=False,
     clip_confidence_delay=False,
     pcgrad_compatibility=False,
+    topk_conflict_probe=False,
 ):
     """训练原始 DUET，或启用一个明确隔离的候选改动。
 
@@ -418,6 +420,10 @@ def train_target(
     ``pcgrad_compatibility=True`` 仅在 cycle 2 对尚未准入的冲突样本组合
     consistency 与 CLIP-KL 的输出梯度。PCGrad 修正量再按其与完整 DUET
     参数梯度的非负投影比例截断；其余 cycle、目标、mask、权重和优化器不变。
+
+    ``topk_conflict_probe=True`` 只导出每个 cycle 的 Task/CLIP top-2
+    冲突覆盖 oracle diagnostic。它使用 detach 后的 prior 校准前概率，
+    不返回任何训练信号，也不改变 mask、loss 或优化器。
     """
     candidate_count = sum(
         bool(value)
@@ -543,6 +549,10 @@ def train_target(
         "fraction=clip(dot(full_duet_grad,pcgrad_correction)/"
         "norm2(pcgrad_correction),0,1); target_labels=False; "
         "fitted_thresholds=False".format(bool(pcgrad_compatibility))
+    )
+    logging.info(
+        "DUET Top-k conflict probe: enabled={}; probability_stage=pre_first_cycle_prior; "
+        "target_labels=oracle_diagnostic_only".format(bool(topk_conflict_probe))
     )
     clip_model, preprocess, _ = clip.load(cfg.ACTIVE.ARCH)
     clip_model.float()
@@ -680,6 +690,8 @@ def train_target(
             support_conditioned_clip_memory=support_conditioned_clip_memory,
             clip_confidence_delay=clip_confidence_delay,
             clip_delay_fraction=clip_delay_fraction,
+            topk_conflict_probe=topk_conflict_probe,
+            probe_cfg=cfg,
         )
         if diagnostic_payload_requested:
             (
@@ -933,6 +945,8 @@ def obtain_label(
     support_conditioned_clip_memory=False,
     clip_confidence_delay=False,
     clip_delay_fraction=LOCKED_DELAY_FRACTION,
+    topk_conflict_probe=False,
+    probe_cfg=None,
 ):
     # class_logit_bias = get_class_bias(netF, netB, netC)
     start_test = True
@@ -942,6 +956,7 @@ def obtain_label(
         (support_conditioned_clip and curr_cycle == 0)
         or support_conditioned_clip_memory
     )
+    collect_sample_indices = bool(return_diagnostics or topk_conflict_probe)
     if collect_attribute and (text_features is None or attribute_text_features is None):
         raise ValueError("attribute-reliability KL requires fixed text features")
     with torch.no_grad():
@@ -1028,6 +1043,8 @@ def obtain_label(
                 all_output = weak_outputs.float().cpu()
                 all_clip_score = clip_score.float().cpu()
                 all_label = labels.float()
+                if collect_sample_indices:
+                    all_sample_index = sample_index.long().cpu()
                 if collect_boundary:
                     all_task_radius = batch_task_radius.cpu()
                     all_clip_radius = batch_clip_radius.cpu()
@@ -1036,12 +1053,15 @@ def obtain_label(
                 if return_diagnostics:
                     all_task_features = weak_feas.float().cpu()
                     all_strong_output = strong_outputs.float().cpu()
-                    all_sample_index = sample_index.long().cpu()
                 start_test = False
             else:
                 all_output = torch.cat((all_output, weak_outputs.float().cpu()), 0)
                 all_label = torch.cat((all_label, labels.float()), 0)
                 all_clip_score = torch.cat((all_clip_score, clip_score.float()), 0)
+                if collect_sample_indices:
+                    all_sample_index = torch.cat(
+                        (all_sample_index, sample_index.long().cpu()), 0
+                    )
                 if collect_boundary:
                     all_task_radius = torch.cat(
                         (all_task_radius, batch_task_radius.cpu()), 0
@@ -1064,12 +1084,42 @@ def obtain_label(
                     all_strong_output = torch.cat(
                         (all_strong_output, strong_outputs.float().cpu()), 0
                     )
-                    all_sample_index = torch.cat(
-                        (all_sample_index, sample_index.long().cpu()), 0
-                    )
 
     all_output = nn.Softmax(dim=1)(all_output)
     clip_all_output = nn.Softmax(dim=1)(all_clip_score).cpu()
+    if topk_conflict_probe:
+        if probe_cfg is None:
+            raise ValueError("Top-k conflict probe requires the active config")
+        with open(probe_cfg.name_file) as handle:
+            probe_class_names = [line.strip() for line in handle if line.strip()]
+        with torch.no_grad():
+            probe_summary = write_topk_conflict_probe(
+                output_root=probe_cfg.output_dir,
+                task_probability=all_output.detach(),
+                clip_probability=clip_all_output.detach(),
+                labels=all_label.detach(),
+                sample_indices=all_sample_index.detach(),
+                dataset_items=loader.dataset.imgs,
+                class_names=probe_class_names,
+                task_name=str(probe_cfg.name),
+                source_domain=str(probe_cfg.domain[probe_cfg.SETTING.S]),
+                target_domain=str(probe_cfg.domain[probe_cfg.SETTING.T]),
+                seed=int(probe_cfg.SETTING.SEED),
+                cycle=int(curr_cycle),
+                probability_stage="pre_first_cycle_prior",
+            )
+        probe_overall = probe_summary["overall"]
+        logging.info(
+            "DUET Top-k conflict probe: cycle={}; conflicts={}; "
+            "top1_union={:.4f}%; top2_union={:.4f}%; recovered={}; "
+            "ground_truth_affects_training=False".format(
+                curr_cycle + 1,
+                probe_overall["conflict_samples"],
+                probe_overall["top1_union_coverage"],
+                probe_overall["top2_union_coverage"],
+                probe_overall["top2_recovered_count"],
+            )
+        )
     if return_diagnostics:
         strong_task_prob = nn.Softmax(dim=1)(all_strong_output)
     if first_cycle_prior:
