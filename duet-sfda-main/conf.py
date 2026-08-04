@@ -307,6 +307,13 @@ _C.DUET_FCP = CfgNode()
 # source/CLIP 两路只在第 1 个 cycle 使用的 prior 强度。
 _C.DUET_FCP.POWER = 0.5
 
+# --------------------- DUET swap-conflict hard-label selection ---------- #
+_C.DUET_SWAP = CfgNode()
+# 独立配置开关：默认关闭，必须显式置 True 才启用 swap 选边规则。
+_C.DUET_SWAP.ENABLED = False
+# 决策强度门槛 D：|log(eA)-log(eB)| >= D 才产生标签，否则 abstain。
+_C.DUET_SWAP.GATE_D = 4.0
+
 # --------------------------------- TSD options ----------------------------- #
 _C.TSD = CfgNode()
 

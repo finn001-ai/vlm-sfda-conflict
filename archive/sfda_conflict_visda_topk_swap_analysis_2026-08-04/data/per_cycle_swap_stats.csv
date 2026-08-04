@@ -1,0 +1,9 @@
+cycle,conflicts,n_swap,swap_pct_of_conflicts,swap_pct_of_all,task_acc,clip_acc,top_pairs
+0,28223,1949,6.9,3.52,18.7,77.0,car/truck:509; motorcycle/bicycle:488; car/bus:177
+1,7353,3256,44.3,5.88,41.4,53.2,car/truck:711; bus/truck:258; motorcycle/bicycle:226
+2,5574,2849,51.1,5.14,44.3,49.9,car/truck:459; truck/car:346; motorcycle/bicycle:225
+3,4843,2537,52.4,4.58,47.0,47.1,car/truck:392; truck/car:311; motorcycle/bicycle:218
+4,4259,2423,56.9,4.37,46.3,46.8,car/truck:435; truck/car:229; motorcycle/bicycle:198
+5,3992,2266,56.8,4.09,44.1,49.9,truck/car:347; car/truck:278; truck/bus:237
+6,3757,2145,57.1,3.87,48.2,46.4,truck/car:327; car/truck:299; bus/truck:153
+7,3414,1973,57.8,3.56,51.1,42.8,car/truck:348; truck/car:233; motorcycle/bicycle:155

@@ -1,0 +1,4 @@
+scheme,decisions,correct,precision
+weighted_vote,19398,10966,56.5
+always_clip,19398,9952,51.3
+always_task,19398,8332,43.0

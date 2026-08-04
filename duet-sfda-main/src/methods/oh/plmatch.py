@@ -39,6 +39,10 @@ from src.utils.conflict_boundary import (
 from src.utils.failure_audit import save_failure_audit_snapshot
 from src.utils.first_cycle_prior import apply_first_cycle_prior
 from src.utils.topk_conflict_probe import write_topk_conflict_probe
+from src.utils.swap_conflict_selection import (
+    select_swap_labels,
+    summarize_swap_decisions,
+)
 from src.utils.attribute_reliability import (
     entropy_anchored_attribute_target,
     pairwise_attribute_margin,
@@ -390,6 +394,7 @@ def train_target(
     clip_confidence_delay=False,
     pcgrad_compatibility=False,
     topk_conflict_probe=False,
+    swap_conflict_selection=False,
 ):
     """训练原始 DUET，或启用一个明确隔离的候选改动。
 
@@ -424,6 +429,13 @@ def train_target(
     ``topk_conflict_probe=True`` 只导出每个 cycle 的 Task/CLIP top-2
     冲突覆盖 oracle diagnostic。它使用 detach 后的 prior 校准前概率，
     不返回任何训练信号，也不改变 mask、loss 或优化器。
+
+    ``swap_conflict_selection=True`` 只对 bidirectional_cross_support
+    （纯 swap）冲突产生硬伪标签：cycle 0 直接取 CLIP top1；cycle >= 1 按
+    eA=pA*qA、eB=pB*qB 的 log 差与 ``DUET_SWAP.GATE_D`` 门槛决定 A/B 或
+    abstain。abstain 样本不进入 label_mask，不进训练损失。检测与决策使用
+    prior 校准前的概率（与 Top-k probe 导出口径一致）；非 swap 冲突和非
+    冲突样本不进入该规则，原 DUET 策略不变。
     """
     candidate_count = sum(
         bool(value)
@@ -462,6 +474,29 @@ def train_target(
             "PCGrad compatibility is locked to VisDA-C, four cycles, "
             "batch size 64, and FAILURE_AUDIT disabled"
         )
+    if swap_conflict_selection and not cfg.DUET_SWAP.ENABLED:
+        raise ValueError(
+            "swap-conflict selection requires DUET_SWAP.ENABLED=True"
+        )
+    if swap_conflict_selection and not first_cycle_prior:
+        raise ValueError(
+            "swap-conflict selection requires first_cycle_prior=True"
+        )
+    if swap_conflict_selection and candidate_count:
+        raise ValueError(
+            "swap-conflict selection cannot be combined with other DUET "
+            "candidates"
+        )
+    if swap_conflict_selection and (
+        cfg.SETTING.DATASET != "VISDA-C"
+        or str(cfg.ACTIVE.ARCH) != "ViT-B/32"
+    ):
+        raise ValueError(
+            "swap-conflict selection is locked to VisDA-C with CLIP ViT-B/32"
+        )
+    swap_gate_D = float(cfg.DUET_SWAP.GATE_D)
+    if swap_conflict_selection and swap_gate_D < 0.0:
+        raise ValueError("DUET_SWAP.GATE_D must be non-negative")
     if first_cycle_prior and cfg.DUET_FCP.POWER < 0:
         raise ValueError("DUET_FCP.POWER must be non-negative")
     boundary_fraction = float(cfg.DUET_BOUNDARY.TOP_FRACTION)
@@ -553,6 +588,14 @@ def train_target(
     logging.info(
         "DUET Top-k conflict probe: enabled={}; probability_stage=pre_first_cycle_prior; "
         "target_labels=oracle_diagnostic_only".format(bool(topk_conflict_probe))
+    )
+    logging.info(
+        "DUET swap-conflict selection: enabled={}; scope=bidirectional_cross_support; "
+        "gate_D={:.2f}; cycle0=always_clip_top1; abstain=not_in_loss; "
+        "probability_stage=pre_first_cycle_prior".format(
+            bool(swap_conflict_selection),
+            swap_gate_D,
+        )
     )
     clip_model, preprocess, _ = clip.load(cfg.ACTIVE.ARCH)
     clip_model.float()
@@ -692,6 +735,8 @@ def train_target(
             clip_delay_fraction=clip_delay_fraction,
             topk_conflict_probe=topk_conflict_probe,
             probe_cfg=cfg,
+            swap_conflict_selection=swap_conflict_selection,
+            swap_gate_D=swap_gate_D,
         )
         if diagnostic_payload_requested:
             (
@@ -947,6 +992,8 @@ def obtain_label(
     clip_delay_fraction=LOCKED_DELAY_FRACTION,
     topk_conflict_probe=False,
     probe_cfg=None,
+    swap_conflict_selection=False,
+    swap_gate_D=4.0,
 ):
     # class_logit_bias = get_class_bias(netF, netB, netC)
     start_test = True
@@ -1120,6 +1167,43 @@ def obtain_label(
                 probe_overall["top2_recovered_count"],
             )
         )
+    # Swap-conflict hard-label selection uses the pre-prior probabilities
+    # (same probability_stage as the Top-k probe export), so decisions match
+    # the archived offline analysis exactly.  Ground truth is used only for
+    # the evaluation log below, never to build the labels.
+    swap_selection_payload = None
+    if swap_conflict_selection:
+        with torch.no_grad():
+            swap_labels, swap_selected = select_swap_labels(
+                all_output.detach(),
+                clip_all_output.detach(),
+                cycle=int(curr_cycle),
+                gate_D=float(swap_gate_D),
+            )
+        swap_selection_payload = {
+            "labels": torch.from_numpy(swap_labels).long(),
+            "selected": torch.from_numpy(swap_selected).bool(),
+        }
+        swap_stats = summarize_swap_decisions(
+            all_output.detach(),
+            clip_all_output.detach(),
+            all_label,
+            cycle=int(curr_cycle),
+            gate_D=float(swap_gate_D),
+        )
+        logging.info(
+            "DUET swap-conflict selection: cycle={}; swap_conflicts={}; "
+            "decisions={}; abstain={}; correct={}; precision={:.2f}%; "
+            "gate_D={:.2f}; ground_truth_eval_only=True".format(
+                curr_cycle + 1,
+                swap_stats["swap_conflicts"],
+                swap_stats["decisions"],
+                swap_stats["abstain"],
+                swap_stats["correct"],
+                swap_stats["precision_pct"],
+                float(swap_gate_D),
+            )
+        )
     if return_diagnostics:
         strong_task_prob = nn.Softmax(dim=1)(all_strong_output)
     if first_cycle_prior:
@@ -1178,6 +1262,11 @@ def obtain_label(
         label_mask = prev_label_mask | (~prev_label_mask & admission_matching)
     else:
         label_mask = admission_matching
+    if swap_selection_payload is not None:
+        # Admit gate-passing swap samples (cycle 0 admits all swaps).
+        # Abstained swap samples stay out of label_mask and therefore out of
+        # the hard-label CE loss; every other sample is untouched.
+        label_mask = label_mask | swap_selection_payload["selected"]
 
     kl_soft_output = clip_all_output
     if collect_attribute:
@@ -1321,6 +1410,11 @@ def obtain_label(
         )
 
     _, all_mix_output_pred = torch.max(all_mix_output, dim=1)
+    if swap_selection_payload is not None:
+        # Override the mixed argmax with the swap rule's chosen side so the
+        # hard pseudo labels (mem_label) equal A or B for admitted swaps.
+        selected = swap_selection_payload["selected"]
+        all_mix_output_pred[selected] = swap_selection_payload["labels"][selected]
     valid_mixed = all_mix_output_pred[label_mask]
     mixed_output_accuracy = torch.sum(valid_mixed == valid_labels).item() / float(len(valid_preds))
     log_str_valid = "Mixed output with valid mask: {:.2f}%".format(mixed_output_accuracy * 100)

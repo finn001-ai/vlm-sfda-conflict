@@ -1,0 +1,8 @@
+cycle,agree_n,agree_acc,disagree_n,disagree_acc,no_prior_n,note
+1,1802,67.3,1141,46.3,313,oracle-informed: prior uses previous-cycle ground truth
+2,1723,69.6,1112,38.5,14,oracle-informed: prior uses previous-cycle ground truth
+3,1394,67.6,1132,40.4,11,oracle-informed: prior uses previous-cycle ground truth
+4,1375,67.0,1033,40.9,15,oracle-informed: prior uses previous-cycle ground truth
+5,1167,70.2,1091,40.5,8,oracle-informed: prior uses previous-cycle ground truth
+6,1170,67.4,962,36.5,13,oracle-informed: prior uses previous-cycle ground truth
+7,788,72.5,1167,38.2,18,oracle-informed: prior uses previous-cycle ground truth
