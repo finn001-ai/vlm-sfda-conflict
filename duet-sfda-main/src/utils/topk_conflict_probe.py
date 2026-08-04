@@ -373,10 +373,24 @@ def build_topk_conflict_probe(
             "passed": all(regression_checks.values()) if regression_applicable else None,
         },
     }
-    return {"rows": rows, "summary": summary, "class_rows": class_rows}
+    return {
+        "rows": rows,
+        "summary": summary,
+        "class_rows": class_rows,
+        # 排序后（按 sample_index）的全量概率矩阵，供可选的 softmax dump 使用。
+        # 仅返回引用、不复制；诊断语义与既有输出完全不变。
+        "full_probabilities": {
+            "task_probability": task,
+            "clip_probability": clip,
+            "labels": label,
+            "sample_indices": sample_index,
+        },
+    }
 
 
-def write_topk_conflict_probe(*, output_root: str | Path, **kwargs: Any) -> dict[str, Any]:
+def write_topk_conflict_probe(
+    *, output_root: str | Path, softmax_dump_dir: str | Path | None = None, **kwargs: Any
+) -> dict[str, Any]:
     """Build and write one cycle of probe artifacts."""
     result = build_topk_conflict_probe(**kwargs)
     summary = result["summary"]
@@ -428,4 +442,20 @@ def write_topk_conflict_probe(*, output_root: str | Path, **kwargs: Any) -> dict
     )
     _write_csv(cycle_dir / "conflict_summary.csv", summary_rows)
     _write_csv(cycle_dir / "conflict_summary_by_class.csv", result["class_rows"])
+    if softmax_dump_dir:
+        dump_dir = Path(softmax_dump_dir)
+        dump_dir.mkdir(parents=True, exist_ok=True)
+        full = result["full_probabilities"]
+        dump_path = dump_dir / "cycle_{:03d}.npz".format(summary["cycle"])
+        np.savez(
+            dump_path,
+            task_probability=full["task_probability"],
+            clip_probability=full["clip_probability"],
+            labels=full["labels"],
+            sample_indices=full["sample_indices"],
+            class_names=np.asarray(kwargs.get("class_names", []), dtype=object),
+            task=np.asarray(summary["task"]),
+            seed=np.asarray(summary["seed"]),
+            cycle=np.asarray(summary["cycle"]),
+        )
     return summary

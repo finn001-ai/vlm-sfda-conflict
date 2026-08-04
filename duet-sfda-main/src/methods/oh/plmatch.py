@@ -1177,6 +1177,11 @@ def obtain_label(
         with torch.no_grad():
             probe_summary = write_topk_conflict_probe(
                 output_root=probe_cfg.output_dir,
+                softmax_dump_dir=(
+                    probe_cfg.CONFLICT_PROBE.DUMP_DIR
+                    if probe_cfg.CONFLICT_PROBE.DUMP_DIR
+                    else None
+                ),
                 task_probability=all_output.detach(),
                 clip_probability=clip_all_output.detach(),
                 labels=all_label.detach(),

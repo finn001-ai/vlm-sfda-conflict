@@ -1,0 +1,17 @@
+cycle,run,config,swap_conflicts,decisions,correct,precision_pct
+1,runA,D=4.0 full,1949,1949,1500,76.96
+2,runA,D=4.0 full,3239,240,183,76.25
+3,runA,D=4.0 full,2826,329,250,75.99
+4,runA,D=4.0 full,2529,371,255,68.73
+5,runA,D=4.0 full,2403,436,288,66.06
+6,runA,D=4.0 full,2255,528,364,68.94
+7,runA,D=4.0 full,2114,515,320,62.14
+8,runA,D=4.0 full,1961,461,271,58.79
+1,runB,D=2.0+dir0.8+first6,1949,957,861,89.97
+2,runB,D=2.0+dir0.8+first6,3265,426,351,82.39
+3,runB,D=2.0+dir0.8+first6,2838,485,382,78.76
+4,runB,D=2.0+dir0.8+first6,2520,473,328,69.34
+5,runB,D=2.0+dir0.8+first6,2389,427,284,66.51
+6,runB,D=2.0+dir0.8+first6,2262,483,317,65.63
+7,runB,D=2.0+dir0.8+first6,2117,0,0,
+8,runB,D=2.0+dir0.8+first6,1966,0,0,

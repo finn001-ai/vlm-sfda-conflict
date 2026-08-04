@@ -320,6 +320,13 @@ _C.DUET_SWAP.MIN_DIRECTION_ACCURACY = 0.0
 # 后期（cycle 7-8）标签精度仅 ~60-65%，且大部分是重复样本；推荐 6。
 _C.DUET_SWAP.LAST_ACTIVE_CYCLE = 8
 
+# --------------------- Top-k conflict probe full-softmax dump ------------ #
+_C.CONFLICT_PROBE = CfgNode()
+# 可选：每个 cycle 完整 12 类 task/CLIP softmax 的导出目录（一个 npz / cycle）。
+# 空串 = 不导出（默认，保持现有 probe 输出不变）。DCPL 噪声转移矩阵的离线
+# 诊断需要全量样本的完整 softmax，不只是冲突子集的 top-2。
+_C.CONFLICT_PROBE.DUMP_DIR = ""
+
 # --------------------------------- TSD options ----------------------------- #
 _C.TSD = CfgNode()
 
