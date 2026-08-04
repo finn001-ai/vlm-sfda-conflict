@@ -482,7 +482,18 @@ def train_target(
         raise ValueError(
             "swap-conflict selection requires first_cycle_prior=True"
         )
-    if swap_conflict_selection and candidate_count:
+    # first_cycle_prior is the base of this method (DUET-FCP) and is allowed
+    # to combine with swap selection; all other candidates stay exclusive.
+    if swap_conflict_selection and any(
+        (
+            boundary_router,
+            attribute_reliability_kl,
+            support_conditioned_clip,
+            support_conditioned_clip_memory,
+            clip_confidence_delay,
+            pcgrad_compatibility,
+        )
+    ):
         raise ValueError(
             "swap-conflict selection cannot be combined with other DUET "
             "candidates"

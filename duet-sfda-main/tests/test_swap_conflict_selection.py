@@ -1,6 +1,7 @@
 import csv
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -274,3 +275,67 @@ def test_training_path_keeps_swap_selection_opt_in():
     assert "DUET_SWAP:\n  ENABLED: True" in yaml
     assert "_C.DUET_SWAP.ENABLED = False" in conf
     assert "_C.DUET_SWAP.GATE_D = 4.0" in conf
+    # The exclusivity guard must not treat first_cycle_prior as a competing
+    # candidate: swap selection is built on top of DUET-FCP.
+    assert "first_cycle_prior is the base of this method" in plmatch
+
+
+def _minimal_train_cfg():
+    return SimpleNamespace(
+        PCGRAD_PARAMETER_AUDIT=SimpleNamespace(ENABLED=False),
+        SETTING=SimpleNamespace(DATASET="VISDA-C"),
+        ACTIVE=SimpleNamespace(CYCLE=8, ARCH="ViT-B/32"),
+        TEST=SimpleNamespace(BATCH_SIZE=64),
+        FAILURE_AUDIT=SimpleNamespace(ENABLED=False, STOP_AFTER_PRE_CYCLE=0),
+        DUET_SWAP=SimpleNamespace(ENABLED=True, GATE_D=4.0),
+        DUET_FCP=SimpleNamespace(POWER=0.5),
+        DUET_BOUNDARY=SimpleNamespace(TOP_FRACTION=0.2),
+        DUET_CLIP_DELAY=SimpleNamespace(FRACTION=0.1),
+    )
+
+
+def _import_plmatch_or_skip():
+    try:
+        from src.methods.oh import plmatch
+    except ModuleNotFoundError as error:
+        pytest.skip(f"training-path dependencies unavailable: {error}")
+    return plmatch
+
+
+def test_duet_fcp_plus_swap_passes_train_preflight(monkeypatch):
+    plmatch = _import_plmatch_or_skip()
+
+    class PreflightPassed(Exception):
+        pass
+
+    monkeypatch.setattr(
+        plmatch.clip,
+        "load",
+        lambda arch: (_ for _ in ()).throw(PreflightPassed()),
+    )
+    # The method wrapper combination (first_cycle_prior + swap_conflict_selection)
+    # must get past validation and reach model loading.
+    with pytest.raises(PreflightPassed):
+        plmatch.train_target(
+            _minimal_train_cfg(),
+            first_cycle_prior=True,
+            swap_conflict_selection=True,
+        )
+
+
+def test_swap_rejects_other_candidates():
+    plmatch = _import_plmatch_or_skip()
+
+    with pytest.raises(ValueError, match="first_cycle_prior"):
+        plmatch.train_target(
+            _minimal_train_cfg(),
+            swap_conflict_selection=True,
+            support_conditioned_clip=True,
+        )
+    with pytest.raises(ValueError, match="must be run separately"):
+        plmatch.train_target(
+            _minimal_train_cfg(),
+            first_cycle_prior=True,
+            swap_conflict_selection=True,
+            boundary_router=True,
+        )
