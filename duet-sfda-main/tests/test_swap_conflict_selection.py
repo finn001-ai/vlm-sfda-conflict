@@ -8,6 +8,7 @@ import pytest
 import torch
 
 from src.utils.swap_conflict_selection import (
+    CYCLE0_DIRECTION_ACCURACY,
     DEFAULT_GATE_D,
     EPS,
     decide_swap_evidence,
@@ -162,6 +163,95 @@ def test_invalid_inputs_are_rejected():
         swap_evidence(task, np.ones((4, 3)))
     with pytest.raises(ValueError):
         decide_swap_evidence([0.5], [0.5], [0.5], [0.5, 0.5], cycle=1)
+    with pytest.raises(ValueError):
+        select_swap_labels(task, clip, cycle=1, min_direction_accuracy=1.5)
+
+
+def _swap_orientation(task_a, task_b, clip_top1):
+    """Build a 2-class swap where task top1=task_a and clip top1=clip_top1."""
+    task = np.zeros((1, 12), dtype=np.float64)
+    clip = np.zeros((1, 12), dtype=np.float64)
+    task[0, task_a] = 0.7
+    task[0, task_b] = 0.2
+    task[0, 0] += 1.0 - task[0].sum()
+    clip[0, clip_top1] = 0.7
+    clip[0, task_a] = 0.2
+    clip[0, 0] += 1.0 - clip[0].sum()
+    return task, clip
+
+
+def test_direction_accuracy_table_matches_archived_cycle0():
+    data_dir = _regression_data_dir()
+    if not data_dir.is_dir():
+        pytest.skip("swap regression data not found")
+    import collections
+
+    rows = [
+        r
+        for r in csv.DictReader(
+            (data_dir / "cycle_000" / "conflict_samples.csv").open()
+        )
+        if r["bidirectional_cross_support"] == "True"
+    ]
+    agg = collections.defaultdict(lambda: [0, 0])
+    for row in rows:
+        a, b, gt = (
+            int(row["task_top1_id"]),
+            int(row["clip_top1_id"]),
+            int(row["gt_label_probe"]),
+        )
+        agg[(a, b)][0] += 1
+        agg[(a, b)][1] += b == gt
+    assert len(agg) == len(CYCLE0_DIRECTION_ACCURACY) == 65
+    for (a, b), (count, correct) in agg.items():
+        expected = correct / count
+        assert abs(CYCLE0_DIRECTION_ACCURACY[(a, b)] - expected) <= 1e-3
+
+
+def test_direction_gate_abstains_unreliable_orientations():
+    # car(3)->truck(11): locked CLIP accuracy 69.2% < 0.8 -> abstain.
+    task, clip = _swap_orientation(3, 11, 11)
+    labels, selected = select_swap_labels(
+        task, clip, cycle=0, min_direction_accuracy=0.8
+    )
+    assert selected.tolist() == [False]
+    assert labels.tolist() == [-1]
+    # motorcycle(6)->bicycle(1): locked 90.2% >= 0.8 -> kept.
+    task, clip = _swap_orientation(6, 1, 1)
+    labels, selected = select_swap_labels(
+        task, clip, cycle=0, min_direction_accuracy=0.8
+    )
+    assert selected.tolist() == [True]
+    assert labels.tolist() == [1]
+
+
+def test_direction_gate_applies_to_later_cycles_too():
+    task, clip = _swap_orientation(3, 11, 11)
+    labels, selected = select_swap_labels(
+        task, clip, cycle=3, gate_D=0.0, min_direction_accuracy=0.8
+    )
+    assert selected.tolist() == [False]
+    # Without the direction gate the same sample is decided.
+    _, selected = select_swap_labels(
+        task, clip, cycle=3, gate_D=0.0, min_direction_accuracy=0.0
+    )
+    assert selected.tolist() == [True]
+
+
+def test_last_active_cycle_stops_new_labels():
+    task, clip = _swap_task_clip()
+    labels, selected = select_swap_labels(
+        task, clip, cycle=6, gate_D=0.0, last_active_cycle=6
+    )
+    assert selected.tolist() == [False, False, False, False]
+    assert labels.tolist() == [-1, -1, -1, -1]
+    # cycle 5 (1-based cycle 6) is still active.
+    _, selected = select_swap_labels(
+        task, clip, cycle=5, gate_D=0.0, last_active_cycle=6
+    )
+    assert selected.tolist() == [True, True, False, False]
+    with pytest.raises(ValueError):
+        select_swap_labels(task, clip, cycle=1, last_active_cycle=0)
 
 
 # ------------------------------------------------------------ regression test
@@ -252,6 +342,79 @@ def test_regression_per_cycle_swap_counts_match_archive():
     assert actual == expected
 
 
+def test_regression_direction_gate_variant_matches_archive_evidence():
+    """D=2.0 + direction gate 0.8: more net-correct labels than the D=4.0
+    full-coverage run while cutting wrong labels by ~2/3."""
+    data_dir = _regression_data_dir()
+    if not data_dir.is_dir():
+        pytest.skip("swap regression data not found")
+    decisions = correct = 0
+    for cycle, rows in enumerate(_load_swap_rows(data_dir)):
+        pA = np.array([float(r["task_top1_prob"]) for r in rows])
+        pB = np.array([float(r["task_top2_prob"]) for r in rows])
+        qB = np.array([float(r["clip_top1_score"]) for r in rows])
+        qA = np.array([float(r["clip_top2_score"]) for r in rows])
+        gt = np.array([int(r["gt_label_probe"]) for r in rows])
+        a_ids = np.array([int(r["task_top1_id"]) for r in rows])
+        b_ids = np.array([int(r["clip_top1_id"]) for r in rows])
+        prefer_a, decided = decide_swap_evidence(
+            pA, pB, qA, qB, cycle=cycle, gate_D=2.0
+        )
+        direction_ok = np.asarray(
+            [
+                CYCLE0_DIRECTION_ACCURACY.get((int(a), int(b)), 0.0) >= 0.8
+                for a, b in zip(a_ids, b_ids)
+            ]
+        )
+        decided &= direction_ok
+        real = np.where(prefer_a, a_ids, b_ids)
+        decisions += int(decided.sum())
+        correct += int((decided & (real == gt)).sum())
+    assert decisions == 4220
+    assert correct == 3168
+    assert abs(100.0 * correct / decisions - 75.1) <= 0.2
+    assert correct - (decisions - correct) == 2116
+    # Compared with the archived D>=2.0 curve: 9,196 decisions / 6,013 correct.
+    # The direction gate keeps 4,220 high-quality labels and far fewer wrongs.
+
+
+def test_regression_early_stop_variant_matches_archive_evidence():
+    """D=2.0 + direction 0.8 + last_active_cycle=6: stopping before the
+    unreliable late cycles trades only ~+85 net labels (decision level) for
+    cutting late wrong labels from ~307 to zero."""
+    data_dir = _regression_data_dir()
+    if not data_dir.is_dir():
+        pytest.skip("swap regression data not found")
+    decisions = correct = 0
+    for cycle, rows in enumerate(_load_swap_rows(data_dir)):
+        if cycle + 1 > 6:
+            continue
+        pA = np.array([float(r["task_top1_prob"]) for r in rows])
+        pB = np.array([float(r["task_top2_prob"]) for r in rows])
+        qB = np.array([float(r["clip_top1_score"]) for r in rows])
+        qA = np.array([float(r["clip_top2_score"]) for r in rows])
+        gt = np.array([int(r["gt_label_probe"]) for r in rows])
+        a_ids = np.array([int(r["task_top1_id"]) for r in rows])
+        b_ids = np.array([int(r["clip_top1_id"]) for r in rows])
+        prefer_a, decided = decide_swap_evidence(
+            pA, pB, qA, qB, cycle=cycle, gate_D=2.0
+        )
+        direction_ok = np.asarray(
+            [
+                CYCLE0_DIRECTION_ACCURACY.get((int(a), int(b)), 0.0) >= 0.8
+                for a, b in zip(a_ids, b_ids)
+            ]
+        )
+        decided &= direction_ok
+        real = np.where(prefer_a, a_ids, b_ids)
+        decisions += int(decided.sum())
+        correct += int((decided & (real == gt)).sum())
+    assert decisions == 3337
+    assert correct == 2592
+    assert abs(100.0 * correct / decisions - 77.7) <= 0.2
+    assert correct - (decisions - correct) == 1847
+
+
 # --------------------------------------------------- training-path wiring tests
 
 
@@ -273,8 +436,14 @@ def test_training_path_keeps_swap_selection_opt_in():
     assert "first_cycle_prior=True" in wrapper
     assert "duet_first_cycle_prior_swap_selection" in entrypoint
     assert "DUET_SWAP:\n  ENABLED: True" in yaml
+    assert "GATE_D: 2.0" in yaml
+    assert "MIN_DIRECTION_ACCURACY: 0.8" in yaml
+    assert "LAST_ACTIVE_CYCLE: 6" in yaml
     assert "_C.DUET_SWAP.ENABLED = False" in conf
     assert "_C.DUET_SWAP.GATE_D = 4.0" in conf
+    assert "_C.DUET_SWAP.MIN_DIRECTION_ACCURACY = 0.0" in conf
+    assert "_C.DUET_SWAP.LAST_ACTIVE_CYCLE = 8" in conf
+    assert "LAST_ACTIVE_CYCLE" in plmatch
     # The exclusivity guard must not treat first_cycle_prior as a competing
     # candidate: swap selection is built on top of DUET-FCP.
     assert "first_cycle_prior is the base of this method" in plmatch
@@ -287,7 +456,12 @@ def _minimal_train_cfg():
         ACTIVE=SimpleNamespace(CYCLE=8, ARCH="ViT-B/32"),
         TEST=SimpleNamespace(BATCH_SIZE=64),
         FAILURE_AUDIT=SimpleNamespace(ENABLED=False, STOP_AFTER_PRE_CYCLE=0),
-        DUET_SWAP=SimpleNamespace(ENABLED=True, GATE_D=4.0),
+        DUET_SWAP=SimpleNamespace(
+            ENABLED=True,
+            GATE_D=4.0,
+            MIN_DIRECTION_ACCURACY=0.0,
+            LAST_ACTIVE_CYCLE=8,
+        ),
         DUET_FCP=SimpleNamespace(POWER=0.5),
         DUET_BOUNDARY=SimpleNamespace(TOP_FRACTION=0.2),
         DUET_CLIP_DELAY=SimpleNamespace(FRACTION=0.1),

@@ -508,6 +508,23 @@ def train_target(
     swap_gate_D = float(cfg.DUET_SWAP.GATE_D)
     if swap_conflict_selection and swap_gate_D < 0.0:
         raise ValueError("DUET_SWAP.GATE_D must be non-negative")
+    swap_min_direction_accuracy = float(
+        cfg.DUET_SWAP.MIN_DIRECTION_ACCURACY
+    )
+    if swap_conflict_selection and not (
+        0.0 <= swap_min_direction_accuracy <= 1.0
+    ):
+        raise ValueError(
+            "DUET_SWAP.MIN_DIRECTION_ACCURACY must be in [0, 1]"
+        )
+    swap_last_active_cycle = int(cfg.DUET_SWAP.LAST_ACTIVE_CYCLE)
+    if swap_conflict_selection and not (
+        1 <= swap_last_active_cycle <= int(cfg.ACTIVE.CYCLE)
+    ):
+        raise ValueError(
+            "DUET_SWAP.LAST_ACTIVE_CYCLE must be between 1 and "
+            "ACTIVE.CYCLE"
+        )
     if first_cycle_prior and cfg.DUET_FCP.POWER < 0:
         raise ValueError("DUET_FCP.POWER must be non-negative")
     boundary_fraction = float(cfg.DUET_BOUNDARY.TOP_FRACTION)
@@ -602,10 +619,13 @@ def train_target(
     )
     logging.info(
         "DUET swap-conflict selection: enabled={}; scope=bidirectional_cross_support; "
-        "gate_D={:.2f}; cycle0=always_clip_top1; abstain=not_in_loss; "
-        "probability_stage=pre_first_cycle_prior".format(
+        "gate_D={:.2f}; min_direction_accuracy={:.2f}; last_active_cycle={}; "
+        "cycle0=always_clip_top1; "
+        "abstain=not_in_loss; probability_stage=pre_first_cycle_prior".format(
             bool(swap_conflict_selection),
             swap_gate_D,
+            swap_min_direction_accuracy,
+            swap_last_active_cycle,
         )
     )
     clip_model, preprocess, _ = clip.load(cfg.ACTIVE.ARCH)
@@ -748,6 +768,8 @@ def train_target(
             probe_cfg=cfg,
             swap_conflict_selection=swap_conflict_selection,
             swap_gate_D=swap_gate_D,
+            swap_min_direction_accuracy=swap_min_direction_accuracy,
+            swap_last_active_cycle=swap_last_active_cycle,
         )
         if diagnostic_payload_requested:
             (
@@ -1005,6 +1027,8 @@ def obtain_label(
     probe_cfg=None,
     swap_conflict_selection=False,
     swap_gate_D=4.0,
+    swap_min_direction_accuracy=0.0,
+    swap_last_active_cycle=8,
 ):
     # class_logit_bias = get_class_bias(netF, netB, netC)
     start_test = True
@@ -1190,6 +1214,8 @@ def obtain_label(
                 clip_all_output.detach(),
                 cycle=int(curr_cycle),
                 gate_D=float(swap_gate_D),
+                min_direction_accuracy=float(swap_min_direction_accuracy),
+                last_active_cycle=int(swap_last_active_cycle),
             )
         swap_selection_payload = {
             "labels": torch.from_numpy(swap_labels).long(),
@@ -1201,11 +1227,14 @@ def obtain_label(
             all_label,
             cycle=int(curr_cycle),
             gate_D=float(swap_gate_D),
+            min_direction_accuracy=float(swap_min_direction_accuracy),
+            last_active_cycle=int(swap_last_active_cycle),
         )
         logging.info(
             "DUET swap-conflict selection: cycle={}; swap_conflicts={}; "
             "decisions={}; abstain={}; correct={}; precision={:.2f}%; "
-            "gate_D={:.2f}; ground_truth_eval_only=True".format(
+            "gate_D={:.2f}; min_direction_accuracy={:.2f}; "
+            "ground_truth_eval_only=True".format(
                 curr_cycle + 1,
                 swap_stats["swap_conflicts"],
                 swap_stats["decisions"],
@@ -1213,6 +1242,7 @@ def obtain_label(
                 swap_stats["correct"],
                 swap_stats["precision_pct"],
                 float(swap_gate_D),
+                float(swap_min_direction_accuracy),
             )
         )
     if return_diagnostics:

@@ -313,6 +313,12 @@ _C.DUET_SWAP = CfgNode()
 _C.DUET_SWAP.ENABLED = False
 # 决策强度门槛 D：|log(eA)-log(eB)| >= D 才产生标签，否则 abstain。
 _C.DUET_SWAP.GATE_D = 4.0
+# 方向门槛：低于离线锁定 cycle-0 方向精度的方向直接 abstain。
+# 0.0 = 关闭；0.8 为推荐值（保护 car/truck 等 CLIP 不可靠方向）。
+_C.DUET_SWAP.MIN_DIRECTION_ACCURACY = 0.0
+# 最后一个激活的 cycle（1-based）：从该 cycle 起不再产生新 swap 标签。
+# 后期（cycle 7-8）标签精度仅 ~60-65%，且大部分是重复样本；推荐 6。
+_C.DUET_SWAP.LAST_ACTIVE_CYCLE = 8
 
 # --------------------------------- TSD options ----------------------------- #
 _C.TSD = CfgNode()

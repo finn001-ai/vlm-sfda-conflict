@@ -35,6 +35,84 @@ import numpy as np
 EPS = 1e-9
 DEFAULT_GATE_D = 4.0
 
+# Offline-locked cycle-0 direction accuracy table: for each swap orientation
+# (A=task top1, B=clip top1), the probability that the CLIP top1 (B) is the
+# ground-truth label.  Computed once from the archived cycle-0 conflict CSV
+# (task_TV_seed_2020, pre-training CLIP + source model) and frozen here so the
+# training path never needs ground truth.  This is a static CLIP reliability
+# property of each orientation, not a per-run oracle.  Orientations with fewer
+# samples have noisy values but tiny impact; thresholding at 0.8 mostly keeps
+# motorcycle->bicycle / bus<->train / truck->car and drops car->truck,
+# car->bus and car->motorcycle, which are the orientations that previously
+# taught the model to mislabel cars as trucks/buses/motorcycles.
+CYCLE0_DIRECTION_ACCURACY = {
+    (3, 11): 0.6916,  # n=509
+    (6, 1): 0.9016,  # n=488
+    (3, 2): 0.7232,  # n=177
+    (10, 2): 0.8160,  # n=125
+    (3, 6): 0.4636,  # n=110
+    (2, 10): 0.9583,  # n=72
+    (6, 4): 0.8776,  # n=49
+    (6, 3): 0.5909,  # n=44
+    (11, 3): 0.8636,  # n=44
+    (3, 10): 0.9000,  # n=30
+    (3, 9): 0.6207,  # n=29
+    (3, 0): 0.9167,  # n=24
+    (0, 9): 0.8824,  # n=17
+    (2, 11): 0.8824,  # n=17
+    (1, 6): 0.6923,  # n=13
+    (6, 9): 0.7692,  # n=13
+    (2, 3): 0.7500,  # n=12
+    (3, 4): 0.0833,  # n=12
+    (9, 5): 1.0000,  # n=10
+    (10, 0): 0.7000,  # n=10
+    (2, 0): 1.0000,  # n=9
+    (10, 11): 0.7778,  # n=9
+    (0, 4): 1.0000,  # n=7
+    (3, 1): 0.0000,  # n=7
+    (3, 8): 0.8571,  # n=7
+    (0, 8): 1.0000,  # n=6
+    (6, 0): 1.0000,  # n=6
+    (7, 9): 0.3333,  # n=6
+    (0, 10): 1.0000,  # n=5
+    (6, 7): 1.0000,  # n=5
+    (8, 4): 0.6000,  # n=5
+    (10, 8): 1.0000,  # n=5
+    (8, 3): 0.7500,  # n=4
+    (10, 3): 0.7500,  # n=4
+    (10, 4): 1.0000,  # n=4
+    (3, 7): 0.6667,  # n=3
+    (8, 1): 0.3333,  # n=3
+    (8, 7): 0.0000,  # n=3
+    (8, 9): 0.0000,  # n=3
+    (9, 3): 0.6667,  # n=3
+    (11, 0): 1.0000,  # n=3
+    (11, 2): 0.3333,  # n=3
+    (11, 7): 0.6667,  # n=3
+    (1, 8): 1.0000,  # n=2
+    (1, 9): 1.0000,  # n=2
+    (4, 10): 0.5000,  # n=2
+    (5, 9): 1.0000,  # n=2
+    (6, 8): 1.0000,  # n=2
+    (9, 0): 0.5000,  # n=2
+    (9, 7): 1.0000,  # n=2
+    (9, 8): 1.0000,  # n=2
+    (10, 1): 1.0000,  # n=2
+    (0, 3): 0.0000,  # n=1
+    (4, 3): 1.0000,  # n=1
+    (4, 6): 1.0000,  # n=1
+    (4, 8): 1.0000,  # n=1
+    (5, 3): 0.0000,  # n=1
+    (5, 7): 1.0000,  # n=1
+    (6, 2): 1.0000,  # n=1
+    (6, 11): 0.0000,  # n=1
+    (7, 4): 1.0000,  # n=1
+    (7, 10): 1.0000,  # n=1
+    (9, 1): 1.0000,  # n=1
+    (9, 6): 1.0000,  # n=1
+    (11, 10): 1.0000,  # n=1
+}
+
 
 def _as_float_array(value: object) -> np.ndarray:
     """Convert tensors/arrays to a float64 numpy array (detached, CPU)."""
@@ -150,6 +228,8 @@ def select_swap_labels(
     cycle: int,
     gate_D: float = DEFAULT_GATE_D,
     eps: float = EPS,
+    min_direction_accuracy: float = 0.0,
+    last_active_cycle: int = 8,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Vectorized swap selection over a full batch.
 
@@ -160,15 +240,34 @@ def select_swap_labels(
         i.e. every swap conflict in cycle 0 and gate-passing swap conflicts in
         later cycles.  Abstained swap conflicts stay unselected so callers can
         keep them out of the training loss.
+
+    ``min_direction_accuracy > 0`` additionally abstains any orientation whose
+    offline-locked cycle-0 CLIP accuracy (``CYCLE0_DIRECTION_ACCURACY``) is
+    below the threshold.  This protects hard classes such as car/truck, where
+    blindly following CLIP is only ~69% reliable and was shown to drag final
+    car accuracy down.  The threshold applies to every cycle, including the
+    cycle-0 special case.
+
+    ``last_active_cycle`` (1-based) stops producing new labels from that cycle
+    onward.  Late-cycle swap labels are much less reliable (~60-65% precision
+    in cycles 7-8), cover mostly samples that were already labeled in earlier
+    cycles, and add a net of only ~+85 correct labels while injecting ~148
+    wrong ones; stopping early avoids that pollution without meaningful loss.
     """
     task = _as_float_array(task_probability)
     evidence = swap_evidence(task, clip_probability)
     swap = evidence["swap_mask"]
     A = evidence["A"]
     B = evidence["B"]
+    if not 0.0 <= min_direction_accuracy <= 1.0:
+        raise ValueError("min_direction_accuracy must be in [0, 1]")
+    if last_active_cycle < 1:
+        raise ValueError("last_active_cycle must be >= 1")
 
     labels = np.full(task.shape[0], -1, dtype=np.int64)
     selected = np.zeros(task.shape[0], dtype=bool)
+    if cycle + 1 > last_active_cycle:
+        return labels, selected
     rows = np.flatnonzero(swap)
     if rows.size == 0:
         return labels, selected
@@ -183,6 +282,17 @@ def select_swap_labels(
         eps=eps,
     )
     chosen = np.where(prefer_A, A[rows], B[rows])
+    if min_direction_accuracy > 0.0:
+        direction_accuracy = np.asarray(
+            [
+                CYCLE0_DIRECTION_ACCURACY.get(
+                    (int(A[row]), int(B[row])), 0.0
+                )
+                for row in rows
+            ],
+            dtype=np.float64,
+        )
+        decided &= direction_accuracy >= min_direction_accuracy
     labels[rows[decided]] = chosen[decided]
     selected[rows[decided]] = True
     return labels, selected
@@ -196,6 +306,8 @@ def summarize_swap_decisions(
     cycle: int,
     gate_D: float = DEFAULT_GATE_D,
     eps: float = EPS,
+    min_direction_accuracy: float = 0.0,
+    last_active_cycle: int = 8,
 ) -> dict[str, int | float]:
     """Oracle-diagnostic summary: GT is used only to evaluate fixed decisions."""
     task = _as_float_array(task_probability)
@@ -208,6 +320,8 @@ def summarize_swap_decisions(
         cycle=cycle,
         gate_D=gate_D,
         eps=eps,
+        min_direction_accuracy=min_direction_accuracy,
+        last_active_cycle=last_active_cycle,
     )
     swap_count = int(selected.sum())
     swap_conflicts = int(swap_evidence(task_probability, clip_probability)["swap_mask"].sum())
