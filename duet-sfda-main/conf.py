@@ -320,6 +320,11 @@ _C.DUET_SWAP.MIN_DIRECTION_ACCURACY = 0.0
 # 后期（cycle 7-8）标签精度仅 ~60-65%，且大部分是重复样本；推荐 6。
 _C.DUET_SWAP.LAST_ACTIVE_CYCLE = 8
 
+# --------------------- Cycle 2/3 swap-intervention audit ---------------- #
+_C.DUET_SWAP_AUDIT = CfgNode()
+# 纯诊断开关：只记录 Cycle 2/3 的逐样本干预明细，不改变任何训练信号。
+_C.DUET_SWAP_AUDIT.ENABLED = False
+
 # --------------------- Top-k conflict probe full-softmax dump ------------ #
 _C.CONFLICT_PROBE = CfgNode()
 # 可选：每个 cycle 完整 12 类 task/CLIP softmax 的导出目录（一个 npz / cycle）。

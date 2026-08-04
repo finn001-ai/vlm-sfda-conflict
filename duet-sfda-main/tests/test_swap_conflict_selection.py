@@ -462,6 +462,7 @@ def _minimal_train_cfg():
             MIN_DIRECTION_ACCURACY=0.0,
             LAST_ACTIVE_CYCLE=8,
         ),
+        DUET_SWAP_AUDIT=SimpleNamespace(ENABLED=False),
         DUET_FCP=SimpleNamespace(POWER=0.5),
         DUET_BOUNDARY=SimpleNamespace(TOP_FRACTION=0.2),
         DUET_CLIP_DELAY=SimpleNamespace(FRACTION=0.1),

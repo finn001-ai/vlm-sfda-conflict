@@ -43,6 +43,10 @@ from src.utils.swap_conflict_selection import (
     select_swap_labels,
     summarize_swap_decisions,
 )
+from src.utils.swap_intervention_audit import (
+    SwapInterventionAuditor,
+    build_swap_audit_payload,
+)
 from src.utils.attribute_reliability import (
     entropy_anchored_attribute_target,
     pairwise_attribute_margin,
@@ -525,6 +529,11 @@ def train_target(
             "DUET_SWAP.LAST_ACTIVE_CYCLE must be between 1 and "
             "ACTIVE.CYCLE"
         )
+    swap_audit_enabled = bool(cfg.DUET_SWAP_AUDIT.ENABLED)
+    if swap_audit_enabled and not swap_conflict_selection:
+        raise ValueError(
+            "DUET_SWAP_AUDIT.ENABLED requires swap-conflict selection"
+        )
     if first_cycle_prior and cfg.DUET_FCP.POWER < 0:
         raise ValueError("DUET_FCP.POWER must be non-negative")
     boundary_fraction = float(cfg.DUET_BOUNDARY.TOP_FRACTION)
@@ -628,11 +637,27 @@ def train_target(
             swap_last_active_cycle,
         )
     )
+    logging.info(
+        "DUET swap-intervention audit: enabled={}; cycles=2,3; "
+        "read_only=True; ground_truth=diagnostic_only".format(
+            bool(swap_audit_enabled)
+        )
+    )
     clip_model, preprocess, _ = clip.load(cfg.ACTIVE.ARCH)
     clip_model.float()
     text_inputs = clip_pre_text(cfg)
 
     dset_loaders = data_load(cfg)
+    swap_auditor = None
+    if swap_audit_enabled:
+        with open(cfg.name_file) as handle:
+            audit_class_names = [
+                line.strip() for line in handle if line.strip()
+            ]
+        swap_auditor = SwapInterventionAuditor(
+            output_root=cfg.output_dir,
+            class_names=audit_class_names,
+        )
     ## set base network
     if cfg.MODEL.ARCH[0:3] == 'res':
         netF = network.ResBase(res_name=cfg.MODEL.ARCH).cuda()
@@ -770,6 +795,9 @@ def train_target(
             swap_gate_D=swap_gate_D,
             swap_min_direction_accuracy=swap_min_direction_accuracy,
             swap_last_active_cycle=swap_last_active_cycle,
+            swap_audit_enabled=swap_audit_enabled,
+            swap_auditor=swap_auditor,
+            swap_audit_probe_cfg=cfg,
         )
         if diagnostic_payload_requested:
             (
@@ -1029,6 +1057,9 @@ def obtain_label(
     swap_gate_D=4.0,
     swap_min_direction_accuracy=0.0,
     swap_last_active_cycle=8,
+    swap_audit_enabled=False,
+    swap_auditor=None,
+    swap_audit_probe_cfg=None,
 ):
     # class_logit_bias = get_class_bias(netF, netB, netC)
     start_test = True
@@ -1038,7 +1069,9 @@ def obtain_label(
         (support_conditioned_clip and curr_cycle == 0)
         or support_conditioned_clip_memory
     )
-    collect_sample_indices = bool(return_diagnostics or topk_conflict_probe)
+    collect_sample_indices = bool(
+        return_diagnostics or topk_conflict_probe or swap_audit_enabled
+    )
     if collect_attribute and (text_features is None or attribute_text_features is None):
         raise ValueError("attribute-reliability KL requires fixed text features")
     with torch.no_grad():
@@ -1212,16 +1245,22 @@ def obtain_label(
     # the archived offline analysis exactly.  Ground truth is used only for
     # the evaluation log below, never to build the labels.
     swap_selection_payload = None
+    swap_diagnostics = None
     if swap_conflict_selection:
         with torch.no_grad():
-            swap_labels, swap_selected = select_swap_labels(
+            swap_result = select_swap_labels(
                 all_output.detach(),
                 clip_all_output.detach(),
                 cycle=int(curr_cycle),
                 gate_D=float(swap_gate_D),
                 min_direction_accuracy=float(swap_min_direction_accuracy),
                 last_active_cycle=int(swap_last_active_cycle),
+                return_diagnostics=bool(swap_audit_enabled),
             )
+            if swap_audit_enabled:
+                swap_labels, swap_selected, swap_diagnostics = swap_result
+            else:
+                swap_labels, swap_selected = swap_result
         swap_selection_payload = {
             "labels": torch.from_numpy(swap_labels).long(),
             "selected": torch.from_numpy(swap_selected).bool(),
@@ -1309,10 +1348,15 @@ def obtain_label(
     else:
         label_mask = admission_matching
     if swap_selection_payload is not None:
+        # Audit snapshot of the mask before swap admission (Cycle 2/3 only).
+        if swap_audit_enabled:
+            base_label_mask = label_mask.clone()
         # Admit gate-passing swap samples (cycle 0 admits all swaps).
         # Abstained swap samples stay out of label_mask and therefore out of
         # the hard-label CE loss; every other sample is untouched.
         label_mask = label_mask | swap_selection_payload["selected"]
+    elif swap_audit_enabled:
+        base_label_mask = label_mask
 
     kl_soft_output = clip_all_output
     if collect_attribute:
@@ -1456,11 +1500,42 @@ def obtain_label(
         )
 
     _, all_mix_output_pred = torch.max(all_mix_output, dim=1)
+    base_mix_label = all_mix_output_pred.clone()
     if swap_selection_payload is not None:
         # Override the mixed argmax with the swap rule's chosen side so the
         # hard pseudo labels (mem_label) equal A or B for admitted swaps.
         selected = swap_selection_payload["selected"]
         all_mix_output_pred[selected] = swap_selection_payload["labels"][selected]
+    if swap_audit_enabled and curr_cycle in (1, 2):
+        if swap_auditor is None or swap_audit_probe_cfg is None:
+            raise ValueError(
+                "swap-intervention audit requires the auditor and config"
+            )
+        with open(swap_audit_probe_cfg.name_file) as handle:
+            audit_class_names = [
+                line.strip() for line in handle if line.strip()
+            ]
+        with torch.no_grad():
+            audit_payload = build_swap_audit_payload(
+                cycle=int(curr_cycle + 1),
+                task_prob=all_output.detach(),
+                clip_prob=clip_all_output.detach(),
+                base_mix_label=base_mix_label.detach(),
+                final_mem_label=all_mix_output_pred.detach(),
+                base_label_mask=base_label_mask,
+                final_label_mask=label_mask,
+                prev_label_mask=prev_label_mask,
+                current_agreement=admission_matching,
+                swap_selected=swap_selection_payload["selected"],
+                swap_diagnostics=swap_diagnostics,
+                real_label=all_label.detach(),
+                sample_index=all_sample_index.detach(),
+                image_paths=[item[0] for item in loader.dataset.imgs],
+                class_names=audit_class_names,
+                gate_D=float(swap_gate_D),
+                min_direction_accuracy=float(swap_min_direction_accuracy),
+            )
+        swap_auditor.record_cycle(int(curr_cycle), audit_payload)
     valid_mixed = all_mix_output_pred[label_mask]
     mixed_output_accuracy = torch.sum(valid_mixed == valid_labels).item() / float(len(valid_preds))
     log_str_valid = "Mixed output with valid mask: {:.2f}%".format(mixed_output_accuracy * 100)

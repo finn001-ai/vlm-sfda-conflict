@@ -163,6 +163,8 @@ def swap_evidence(
         "swap_mask": swap,
         "A": task_top1,
         "B": clip_top1,
+        "task_top2": task_top2,
+        "clip_top2": clip_top2,
         "pA": task[rows, task_top1],
         "pB": task[rows, task_top2],
         "qA": clip[rows, clip_top2],
@@ -230,6 +232,7 @@ def select_swap_labels(
     eps: float = EPS,
     min_direction_accuracy: float = 0.0,
     last_active_cycle: int = 8,
+    return_diagnostics: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Vectorized swap selection over a full batch.
 
@@ -253,6 +256,11 @@ def select_swap_labels(
     in cycles 7-8), cover mostly samples that were already labeled in earlier
     cycles, and add a net of only ~+85 correct labels while injecting ~148
     wrong ones; stopping early avoids that pollution without meaningful loss.
+
+    ``return_diagnostics=True`` additionally returns a per-sample diagnostics
+    dict (labels, selected, diagnostics); it never changes the selection.
+    Non-swap rows carry NaN evidence and ``abstain_reason`` strings so callers
+    can reproduce the exact filtering funnel without re-deriving the rule.
     """
     task = _as_float_array(task_probability)
     evidence = swap_evidence(task, clip_probability)
@@ -267,10 +275,18 @@ def select_swap_labels(
     labels = np.full(task.shape[0], -1, dtype=np.int64)
     selected = np.zeros(task.shape[0], dtype=bool)
     if cycle + 1 > last_active_cycle:
-        return labels, selected
+        if not return_diagnostics:
+            return labels, selected
+        return labels, selected, _empty_swap_diagnostics(
+            task.shape[0], reason="inactive_cycle"
+        )
     rows = np.flatnonzero(swap)
     if rows.size == 0:
-        return labels, selected
+        if not return_diagnostics:
+            return labels, selected
+        return labels, selected, _empty_swap_diagnostics(
+            task.shape[0], reason="not_conflict"
+        )
 
     prefer_A, decided = decide_swap_evidence(
         evidence["pA"][rows],
@@ -282,6 +298,7 @@ def select_swap_labels(
         eps=eps,
     )
     chosen = np.where(prefer_A, A[rows], B[rows])
+    direction_accuracy = None
     if min_direction_accuracy > 0.0:
         direction_accuracy = np.asarray(
             [
@@ -295,7 +312,151 @@ def select_swap_labels(
         decided &= direction_accuracy >= min_direction_accuracy
     labels[rows[decided]] = chosen[decided]
     selected[rows[decided]] = True
-    return labels, selected
+    if not return_diagnostics:
+        return labels, selected
+    diagnostics = _build_swap_diagnostics(
+        evidence=evidence,
+        rows=rows,
+        direction_accuracy=direction_accuracy,
+        cycle=cycle,
+        gate_D=gate_D,
+        eps=eps,
+        min_direction_accuracy=min_direction_accuracy,
+        last_active_cycle=last_active_cycle,
+        selected=selected,
+    )
+    return labels, selected, diagnostics
+
+
+def _empty_swap_diagnostics(
+    sample_count: int, reason: str
+) -> dict[str, np.ndarray]:
+    """Diagnostics for an all-abstain batch (inactive cycle / no conflicts)."""
+    reason_array = np.full(sample_count, reason, dtype=object)
+    return {
+        "is_conflict": np.zeros(sample_count, dtype=bool),
+        "is_swap_candidate": np.zeros(sample_count, dtype=bool),
+        "task_top1": np.full(sample_count, -1, dtype=np.int64),
+        "task_top1_prob": np.zeros(sample_count, dtype=np.float64),
+        "task_top2": np.full(sample_count, -1, dtype=np.int64),
+        "task_top2_prob": np.zeros(sample_count, dtype=np.float64),
+        "clip_top1": np.full(sample_count, -1, dtype=np.int64),
+        "clip_top1_prob": np.zeros(sample_count, dtype=np.float64),
+        "clip_top2": np.full(sample_count, -1, dtype=np.int64),
+        "clip_top2_prob": np.zeros(sample_count, dtype=np.float64),
+        "candidate_A": np.full(sample_count, -1, dtype=np.int64),
+        "candidate_B": np.full(sample_count, -1, dtype=np.int64),
+        "task_evidence": np.full(sample_count, np.nan, dtype=np.float64),
+        "clip_evidence": np.full(sample_count, np.nan, dtype=np.float64),
+        "log_task_evidence": np.full(sample_count, np.nan, dtype=np.float64),
+        "log_clip_evidence": np.full(sample_count, np.nan, dtype=np.float64),
+        "signed_log_gap": np.full(sample_count, np.nan, dtype=np.float64),
+        "absolute_log_gap": np.full(sample_count, np.nan, dtype=np.float64),
+        "passed_gate": np.zeros(sample_count, dtype=bool),
+        "passed_direction_filter": np.zeros(sample_count, dtype=bool),
+        "choose_task": np.zeros(sample_count, dtype=bool),
+        "choose_clip": np.zeros(sample_count, dtype=bool),
+        "swap_selected": np.zeros(sample_count, dtype=bool),
+        "abstain_reason": reason_array,
+    }
+
+
+def _build_swap_diagnostics(
+    *,
+    evidence: dict[str, np.ndarray],
+    rows: np.ndarray,
+    direction_accuracy: np.ndarray | None,
+    cycle: int,
+    gate_D: float,
+    eps: float,
+    min_direction_accuracy: float,
+    last_active_cycle: int,
+    selected: np.ndarray,
+) -> dict[str, np.ndarray]:
+    """Per-sample diagnostics for the swap funnel (numpy, full length)."""
+    sample_count = evidence["swap_mask"].shape[0]
+    diag = _empty_swap_diagnostics(sample_count, reason="not_conflict")
+    task_top1 = evidence["A"]
+    clip_top1 = evidence["B"]
+    task_top2 = evidence["task_top2"]
+    clip_top2 = evidence["clip_top2"]
+    pA = evidence["pA"]
+    pB = evidence["pB"]
+    qA = evidence["qA"]
+    qB = evidence["qB"]
+
+    is_conflict = task_top1 != clip_top1
+    swap = evidence["swap_mask"]
+    log_task = np.log(np.maximum(pA, eps)) - np.log(np.maximum(pB, eps))
+    log_clip = np.log(np.maximum(qB, eps)) - np.log(np.maximum(qA, eps))
+    signed_gap = log_task - log_clip
+
+    diag["is_conflict"] = is_conflict
+    diag["is_swap_candidate"] = swap
+    diag["task_top1"] = task_top1
+    diag["task_top1_prob"] = pA
+    diag["task_top2"] = task_top2
+    diag["task_top2_prob"] = pB
+    diag["clip_top1"] = clip_top1
+    diag["clip_top1_prob"] = qB
+    diag["clip_top2"] = clip_top2
+    diag["clip_top2_prob"] = qA
+    diag["candidate_A"] = task_top1
+    diag["candidate_B"] = clip_top1
+    diag["task_evidence"] = pA / np.maximum(pB, eps)
+    diag["clip_evidence"] = qB / np.maximum(qA, eps)
+    diag["log_task_evidence"] = log_task
+    diag["log_clip_evidence"] = log_clip
+    diag["signed_log_gap"] = signed_gap
+    diag["absolute_log_gap"] = np.abs(signed_gap)
+
+    # Direction accuracy for swap rows only (lookup is orientation-specific).
+    dir_acc = np.zeros(sample_count, dtype=np.float64)
+    for row in rows:
+        dir_acc[row] = CYCLE0_DIRECTION_ACCURACY.get(
+            (int(task_top1[row]), int(clip_top1[row])), 0.0
+        )
+
+    active_cycle = (cycle + 1) <= last_active_cycle
+    if cycle == 0:
+        passed_gate = swap.copy()
+    else:
+        passed_gate = swap & (np.abs(signed_gap) >= gate_D)
+    if min_direction_accuracy > 0.0:
+        passed_direction = swap & (dir_acc >= min_direction_accuracy)
+    else:
+        passed_direction = swap.copy()
+    diag["passed_gate"] = passed_gate
+    diag["passed_direction_filter"] = passed_direction
+
+    choose_task = np.zeros(sample_count, dtype=bool)
+    choose_clip = np.zeros(sample_count, dtype=bool)
+    # Final selection is the same logic as the selection path: cycle 0 -> CLIP
+    # (B); later cycles -> A when signed gap > 0, else B.
+    if cycle == 0:
+        choose_clip = swap.copy()
+    else:
+        choose_task = swap & (signed_gap > 0.0)
+        choose_clip = swap & (signed_gap <= 0.0)
+    diag["choose_task"] = choose_task
+    diag["choose_clip"] = choose_clip
+    diag["swap_selected"] = selected
+
+    reason = np.full(sample_count, "not_conflict", dtype=object)
+    if not active_cycle:
+        reason[swap] = "inactive_cycle"
+    reason[is_conflict & ~swap] = "conflict_non_swap"
+    if min_direction_accuracy > 0.0:
+        reason[swap & active_cycle & (dir_acc < min_direction_accuracy)] = (
+            "direction_filter_failed"
+        )
+    reason[swap & active_cycle & passed_direction & ~passed_gate] = (
+        "gate_failed"
+    )
+    reason[selected & choose_task] = "selected_task"
+    reason[selected & choose_clip] = "selected_clip"
+    diag["abstain_reason"] = reason
+    return diag
 
 
 def summarize_swap_decisions(
