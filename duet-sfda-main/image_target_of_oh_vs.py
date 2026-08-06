@@ -20,6 +20,7 @@ import src.methods.oh.source as SOURCE
 import src.methods.oh.plmatch as PLMATCH
 import src.methods.oh.duet_boundary_router as DUET_BOUNDARY
 import src.methods.oh.duet_first_cycle_prior as DUET_FCP
+import src.methods.oh.duet_first_cycle_prior_context_transformer as DUET_FCP_CONTEXT
 import src.methods.oh.duet_first_cycle_prior_topk_probe as DUET_FCP_TOPK_PROBE
 import src.methods.oh.duet_first_cycle_prior_swap_selection as DUET_FCP_SWAP
 import src.methods.oh.duet_attribute_reliability_kl as DUET_ATTRIBUTE_KL
@@ -135,6 +136,17 @@ if __name__ == "__main__":
     ):
         print("using DUET-FCP with swap-conflict hard-label selection")
         acc = DUET_FCP_SWAP.train_target(cfg)
+
+    elif (
+        cfg.MODEL.METHOD == "duet_first_cycle_prior_context_transformer"
+        or cfg.MODEL.METHOD.startswith(
+            "duet_first_cycle_prior_context_transformer_"
+        )
+    ):
+        print(
+            "using DUET-FCP with class-balanced anchor context transformer"
+        )
+        acc = DUET_FCP_CONTEXT.train_target(cfg)
 
     elif (
         cfg.MODEL.METHOD == "duet_first_cycle_prior"

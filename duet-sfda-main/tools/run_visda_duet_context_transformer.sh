@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+shopt -s nullglob
+
+# Full candidate: duet_first_cycle_prior_context_transformer on VISDA-C.
+
+seed=2020
+method="duet_first_cycle_prior_context_transformer_visda_full_seed${seed}"
+run_dir="output/uda/VISDA-C/TV/${method}"
+result_dir="output/uda/VISDA-C"
+
+for path in \
+  data/VISDA-C/train_list.txt \
+  data/VISDA-C/validation_list.txt \
+  data/VISDA-C/classname.txt \
+  source/uda/VISDA-C/T/source_F.pt \
+  source/uda/VISDA-C/T/source_B.pt \
+  source/uda/VISDA-C/T/source_C.pt; do
+  if [ ! -f "$path" ]; then
+    echo "Missing VisDA-C input: $path" >&2
+    exit 1
+  fi
+done
+
+case "$run_dir" in
+  output/uda/VISDA-C/TV/duet_first_cycle_prior_context_transformer_visda_full_seed2020) ;;
+  *)
+    echo "Refusing to clear unexpected VisDA-C path: $run_dir" >&2
+    exit 1
+    ;;
+esac
+rm -rf -- "$run_dir"
+
+echo "==> DUET-FCP + Context Transformer VisDA-C, 8 cycles, seed=${seed}"
+python image_target_of_oh_vs.py \
+  --cfg cfgs/visda/duet_first_cycle_prior_context_transformer.yaml \
+  CKPT_DIR . SETTING.OUTPUT_SRC source \
+  MODEL.METHOD "$method" \
+  SETTING.SEED "$seed" SETTING.S 0 SETTING.T 1 \
+  ACTIVE.CYCLE 8
+
+logs=("$run_dir"/*.txt)
+if [ "${#logs[@]}" -ne 1 ]; then
+  echo "Expected exactly one VisDA-C log, found ${#logs[@]}" >&2
+  exit 1
+fi
+if ! grep -q "DUET context transformer: requested=True; enabled=True" "${logs[0]}"; then
+  echo "VisDA-C did not enable the Context Transformer" >&2
+  exit 1
+fi
+if [ "$(grep -c "DUET context refinement: cycle=1" "${logs[0]}")" -ne 1 ]; then
+  echo "VisDA-C did not run the cycle-1 context refinement" >&2
+  exit 1
+fi
+if [ "$(grep -c "Task: TV" "${logs[0]}")" -ne 32 ]; then
+  echo "VisDA-C did not finish 8 cycles / 32 checkpoints" >&2
+  exit 1
+fi
+
+python tools/summarize_visda_run.py \
+  --glob "$run_dir/*.txt" \
+  --out "$result_dir/duet_fcp_context_visda_full8_seed2020_summary.json" \
+  --csv-out "$result_dir/duet_fcp_context_visda_full8_seed2020_per_class.csv" \
+  --class-names data/VISDA-C/classname.txt
+
+echo "==> VisDA summary: $result_dir/duet_fcp_context_visda_full8_seed2020_summary.json"

@@ -307,6 +307,67 @@ _C.DUET_FCP = CfgNode()
 # source/CLIP 两路只在第 1 个 cycle 使用的 prior 强度。
 _C.DUET_FCP.POWER = 0.5
 
+# ---------- DUET-FCP + Class-Balanced Anchor Context Transformer -------- #
+# 候选方法 duet_first_cycle_prior_context_transformer 的配置。
+# 仅在 DUET_FCP（first_cycle_prior）之上运行；关闭 ENABLED 后完全退化为
+# 原始 duet_first_cycle_prior。
+_C.DUET_CONTEXT = CfgNode()
+# 总开关：False 时新方法完全退化为原始 DUET-FCP，不创建 Transformer。
+_C.DUET_CONTEXT.ENABLED = False
+# 激活的 cycle（0-based）。第一版默认只在第 1 个 cycle 运行。
+_C.DUET_CONTEXT.ACTIVE_CYCLES = [0]
+# 是否处理 strict conflict（Task/CLIP Top-1 不一致）查询。
+_C.DUET_CONTEXT.USE_STRICT_CONFLICT = True
+# 是否处理 weak agreement（Top-1 一致但置信度低/熵高）查询。
+_C.DUET_CONTEXT.USE_WEAK_AGREEMENT = True
+# 每个类别最多保留的 anchor 数量（class-balanced）。
+_C.DUET_CONTEXT.ANCHORS_PER_CLASS = 8
+# anchor 准入条件：Task/CLIP 一致，且两路置信度均 >= 阈值、熵均 <= 阈值。
+_C.DUET_CONTEXT.ANCHOR_TASK_CONF = 0.90
+_C.DUET_CONTEXT.ANCHOR_CLIP_CONF = 0.90
+_C.DUET_CONTEXT.ANCHOR_TASK_ENTROPY = 0.40
+_C.DUET_CONTEXT.ANCHOR_CLIP_ENTROPY = 0.40
+# anchor 可靠性分数中的熵权重：
+# reliability = task_conf + clip_conf - entropy_weight * (task_entropy + clip_entropy)
+_C.DUET_CONTEXT.ENTROPY_WEIGHT = 1.0
+# 严格模式：anchor 还必须满足 prior 校准前 Task/CLIP 一致、且 prior 校准前后
+# 共同 Top-1 不变，避免仅因 prior 校准才一致的低质样本进入 bank。
+_C.DUET_CONTEXT.REQUIRE_PRE_POST_PRIOR_AGREEMENT = True
+# weak-agreement 判定阈值：任一分支置信度低于该值或熵高于该值即为 weak。
+_C.DUET_CONTEXT.WEAK_CONF_THRESHOLD = 0.70
+_C.DUET_CONTEXT.WEAK_ENTROPY_THRESHOLD = 1.00
+# Context Transformer 结构。
+_C.DUET_CONTEXT.MODEL_DIM = 256
+_C.DUET_CONTEXT.NUM_HEADS = 4
+_C.DUET_CONTEXT.FFN_DIM = 512
+_C.DUET_CONTEXT.DROPOUT = 0.10
+# leave-one-out anchor 自训练。
+_C.DUET_CONTEXT.TRAIN_STEPS_PER_CYCLE = 100
+_C.DUET_CONTEXT.TRAIN_BATCH_SIZE = 64
+_C.DUET_CONTEXT.LR = 1e-4
+_C.DUET_CONTEXT.WEIGHT_DECAY = 1e-4
+# strict conflict 接受阈值（context 置信度 / 边际）。
+_C.DUET_CONTEXT.ACCEPT_CONF = 0.75
+_C.DUET_CONTEXT.ACCEPT_MARGIN = 0.20
+# weak-agreement 验证通过阈值（必须保持共同 Top-1）。
+_C.DUET_CONTEXT.WEAK_ACCEPT_CONF = 0.75
+_C.DUET_CONTEXT.WEAK_ACCEPT_MARGIN = 0.20
+# 第三类（既非 Task 也非 CLIP Top-1）的更严格阈值。
+_C.DUET_CONTEXT.THIRD_CLASS_CONF = 0.85
+_C.DUET_CONTEXT.THIRD_CLASS_MARGIN = 0.30
+_C.DUET_CONTEXT.ALLOW_THIRD_CLASS = True
+# False 时跳过置信度/边际阈值（强制 resolve，但第三类限制仍然生效）。
+_C.DUET_CONTEXT.ABSTAIN_WHEN_UNCERTAIN = True
+# 对照实现：transformer | cosine_knn | prototype。用于消融：证明 Transformer
+# 不只是复杂版最近邻。
+_C.DUET_CONTEXT.REFINER_TYPE = "transformer"
+# cosine kNN 的邻居数（仅 REFINER_TYPE=cosine_knn 使用）。
+_C.DUET_CONTEXT.KNN_K = 5
+# 固定随机种子（leave-one-out 采样等）。
+_C.DUET_CONTEXT.SEED = 2020
+# 是否打印 evaluation-only 指标（target label 只进日志，不进训练）。
+_C.DUET_CONTEXT.EVAL_ONLY_LOGGING = True
+
 # --------------------- DUET swap-conflict hard-label selection ---------- #
 _C.DUET_SWAP = CfgNode()
 # 独立配置开关：默认关闭，必须显式置 True 才启用 swap 选边规则。
