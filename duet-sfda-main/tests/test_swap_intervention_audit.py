@@ -76,10 +76,13 @@ def _payload(
         selected = np.asarray([True, True, True, True, False, False])
     task = np.full((n, 12), 1.0 / 12.0)
     clip = np.full((n, 12), 1.0 / 12.0)
+    rng = np.random.default_rng(0)
     return build_swap_audit_payload(
         cycle=cycle,
         task_prob=task,
         clip_prob=clip,
+        task_feat=rng.standard_normal((n, 512)).astype(np.float32),
+        strong_feat=rng.standard_normal((n, 512)).astype(np.float32),
         base_mix_label=base_mix,
         final_mem_label=final,
         base_label_mask=base_mask,
@@ -168,11 +171,38 @@ def test_auditor_skips_cycle1_and_writes_cycle2_3(tmp_path):
     assert (root / "cycle02" / "summary.json").is_file()
     assert (root / "cycle02" / "cm04_swap_selected_final_raw.png").is_file()
     assert (root / "cycle02" / "cm04_swap_selected_final_row_normalized.csv").is_file()
+    assert (root / "cycle02" / "cycle02_all_samples.npz").is_file()
+    assert (root / "cycle03" / "cycle03_all_samples.npz").is_file()
     assert (root / "cycle02_cycle03_transition.csv").is_file()
     assert (root / "cycle_transition_summary.json").is_file()
     assert (root / "cycle02" / "pair_summary_sorted_best.csv").is_file()
     assert (root / "cycle02" / "pair_summary_sorted_worst.csv").is_file()
     assert (root / "cycle02" / "cycle02_class_summary.csv").is_file()
+
+
+def test_npz_contains_full_probabilities_and_features(tmp_path):
+    auditor = SwapInterventionAuditor(tmp_path, CLASS_NAMES)
+    payload = _payload(cycle=2)
+    auditor.record_cycle(1, payload)
+    npz_path = (
+        tmp_path
+        / "swap_intervention_audit"
+        / "cycle02"
+        / "cycle02_all_samples.npz"
+    )
+    with np.load(npz_path) as data:
+        assert data["task_prob"].shape == (6, 12)
+        assert data["clip_prob"].shape == (6, 12)
+        assert data["task_feat"].shape == (6, 512)
+        assert data["strong_feat"].shape == (6, 512)
+        assert set(data.files) >= {
+            "task_prob",
+            "clip_prob",
+            "task_feat",
+            "strong_feat",
+            "signed_log_gap",
+            "correction_type",
+        }
 
 
 def test_cross_cycle_transition_alignment():

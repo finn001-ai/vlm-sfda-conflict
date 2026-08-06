@@ -76,6 +76,8 @@ def build_swap_audit_payload(
     cycle: int,
     task_prob: Any,
     clip_prob: Any,
+    task_feat: Any = None,
+    strong_feat: Any = None,
     base_mix_label: Any,
     final_mem_label: Any,
     base_label_mask: Any,
@@ -94,6 +96,12 @@ def build_swap_audit_payload(
     """Assemble the per-sample audit table for one cycle (CPU numpy)."""
     task = _numpy(task_prob, np.float64)
     clip = _numpy(clip_prob, np.float64)
+    task_feat_array = (
+        _numpy(task_feat, np.float32) if task_feat is not None else None
+    )
+    strong_feat_array = (
+        _numpy(strong_feat, np.float32) if strong_feat is not None else None
+    )
     base_mix = _numpy(base_mix_label, np.int64)
     final_mem = _numpy(final_mem_label, np.int64)
     base_mask = _numpy(base_label_mask, bool)
@@ -166,6 +174,10 @@ def build_swap_audit_payload(
         "class_names": list(class_names),
         "gate_D": float(gate_D),
         "min_direction_accuracy": float(min_direction_accuracy),
+        "task_prob": task,
+        "clip_prob": clip,
+        "task_feat": task_feat_array,
+        "strong_feat": strong_feat_array,
         "sample_index": sample_idx,
         "image_path": np.asarray(names, dtype=object),
         "real_label": real,
@@ -689,6 +701,84 @@ def save_sample_table(payload: dict[str, Any], out_dir: Path) -> None:
                 writer.writerow([frame[k][i] for k in SAMPLE_TABLE_COLUMNS])
 
 
+NPZ_FIELDS = [
+    "sample_index",
+    "real_label",
+    "task_prob",
+    "clip_prob",
+    "task_feat",
+    "strong_feat",
+    "task_top1",
+    "task_top1_prob",
+    "task_top2",
+    "task_top2_prob",
+    "task_margin",
+    "task_entropy",
+    "task_correct",
+    "clip_top1",
+    "clip_top1_prob",
+    "clip_top2",
+    "clip_top2_prob",
+    "clip_margin",
+    "clip_entropy",
+    "clip_correct",
+    "is_agreement",
+    "is_conflict",
+    "is_swap_candidate",
+    "candidate_A",
+    "candidate_B",
+    "unordered_pair",
+    "task_evidence",
+    "clip_evidence",
+    "log_task_evidence",
+    "log_clip_evidence",
+    "signed_log_gap",
+    "absolute_log_gap",
+    "direction_accuracy",
+    "passed_gate",
+    "passed_direction_filter",
+    "swap_selected",
+    "swap_proposed_label",
+    "selected_source",
+    "abstain_reason",
+    "prev_label_mask",
+    "current_agreement",
+    "base_label_mask",
+    "already_admitted",
+    "newly_admitted",
+    "final_label_mask",
+    "base_mix_label",
+    "final_mem_label",
+    "label_changed",
+    "base_correct",
+    "final_correct",
+    "correction_type",
+]
+
+
+def save_swap_npz(payload: dict[str, Any], out_dir: Path) -> None:
+    """Save the full per-sample numeric/feature arrays as a single npz."""
+    arrays = {
+        "cycle": np.asarray(payload["cycle"]),
+        "gate_D": np.asarray(payload["gate_D"]),
+        "min_direction_accuracy": np.asarray(
+            payload["min_direction_accuracy"]
+        ),
+    }
+    for key in NPZ_FIELDS:
+        value = payload.get(key)
+        if value is None:
+            continue
+        arrays[key] = np.asarray(value)
+    path = out_dir / f"cycle{payload['cycle']:02d}_all_samples.npz"
+    np.savez_compressed(path, **arrays)
+    logging.info(
+        "SWAP AUDIT npz saved: %s (arrays=%d)",
+        path,
+        len(arrays),
+    )
+
+
 class SwapInterventionAuditor:
     """Collects Cycle 2/3 audit payloads and writes all artifacts."""
 
@@ -704,6 +794,7 @@ class SwapInterventionAuditor:
         cycle_dir = self.root / f"cycle{curr_cycle + 1:02d}"
         cycle_dir.mkdir(parents=True, exist_ok=True)
         save_sample_table(payload, cycle_dir)
+        save_swap_npz(payload, cycle_dir)
         for stem, title in CM_SPECS:
             matrices = build_cycle_confusion_matrices(payload)
             save_confusion_matrix(

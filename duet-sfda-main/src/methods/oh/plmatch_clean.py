@@ -10,35 +10,25 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-import matplotlib.pyplot as plt
 import clip
-import seaborn as sns
 
 from torchvision import transforms
 from src.utils import loss
 from src.models import network
 from torch.utils.data import DataLoader
 from src.data.data_list import ImageList, ImageList_idx
-from scipy.spatial.distance import cdist
 from sklearn.metrics import confusion_matrix
 from src.utils.utils import *
 from src.data.data_list import *
-from src.utils import loss, prompt_tuning, IID_losses
+from src.utils import loss, IID_losses
 # from src.utils import loss, active_prompt, IID_losses
 # from proposed_method import *
 from torch.nn.functional import normalize
 from data.datautils_domain import build_dataset
 from data.cls_to_names import *
 from data.domain_datasets import domain_datasets
-from sklearn.metrics import confusion_matrix
 from src.utils.adaptation_lists import load_adaptation_and_evaluation_rows
-from src.utils.conflict_boundary import (
-    pairwise_first_order_boundary,
-    route_conflict_probabilities,
-)
-from src.utils.failure_audit import save_failure_audit_snapshot
 from src.utils.first_cycle_prior import apply_first_cycle_prior
-from src.utils.topk_conflict_probe import write_topk_conflict_probe
 from src.utils.swap_conflict_selection import (
     select_swap_labels,
     summarize_swap_decisions,
@@ -46,23 +36,6 @@ from src.utils.swap_conflict_selection import (
 from src.utils.swap_intervention_audit import (
     SwapInterventionAuditor,
     build_swap_audit_payload,
-)
-from src.utils.attribute_reliability import (
-    entropy_anchored_attribute_target,
-    pairwise_attribute_margin,
-)
-from src.utils.pairwise_attribute_audit import build_visda_attribute_prompt_manifest
-from src.utils.support_conditioned_clip import (
-    condition_clip_on_task_clip_top2_union,
-)
-from src.utils.clip_confidence_delay import (
-    LOCKED_DELAY_FRACTION,
-    class_balanced_clip_confidence_delay,
-)
-from src.utils.pcgrad_parameter_runtime import run_exact_pcgrad_parameter_audit
-from src.utils.pcgrad_compatibility import (
-    build_pcgrad_parameter_correction,
-    merge_compatible_parameter_correction_,
 )
 
 logger = logging.getLogger(__name__)
@@ -391,13 +364,6 @@ def train_target(
     cfg,
     *,
     first_cycle_prior=False,
-    boundary_router=False,
-    attribute_reliability_kl=False,
-    support_conditioned_clip=False,
-    support_conditioned_clip_memory=False,
-    clip_confidence_delay=False,
-    pcgrad_compatibility=False,
-    topk_conflict_probe=False,
     swap_conflict_selection=False,
 ):
     """训练原始 DUET，或启用一个明确隔离的候选改动。
@@ -406,34 +372,6 @@ def train_target(
     该参数设为 ``True``；stable memory、target head、graph teacher 和 GTR
     均不在本文件中，因此不会混入候选。
 
-    ``boundary_router=True`` 仅在首轮未准入冲突中，将固定 top fraction 的
-    算术融合软分布替换为局部边界距离更大的完整 task 或 CLIP 分布。硬 CE
-    mask、consistency、KL 和所有优化器均保持发布版 DUET 不变。
-
-    ``attribute_reliability_kl=True`` 只在首轮未准入冲突中，将原本的 CLIP
-    KL 软目标替换为离线审计锁定的属性可靠性后验。agreement、硬 CE mask、
-    consistency、损失权重和优化器均保持发布版 DUET 不变。
-
-    ``support_conditioned_clip=True`` 只在首轮未准入冲突中，将 CLIP KL
-    软目标限制到 task/CLIP top-2 并集后重新归一化。task 只提供候选支持集；
-    CLIP 的集内相对概率及 top-1 均保持不变。
-
-    ``support_conditioned_clip_memory=True`` 使用同一软目标公式，但将它持续用于
-    首轮冲突中尚未被累积 agreement mask 解决的样本。这个候选只改时间作用域；
-    目标公式、KL 权重、硬 CE mask、consistency 和优化器均不变。
-
-    ``clip_confidence_delay=True`` 仅在首轮 top-1 一致样本中，按共同伪类别
-    暂缓 CLIP 置信度最低的固定 10%。后续仍由原始单调 agreement 规则自然
-    准入；CLIP KL、融合分布、损失权重和优化器全部保持不变。
-
-    ``pcgrad_compatibility=True`` 仅在 cycle 2 对尚未准入的冲突样本组合
-    consistency 与 CLIP-KL 的输出梯度。PCGrad 修正量再按其与完整 DUET
-    参数梯度的非负投影比例截断；其余 cycle、目标、mask、权重和优化器不变。
-
-    ``topk_conflict_probe=True`` 只导出每个 cycle 的 Task/CLIP top-2
-    冲突覆盖 oracle diagnostic。它使用 detach 后的 prior 校准前概率，
-    不返回任何训练信号，也不改变 mask、loss 或优化器。
-
     ``swap_conflict_selection=True`` 只对 bidirectional_cross_support
     （纯 swap）冲突产生硬伪标签：cycle 0 直接取 CLIP top1；cycle >= 1 按
     eA=pA*qA、eB=pB*qB 的 log 差与 ``DUET_SWAP.GATE_D`` 门槛决定 A/B 或
@@ -441,43 +379,6 @@ def train_target(
     prior 校准前的概率（与 Top-k probe 导出口径一致）；非 swap 冲突和非
     冲突样本不进入该规则，原 DUET 策略不变。
     """
-    candidate_count = sum(
-        bool(value)
-        for value in (
-            first_cycle_prior,
-            boundary_router,
-            attribute_reliability_kl,
-            support_conditioned_clip,
-            support_conditioned_clip_memory,
-            clip_confidence_delay,
-            pcgrad_compatibility,
-        )
-    )
-    if candidate_count > 1:
-        raise ValueError("DUET candidate interventions must be run separately")
-    parameter_audit = bool(cfg.PCGRAD_PARAMETER_AUDIT.ENABLED)
-    if parameter_audit and candidate_count:
-        raise ValueError("PCGrad parameter audit requires pure arithmetic DUET")
-    if parameter_audit and (
-        cfg.SETTING.DATASET != "VISDA-C"
-        or int(cfg.ACTIVE.CYCLE) != 2
-        or int(cfg.TEST.BATCH_SIZE) != 64
-        or cfg.FAILURE_AUDIT.ENABLED
-    ):
-        raise ValueError(
-            "PCGrad parameter audit is locked to VisDA-C, two cycles, "
-            "batch size 64, and FAILURE_AUDIT disabled"
-        )
-    if pcgrad_compatibility and (
-        cfg.SETTING.DATASET != "VISDA-C"
-        or int(cfg.ACTIVE.CYCLE) != 4
-        or int(cfg.TEST.BATCH_SIZE) != 64
-        or cfg.FAILURE_AUDIT.ENABLED
-    ):
-        raise ValueError(
-            "PCGrad compatibility is locked to VisDA-C, four cycles, "
-            "batch size 64, and FAILURE_AUDIT disabled"
-        )
     if swap_conflict_selection and not cfg.DUET_SWAP.ENABLED:
         raise ValueError(
             "swap-conflict selection requires DUET_SWAP.ENABLED=True"
@@ -485,22 +386,6 @@ def train_target(
     if swap_conflict_selection and not first_cycle_prior:
         raise ValueError(
             "swap-conflict selection requires first_cycle_prior=True"
-        )
-    # first_cycle_prior is the base of this method (DUET-FCP) and is allowed
-    # to combine with swap selection; all other candidates stay exclusive.
-    if swap_conflict_selection and any(
-        (
-            boundary_router,
-            attribute_reliability_kl,
-            support_conditioned_clip,
-            support_conditioned_clip_memory,
-            clip_confidence_delay,
-            pcgrad_compatibility,
-        )
-    ):
-        raise ValueError(
-            "swap-conflict selection cannot be combined with other DUET "
-            "candidates"
         )
     if swap_conflict_selection and (
         cfg.SETTING.DATASET != "VISDA-C"
@@ -536,95 +421,11 @@ def train_target(
         )
     if first_cycle_prior and cfg.DUET_FCP.POWER < 0:
         raise ValueError("DUET_FCP.POWER must be non-negative")
-    boundary_fraction = float(cfg.DUET_BOUNDARY.TOP_FRACTION)
-    if boundary_router and not 0.0 < boundary_fraction <= 1.0:
-        raise ValueError("DUET_BOUNDARY.TOP_FRACTION must be in (0, 1]")
-    if attribute_reliability_kl and (
-        cfg.SETTING.DATASET != "VISDA-C" or str(cfg.ACTIVE.ARCH) != "ViT-B/32"
-    ):
-        raise ValueError(
-            "attribute-reliability KL is locked to VisDA-C with CLIP ViT-B/32"
-        )
-    if (support_conditioned_clip or support_conditioned_clip_memory) and (
-        cfg.SETTING.DATASET != "VISDA-C" or str(cfg.ACTIVE.ARCH) != "ViT-B/32"
-    ):
-        raise ValueError(
-            "support-conditioned CLIP is locked to VisDA-C with CLIP ViT-B/32"
-        )
-    clip_delay_fraction = float(cfg.DUET_CLIP_DELAY.FRACTION)
-    if clip_confidence_delay and (
-        cfg.SETTING.DATASET != "VISDA-C" or str(cfg.ACTIVE.ARCH) != "ViT-B/32"
-    ):
-        raise ValueError(
-            "CLIP-confidence delay is locked to VisDA-C with CLIP ViT-B/32"
-        )
-    if clip_confidence_delay and not math.isclose(
-        clip_delay_fraction,
-        LOCKED_DELAY_FRACTION,
-        rel_tol=0.0,
-        abs_tol=1e-12,
-    ):
-        raise ValueError("DUET_CLIP_DELAY.FRACTION is locked to 0.10")
-    stop_after_pre_cycle = int(cfg.FAILURE_AUDIT.STOP_AFTER_PRE_CYCLE)
-    if stop_after_pre_cycle < 0 or stop_after_pre_cycle > int(cfg.ACTIVE.CYCLE):
-        raise ValueError(
-            "FAILURE_AUDIT.STOP_AFTER_PRE_CYCLE must be between 0 and ACTIVE.CYCLE"
-        )
-    if stop_after_pre_cycle and not cfg.FAILURE_AUDIT.ENABLED:
-        raise ValueError(
-            "FAILURE_AUDIT.STOP_AFTER_PRE_CYCLE requires FAILURE_AUDIT.ENABLED"
-        )
     logging.info(
         "DUET first-cycle prior: enabled={}; power={:.3f}".format(
             bool(first_cycle_prior),
             float(cfg.DUET_FCP.POWER) if first_cycle_prior else 0.0,
         )
-    )
-    logging.info(
-        "DUET boundary router: enabled={}; first_cycle_only=True; top_fraction={:.3f}".format(
-            bool(boundary_router),
-            boundary_fraction,
-        )
-    )
-    logging.info(
-        "DUET attribute reliability KL: enabled={}; first_cycle_only=True; "
-        "target=unresolved_conflicts".format(bool(attribute_reliability_kl))
-    )
-    logging.info(
-        "DUET support-conditioned CLIP: enabled={}; first_cycle_only=True; "
-        "support=task_clip_top2_union; target=unresolved_conflicts".format(
-            bool(support_conditioned_clip)
-        )
-    )
-    logging.info(
-        "DUET support-conditioned CLIP memory: enabled={}; "
-        "memory=cycle1_task_clip_conflicts; target=currently_unresolved; "
-        "support=task_clip_top2_union".format(
-            bool(support_conditioned_clip_memory)
-        )
-    )
-    logging.info(
-        "DUET CLIP-confidence delay: enabled={}; first_cycle_only=True; "
-        "per_pseudo_class_fraction={:.3f}".format(
-            bool(clip_confidence_delay),
-            clip_delay_fraction,
-        )
-    )
-    logging.info(
-        "DUET exact PCGrad parameter audit: enabled={}; cycle=2; "
-        "pure_arithmetic_duet=True; optimizer_updates_in_audit=0".format(
-            parameter_audit
-        )
-    )
-    logging.info(
-        "DUET PCGrad compatibility: enabled={}; active_cycle=2; "
-        "fraction=clip(dot(full_duet_grad,pcgrad_correction)/"
-        "norm2(pcgrad_correction),0,1); target_labels=False; "
-        "fitted_thresholds=False".format(bool(pcgrad_compatibility))
-    )
-    logging.info(
-        "DUET Top-k conflict probe: enabled={}; probability_stage=pre_first_cycle_prior; "
-        "target_labels=oracle_diagnostic_only".format(bool(topk_conflict_probe))
     )
     logging.info(
         "DUET swap-conflict selection: enabled={}; scope=bidirectional_cross_support; "
@@ -725,39 +526,6 @@ def train_target(
 
     prev_label_mask = None
     text_features = None
-    attribute_text_features = None
-    if attribute_reliability_kl:
-        with open(cfg.name_file) as handle:
-            class_names = [
-                line.strip().replace("_", " ") for line in handle if line.strip()
-            ]
-        prompt_manifest = build_visda_attribute_prompt_manifest(class_names)
-        device = next(clip_model.parameters()).device
-        attribute_tokens = torch.cat(
-            [clip.tokenize(prompt) for prompt in prompt_manifest["flat_prompts"]]
-        ).to(device)
-        with torch.no_grad():
-            text_features = F.normalize(
-                clip_model.encode_text(text_inputs), dim=1
-            ).detach()
-            attribute_text_features = F.normalize(
-                clip_model.encode_text(attribute_tokens), dim=1
-            ).detach()
-        class_count, template_count, family_count = prompt_manifest["shape"]
-        attribute_text_features = attribute_text_features.reshape(
-            class_count,
-            template_count,
-            family_count,
-            -1,
-        )
-        logging.info(
-            "DUET attribute text contract: classes={}; templates={}; families={}; "
-            "target_labels=False; fitted_thresholds=False".format(
-                class_count,
-                template_count,
-                family_count,
-            )
-        )
     curr_cycle = 0
     # office-home : 1.0 / VisDA-C : 1.05
     q_value = cfg.ACTIVE.Q_VALUE
@@ -768,29 +536,14 @@ def train_target(
         netF.eval()
         netB.eval()
         # netC.eval()
-        parameter_audit_this_cycle = parameter_audit and curr_cycle + 1 == 2
-        diagnostic_payload_requested = bool(
-            cfg.FAILURE_AUDIT.ENABLED or parameter_audit_this_cycle
-        )
         label_result = obtain_label(
             dset_loaders['test_aug'], netF, netB, netC, text_inputs, text_features, clip_model, prev_label_mask,
             curr_cycle,
-            return_diagnostics=diagnostic_payload_requested,
             first_cycle_prior=first_cycle_prior,
             prior_power=(
                 float(cfg.DUET_FCP.POWER) if first_cycle_prior else 0.0
             ),
             prior_epsilon=float(cfg.ACTIVE.EPSILON),
-            boundary_router=boundary_router,
-            boundary_top_fraction=boundary_fraction,
-            attribute_reliability_kl=attribute_reliability_kl,
-            attribute_text_features=attribute_text_features,
-            support_conditioned_clip=support_conditioned_clip,
-            support_conditioned_clip_memory=support_conditioned_clip_memory,
-            clip_confidence_delay=clip_confidence_delay,
-            clip_delay_fraction=clip_delay_fraction,
-            topk_conflict_probe=topk_conflict_probe,
-            probe_cfg=cfg,
             swap_conflict_selection=swap_conflict_selection,
             swap_gate_D=swap_gate_D,
             swap_min_direction_accuracy=swap_min_direction_accuracy,
@@ -799,53 +552,7 @@ def train_target(
             swap_auditor=swap_auditor,
             swap_audit_probe_cfg=cfg,
         )
-        if diagnostic_payload_requested:
-            (
-                mem_label,
-                label_mask,
-                confi_imag,
-                confi_dis,
-                kl_soft,
-                audit_payload,
-            ) = label_result
-        else:
-            mem_label, label_mask, confi_imag, confi_dis, kl_soft = label_result
-        if cfg.FAILURE_AUDIT.ENABLED:
-            save_failure_audit_snapshot(
-                cfg,
-                f"pre_cycle{curr_cycle + 1:02d}.npz",
-                cycle=np.array(curr_cycle + 1, dtype=np.int64),
-                task=np.array(cfg.name),
-                phase=np.array("pre_cycle"),
-                **audit_payload,
-            )
-            if stop_after_pre_cycle == curr_cycle + 1:
-                logging.info(
-                    "Failure audit stop: after_pre_cycle={}; optimizer_steps_in_cycle=0".format(
-                        curr_cycle + 1
-                    )
-                )
-                return netF, netB, netC
-        if parameter_audit_this_cycle:
-            run_exact_pcgrad_parameter_audit(
-                cfg,
-                netF=netF,
-                netB=netB,
-                netC=netC,
-                target_dataset=dset_loaders["target"].dataset,
-                mem_label=mem_label,
-                label_mask=label_mask,
-                kl_soft=kl_soft,
-                audit_payload={
-                    "source_label": audit_payload["source_label"],
-                    "clip_label": audit_payload["clip_label"],
-                },
-            )
-            logging.info(
-                "PCGrad exact parameter audit stop: after_pre_cycle=2; "
-                "cycle2_optimizer_steps=0; parameters_updated_by_audit=False"
-            )
-            return netF, netB, netC
+        mem_label, label_mask, confi_imag, confi_dis, kl_soft = label_result
         kl_soft = kl_soft.cuda()
         mem_label = mem_label.cuda()
         prev_label_mask = label_mask
@@ -859,11 +566,6 @@ def train_target(
         netF.train()
         netB.train()
         # netC.train()
-        compatibility_batches = 0
-        compatibility_applied_batches = 0
-        compatibility_unresolved = 0
-        compatibility_output_active = 0
-        compatibility_fraction_sum = 0.0
         while iter_num < max_iter:
             try:
                 inputs_test, _, tar_idx = next(iter_test)
@@ -908,39 +610,8 @@ def train_target(
             mi_loss = F.kl_div(weak_preds.log(), clip_soft_batch, reduction="batchmean")
             classifier_loss += mi_loss * cfg.ACTIVE.KL_PAR
 
-            correction_payload = None
-            if pcgrad_compatibility and curr_cycle == 1:
-                unresolved_batch = (~label_mask[tar_idx]).to(
-                    weak_logits.device, non_blocking=True
-                )
-                correction_payload = build_pcgrad_parameter_correction(
-                    weak_logits=weak_logits,
-                    strong_logits=strong_logits,
-                    weak_probability=weak_preds,
-                    strong_probability=nn.Softmax(dim=1)(strong_logits),
-                    clip_target=clip_soft_batch,
-                    unresolved_mask=unresolved_batch,
-                    parameters=trainable_parameters,
-                    consistency_weight=float(cfg.ACTIVE.CON_PAR),
-                    clip_weight=float(cfg.ACTIVE.KL_PAR),
-                )
-
             optimizer.zero_grad()
             classifier_loss.backward()
-            if correction_payload is not None:
-                compatibility = merge_compatible_parameter_correction_(
-                    trainable_parameters,
-                    correction_payload["parameter_correction"],
-                )
-                compatibility_batches += 1
-                compatibility_applied_batches += int(
-                    compatibility["fraction"] > 0.0
-                )
-                compatibility_unresolved += correction_payload["unresolved"]
-                compatibility_output_active += correction_payload[
-                    "output_pcgrad_active"
-                ]
-                compatibility_fraction_sum += compatibility["fraction"]
             optimizer.step()
 
             if iter_num % interval_iter == 0 or iter_num == max_iter:
@@ -968,38 +639,7 @@ def train_target(
                 netF.train()
                 netB.train()
                 # netC.train()
-        if pcgrad_compatibility:
-            mean_fraction = (
-                compatibility_fraction_sum / compatibility_batches
-                if compatibility_batches
-                else 0.0
-            )
-            logging.info(
-                "DUET PCGrad compatibility cycle summary: cycle={}; active={}; "
-                "audited_batches={}; applied_batches={}; unresolved_rows={}; "
-                "output_pcgrad_active_rows={}; mean_fraction={:.6f}; "
-                "target_labels=False; fitted_thresholds=False".format(
-                    curr_cycle + 1,
-                    curr_cycle == 1,
-                    compatibility_batches,
-                    compatibility_applied_batches,
-                    compatibility_unresolved,
-                    compatibility_output_active,
-                    mean_fraction,
-                )
-            )
         curr_cycle += 1
-
-    if cfg.FAILURE_AUDIT.ENABLED:
-        final_payload = collect_final_failure_audit(dset_loaders['test'], netF, netB, netC)
-        save_failure_audit_snapshot(
-            cfg,
-            "final_full.npz",
-            cycle=np.array(cfg.ACTIVE.CYCLE, dtype=np.int64),
-            task=np.array(cfg.name),
-            phase=np.array("final_full"),
-            **final_payload,
-        )
 
     # torch.save(netF.state_dict(), osp.join(cfg.output_dir, "target_F_" + cfg.MODEL.METHOD + ".pt"))
     # torch.save(netB.state_dict(), osp.join(cfg.output_dir, "target_B_" + cfg.MODEL.METHOD + ".pt"))
@@ -1039,20 +679,9 @@ def obtain_label(
     clip_model,
     prev_label_mask,
     curr_cycle,
-    return_diagnostics=False,
     first_cycle_prior=False,
     prior_power=0.5,
     prior_epsilon=1e-6,
-    boundary_router=False,
-    boundary_top_fraction=0.2,
-    attribute_reliability_kl=False,
-    attribute_text_features=None,
-    support_conditioned_clip=False,
-    support_conditioned_clip_memory=False,
-    clip_confidence_delay=False,
-    clip_delay_fraction=LOCKED_DELAY_FRACTION,
-    topk_conflict_probe=False,
-    probe_cfg=None,
     swap_conflict_selection=False,
     swap_gate_D=4.0,
     swap_min_direction_accuracy=0.0,
@@ -1063,19 +692,11 @@ def obtain_label(
 ):
     # class_logit_bias = get_class_bias(netF, netB, netC)
     start_test = True
-    collect_boundary = bool(boundary_router and curr_cycle == 0)
-    collect_attribute = bool(attribute_reliability_kl and curr_cycle == 0)
-    collect_support_conditioned = bool(
-        (support_conditioned_clip and curr_cycle == 0)
-        or support_conditioned_clip_memory
-    )
     collect_sample_indices = bool(
-        return_diagnostics or topk_conflict_probe or swap_audit_enabled
+        swap_audit_enabled
     )
-    collect_strong = bool(return_diagnostics or swap_audit_enabled)
-    collect_features = bool(return_diagnostics or swap_audit_enabled)
-    if collect_attribute and (text_features is None or attribute_text_features is None):
-        raise ValueError("attribute-reliability KL requires fixed text features")
+    collect_strong = bool(swap_audit_enabled)
+    collect_features = bool(swap_audit_enabled)
     with torch.no_grad():
         iter_test = iter(loader)
         for _ in range(len(loader)):
@@ -1092,69 +713,10 @@ def obtain_label(
                 strong_feas = netB(netF(strong_x))
                 strong_outputs = netC(strong_feas)
 
-            if collect_attribute:
-                clip_image_feature = F.normalize(
-                    clip_model.encode_image(weak_x), dim=1
-                )
-                clip_score = (
-                    clip_model.logit_scale.exp()
-                    * clip_image_feature
-                    @ text_features.t()
-                )
-                batch_attribute_margin = pairwise_attribute_margin(
-                    clip_image_feature,
-                    attribute_text_features,
-                    weak_outputs.argmax(dim=1),
-                    clip_score.argmax(dim=1),
-                )
-            elif text_features is not None:
+            if text_features is not None:
                 clip_score = clip_text(clip_model, text_features, weak_x)
             else:
                 clip_score, _ = clip_model(weak_x, text_inputs)
-
-            if collect_boundary:
-                batch_task_pred = weak_outputs.argmax(dim=1)
-                batch_clip_pred = clip_score.argmax(dim=1)
-                batch_conflict = batch_task_pred != batch_clip_pred
-                batch_task_radius = torch.zeros(
-                    weak_x.size(0), dtype=torch.float32, device=weak_x.device
-                )
-                batch_clip_radius = torch.zeros_like(batch_task_radius)
-                conflict_position = torch.nonzero(
-                    batch_conflict, as_tuple=False
-                ).flatten()
-                if conflict_position.numel() > 0:
-                    conflict_task_pred = batch_task_pred[conflict_position]
-                    conflict_clip_pred = batch_clip_pred[conflict_position]
-                    with torch.enable_grad():
-                        task_x = weak_x[conflict_position].detach().requires_grad_(True)
-                        task_boundary_logits = netC(netB(netF(task_x)))
-                        task_radius, _, _ = pairwise_first_order_boundary(
-                            task_boundary_logits,
-                            task_x,
-                            conflict_task_pred,
-                            conflict_clip_pred,
-                        )
-                        clip_x = weak_x[conflict_position].detach().requires_grad_(True)
-                        if text_features is None:
-                            clip_boundary_logits, _ = clip_model(clip_x, text_inputs)
-                        else:
-                            clip_boundary_features = F.normalize(
-                                clip_model.encode_image(clip_x), dim=1
-                            )
-                            clip_boundary_logits = (
-                                clip_model.logit_scale.exp()
-                                * clip_boundary_features
-                                @ text_features.t()
-                            )
-                        clip_radius, _, _ = pairwise_first_order_boundary(
-                            clip_boundary_logits,
-                            clip_x,
-                            conflict_clip_pred,
-                            conflict_task_pred,
-                        )
-                    batch_task_radius[conflict_position] = task_radius.float()
-                    batch_clip_radius[conflict_position] = clip_radius.float()
 
             clip_score = clip_score.cpu()
             if start_test:
@@ -1163,16 +725,9 @@ def obtain_label(
                 all_label = labels.float()
                 if collect_sample_indices:
                     all_sample_index = sample_index.long().cpu()
-                if collect_boundary:
-                    all_task_radius = batch_task_radius.cpu()
-                    all_clip_radius = batch_clip_radius.cpu()
-                if collect_attribute:
-                    all_attribute_margin = batch_attribute_margin.float().cpu()
                 if collect_features:
                     all_task_features = weak_feas.float().cpu()
                     all_strong_features = strong_feas.float().cpu()
-                if return_diagnostics:
-                    all_strong_output = strong_outputs.float().cpu()
                 start_test = False
             else:
                 all_output = torch.cat((all_output, weak_outputs.float().cpu()), 0)
@@ -1182,21 +737,6 @@ def obtain_label(
                     all_sample_index = torch.cat(
                         (all_sample_index, sample_index.long().cpu()), 0
                     )
-                if collect_boundary:
-                    all_task_radius = torch.cat(
-                        (all_task_radius, batch_task_radius.cpu()), 0
-                    )
-                    all_clip_radius = torch.cat(
-                        (all_clip_radius, batch_clip_radius.cpu()), 0
-                    )
-                if collect_attribute:
-                    all_attribute_margin = torch.cat(
-                        (
-                            all_attribute_margin,
-                            batch_attribute_margin.float().cpu(),
-                        ),
-                        0,
-                    )
                 if collect_features:
                     all_task_features = torch.cat(
                         (all_task_features, weak_feas.float().cpu()), 0
@@ -1204,51 +744,9 @@ def obtain_label(
                     all_strong_features = torch.cat(
                         (all_strong_features, strong_feas.float().cpu()), 0
                     )
-                if return_diagnostics:
-                    all_strong_output = torch.cat(
-                        (all_strong_output, strong_outputs.float().cpu()), 0
-                    )
 
     all_output = nn.Softmax(dim=1)(all_output)
     clip_all_output = nn.Softmax(dim=1)(all_clip_score).cpu()
-    if topk_conflict_probe:
-        if probe_cfg is None:
-            raise ValueError("Top-k conflict probe requires the active config")
-        with open(probe_cfg.name_file) as handle:
-            probe_class_names = [line.strip() for line in handle if line.strip()]
-        with torch.no_grad():
-            probe_summary = write_topk_conflict_probe(
-                output_root=probe_cfg.output_dir,
-                softmax_dump_dir=(
-                    probe_cfg.CONFLICT_PROBE.DUMP_DIR
-                    if probe_cfg.CONFLICT_PROBE.DUMP_DIR
-                    else None
-                ),
-                task_probability=all_output.detach(),
-                clip_probability=clip_all_output.detach(),
-                labels=all_label.detach(),
-                sample_indices=all_sample_index.detach(),
-                dataset_items=loader.dataset.imgs,
-                class_names=probe_class_names,
-                task_name=str(probe_cfg.name),
-                source_domain=str(probe_cfg.domain[probe_cfg.SETTING.S]),
-                target_domain=str(probe_cfg.domain[probe_cfg.SETTING.T]),
-                seed=int(probe_cfg.SETTING.SEED),
-                cycle=int(curr_cycle),
-                probability_stage="pre_first_cycle_prior",
-            )
-        probe_overall = probe_summary["overall"]
-        logging.info(
-            "DUET Top-k conflict probe: cycle={}; conflicts={}; "
-            "top1_union={:.4f}%; top2_union={:.4f}%; recovered={}; "
-            "ground_truth_affects_training=False".format(
-                curr_cycle + 1,
-                probe_overall["conflict_samples"],
-                probe_overall["top1_union_coverage"],
-                probe_overall["top2_union_coverage"],
-                probe_overall["top2_recovered_count"],
-            )
-        )
     # Swap-conflict hard-label selection uses the pre-prior probabilities
     # (same probability_stage as the Top-k probe export), so decisions match
     # the archived offline analysis exactly.  Ground truth is used only for
@@ -1298,8 +796,6 @@ def obtain_label(
                 float(swap_min_direction_accuracy),
             )
         )
-    if return_diagnostics:
-        strong_task_prob = nn.Softmax(dim=1)(all_strong_output)
     if first_cycle_prior:
         all_output, clip_all_output, prior_active = apply_first_cycle_prior(
             all_output,
@@ -1322,34 +818,6 @@ def obtain_label(
     matching_indices = all_output_pred == clip_all_output_pred
 
     admission_matching = matching_indices
-    if clip_confidence_delay and curr_cycle == 0:
-        delay = class_balanced_clip_confidence_delay(
-            matching_indices,
-            all_output_pred,
-            clip_all_output,
-            fraction=clip_delay_fraction,
-        )
-        admission_matching = delay["retained_matching"]
-        delayed = delay["delayed"]
-        delayed_confidence = clip_all_output[
-            delayed, all_output_pred[delayed]
-        ]
-        logging.info(
-            "DUET CLIP-confidence delay applied: cycle=1; "
-            "original_agreements={}; delayed={}; retained={}; "
-            "mean_delayed_clip_confidence={:.6f}; target_labels=False; "
-            "fitted_thresholds=False".format(
-                int(matching_indices.sum().item()),
-                int(delayed.sum().item()),
-                int(admission_matching.sum().item()),
-                float(delayed_confidence.mean().item()),
-            )
-        )
-    elif clip_confidence_delay:
-        logging.info(
-            "DUET CLIP-confidence delay applied: cycle={}; delayed=0; "
-            "first_cycle_only=True".format(curr_cycle + 1)
-        )
 
     # Update label mask based on previous label mask
     if prev_label_mask is not None:
@@ -1368,86 +836,6 @@ def obtain_label(
         base_label_mask = label_mask
 
     kl_soft_output = clip_all_output
-    if collect_attribute:
-        active_conflict = (~label_mask) & (~matching_indices)
-        conflict_count = int(active_conflict.sum().item())
-        if conflict_count <= 0:
-            raise RuntimeError("attribute-reliability KL found no active conflicts")
-        reliability = entropy_anchored_attribute_target(
-            all_output[active_conflict],
-            clip_all_output[active_conflict],
-            all_output_pred[active_conflict].long(),
-            clip_all_output_pred[active_conflict].long(),
-            all_attribute_margin[active_conflict],
-            clip_logit_scale=float(
-                clip_model.logit_scale.exp().detach().cpu().item()
-            ),
-        )
-        kl_soft_output = clip_all_output.clone()
-        kl_soft_output[active_conflict] = reliability["probability"]
-        changed_top1 = int(
-            (
-                reliability["probability"].argmax(dim=1)
-                != clip_all_output_pred[active_conflict]
-            )
-            .sum()
-            .item()
-        )
-        logging.info(
-            "DUET attribute reliability KL applied: cycle=1; "
-            "active_conflicts={}; changed_top1={}; mean_weight={:.6f}; "
-            "target_labels=False; fitted_thresholds=False".format(
-                conflict_count,
-                changed_top1,
-                float(reliability["attribute_weight"].mean().item()),
-            )
-        )
-    elif attribute_reliability_kl:
-        logging.info(
-            "DUET attribute reliability KL applied: cycle={}; "
-            "active_conflicts=0; changed_top1=0; mean_weight=0.000000; "
-            "first_cycle_only=True".format(curr_cycle + 1)
-        )
-    elif collect_support_conditioned:
-        active_conflict = (~label_mask) & (~matching_indices)
-        conflict_count = int(active_conflict.sum().item())
-        if conflict_count <= 0:
-            raise RuntimeError("support-conditioned CLIP found no active conflicts")
-        conditioned = condition_clip_on_task_clip_top2_union(
-            all_output[active_conflict],
-            clip_all_output[active_conflict],
-        )
-        kl_soft_output = clip_all_output.clone()
-        kl_soft_output[active_conflict] = conditioned["probability"]
-        changed_top1 = int(
-            (
-                conditioned["probability"].argmax(dim=1)
-                != clip_all_output_pred[active_conflict]
-            )
-            .sum()
-            .item()
-        )
-        logging.info(
-            "DUET support-conditioned CLIP applied: cycle={}; "
-            "active_conflicts={}; changed_top1={}; mean_support_size={:.6f}; "
-            "mean_retained_clip_mass={:.6f}; target_labels=False; "
-            "fitted_thresholds=False".format(
-                curr_cycle + 1,
-                conflict_count,
-                changed_top1,
-                float(conditioned["support_size"].float().mean().item()),
-                float(conditioned["retained_clip_mass"].mean().item()),
-            )
-        )
-    elif support_conditioned_clip or support_conditioned_clip_memory:
-        logging.info(
-            "DUET support-conditioned CLIP applied: cycle={}; "
-            "active_conflicts=0; changed_top1=0; mean_support_size=0.000000; "
-            "mean_retained_clip_mass=0.000000; first_cycle_only={}".format(
-                curr_cycle + 1,
-                bool(support_conditioned_clip),
-            )
-        )
 
     # Filter predictions and labels based on the updated label mask
     valid_preds = all_output_pred[label_mask]
@@ -1469,44 +857,6 @@ def obtain_label(
     # Combine outputs for confidence distribution and other uses
 
     all_mix_output = (all_output + clip_all_output) / 2.0
-    boundary_payload = None
-    if collect_boundary:
-        active_conflict = (~label_mask) & (~matching_indices)
-        (
-            all_mix_output,
-            boundary_selected,
-            boundary_choose_task,
-            boundary_separation,
-        ) = route_conflict_probabilities(
-            all_output,
-            clip_all_output,
-            active_conflict,
-            all_task_radius,
-            all_clip_radius,
-            fraction=boundary_top_fraction,
-        )
-        boundary_payload = {
-            "boundary_selected": boundary_selected,
-            "boundary_choose_task": boundary_choose_task,
-            "boundary_separation": boundary_separation,
-            "task_boundary_radius": all_task_radius,
-            "clip_boundary_radius": all_clip_radius,
-        }
-        logging.info(
-            "DUET boundary routing: cycle={}; active_conflicts={}; selected={}; "
-            "choose_task={}; choose_clip={}".format(
-                curr_cycle + 1,
-                int(active_conflict.sum().item()),
-                int(boundary_selected.sum().item()),
-                int((boundary_selected & boundary_choose_task).sum().item()),
-                int((boundary_selected & ~boundary_choose_task).sum().item()),
-            )
-        )
-    elif boundary_router:
-        logging.info(
-            "DUET boundary routing: cycle={}; active_conflicts=0; selected=0; "
-            "choose_task=0; choose_clip=0".format(curr_cycle + 1)
-        )
 
     _, all_mix_output_pred = torch.max(all_mix_output, dim=1)
     base_mix_label = all_mix_output_pred.clone()
@@ -1572,51 +922,7 @@ def obtain_label(
         confi_dis,
         kl_soft_output,
     )
-    if not return_diagnostics:
-        return result
-    audit_payload = {
-        "mix_label": all_mix_output_pred.long(),
-        "label_mask": label_mask.bool(),
-        "source_label": all_output_pred.long(),
-        "clip_label": clip_all_output_pred.long(),
-        "task_prob": all_output.float(),
-        "clip_prob": clip_all_output.float(),
-        "strong_task_prob": strong_task_prob.float(),
-        "target_label": all_label.long(),
-        "task_feature": all_task_features.float(),
-        "sample_index": all_sample_index.long(),
-    }
-    if boundary_payload is not None:
-        audit_payload.update(boundary_payload)
-    return result + (audit_payload,)
-
-
-def collect_final_failure_audit(loader, netF, netB, netC):
-    """Collect deterministic full-target features and source-head predictions."""
-    features = []
-    probabilities = []
-    labels = []
-    netF.eval()
-    netB.eval()
-    netC.eval()
-    with torch.no_grad():
-        for data in loader:
-            inputs = data[0].cuda()
-            task_feature = netB(netF(inputs))
-            task_prob = F.softmax(netC(task_feature), dim=1)
-            features.append(task_feature.float().cpu())
-            probabilities.append(task_prob.float().cpu())
-            labels.append(data[1].long().cpu())
-    task_feature = torch.cat(features, dim=0)
-    task_prob = torch.cat(probabilities, dim=0)
-    target_label = torch.cat(labels, dim=0)
-    return {
-        "target_label": target_label,
-        "task_feature": task_feature,
-        "base_task_prob": task_prob,
-        "task_prob": task_prob,
-        "source_label": task_prob.argmax(dim=1),
-    }
+    return result
 
 
 def clip_pre_text(cfg):
