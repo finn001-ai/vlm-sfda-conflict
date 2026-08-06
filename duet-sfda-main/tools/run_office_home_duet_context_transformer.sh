@@ -58,8 +58,8 @@ for s in 0 1 2 3; do
       echo "${task} did not enable the Context Transformer" >&2
       exit 1
     fi
-    if [ "$(grep -c "DUET context refinement: cycle=1" "${logs[0]}")" -ne 1 ]; then
-      echo "${task} did not run the cycle-1 context refinement" >&2
+    if [ "$(grep -c "DUET context refinement: cycle=2" "${logs[0]}")" -ne 1 ]; then
+      echo "${task} did not run the cycle-2 context refinement" >&2
       exit 1
     fi
     if [ "$(grep -c "Task: " "${logs[0]}")" -ne 16 ]; then

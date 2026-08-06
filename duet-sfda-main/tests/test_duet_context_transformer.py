@@ -366,9 +366,39 @@ class MethodFileContractTest(unittest.TestCase):
             "src/methods/oh/duet_first_cycle_prior_context_transformer.py"
         ).read_text()
         self.assertIn(
-            "context-conflict transformer requires first_cycle_prior=True", source
+            "duet_first_cycle_prior_context_transformer requires ",
+            source,
         )
-        self.assertIn("cannot be combined with other", source)
+        self.assertIn("first_cycle_prior=True", source)
+
+    def test_other_candidates_removed_from_clean_file(self):
+        """train_target / obtain_label 中不得再出现其他候选方法 / swap /
+        Gate D / strong-feature 收集相关代码。"""
+        tree = ast.parse(
+            Path(
+                "src/methods/oh/duet_first_cycle_prior_context_transformer.py"
+            ).read_text()
+        )
+        source = "\n".join(
+            ast.unparse(node)
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name in ("train_target", "obtain_label")
+        )
+        for removed in (
+            "boundary_router",
+            "attribute_reliability_kl",
+            "support_conditioned_clip",
+            "clip_confidence_delay",
+            "pcgrad",
+            "topk_conflict_probe",
+            "swap_conflict_selection",
+            "swap_audit",
+            "gate_D",
+            "GATE_D",
+            "collect_strong",
+        ):
+            self.assertNotIn(removed, source, "should have removed: " + removed)
 
     def test_prior_runs_before_transformer(self):
         source = Path(
@@ -396,39 +426,15 @@ class MethodFileContractTest(unittest.TestCase):
             'admission_matching[context_payload["weak_rejected_mask"]] = False', source
         )
 
-    def test_strong_features_guarded_by_collect_strong(self):
-        """Regression: collect_features=True 而 collect_strong=False 时，
-        strong_feas 不得被引用（上下文方法只收集 weak features）。"""
+    def test_strong_feature_collection_removed(self):
+        """Regression: 之前 obtain_label 里 collect_features=True 而
+        collect_strong=False 会 UnboundLocalError；清理后 obtain_label 不再
+        收集 strong 特征。注意：内部训练循环的 strong_x 一致性仍在。"""
         fn = self._function("obtain_label")
-
-        def targets(node):
-            if (
-                isinstance(node, ast.Assign)
-                and any(
-                    isinstance(t, ast.Name) and t.id == "all_strong_features"
-                    for t in node.targets
-                )
-            ):
-                return [node]
-            found = []
-            for child in ast.iter_child_nodes(node):
-                found.extend(targets(child))
-            return found
-
-        assignments = targets(fn)
-        self.assertGreaterEqual(len(assignments), 2)
-        collect_strong_ifs = [
-            node
-            for node in ast.walk(fn)
-            if isinstance(node, ast.If)
-            and "collect_strong" in ast.unparse(node.test)
-        ]
-        for assign in assignments:
-            self.assertIn(
-                assign,
-                [node for if_node in collect_strong_ifs for node in ast.walk(if_node)],
-                "all_strong_features assignment must be guarded by collect_strong",
-            )
+        body = ast.unparse(fn)
+        self.assertNotIn("all_strong_features", body)
+        self.assertNotIn("strong_feas", body)
+        self.assertNotIn("collect_strong", body)
 
     def test_no_modification_of_original_files(self):
         for name in ("plmatch.py", "plmatch_clean.py", "duet_first_cycle_prior.py"):
@@ -465,7 +471,17 @@ class MethodFileContractTest(unittest.TestCase):
                 data = yaml.safe_load(handle)
             self.assertEqual(data["DUET_FCP"]["POWER"], 0.8)
             self.assertTrue(data["DUET_CONTEXT"]["ENABLED"])
-            self.assertEqual(data["DUET_CONTEXT"]["ACTIVE_CYCLES"], [0])
+            self.assertEqual(data["DUET_CONTEXT"]["ACTIVE_CYCLES"], [1])
+
+    def test_first_cycle_stays_pure_fcp(self):
+        """第一轮（cycle index 0）不运行 Transformer：默认 ACTIVE_CYCLES
+        从 index 1（第 2 个 cycle）开始。"""
+        conf = Path("conf.py").read_text()
+        self.assertIn("_C.DUET_CONTEXT.ACTIVE_CYCLES = [1]", conf)
+        source = Path(
+            "src/methods/oh/duet_first_cycle_prior_context_transformer.py"
+        ).read_text()
+        self.assertIn("第一轮（cycle index 0）保持纯 DUET-FCP", source)
 
 
 if __name__ == "__main__":

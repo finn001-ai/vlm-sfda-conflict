@@ -314,8 +314,11 @@ _C.DUET_FCP.POWER = 0.5
 _C.DUET_CONTEXT = CfgNode()
 # 总开关：False 时新方法完全退化为原始 DUET-FCP，不创建 Transformer。
 _C.DUET_CONTEXT.ENABLED = False
-# 激活的 cycle（0-based）。第一版默认只在第 1 个 cycle 运行。
-_C.DUET_CONTEXT.ACTIVE_CYCLES = [0]
+# 激活的 cycle（0-based）。第一轮（index 0）只跑纯 DUET-FCP：基线伪标签和
+# CLIP 视觉分支尚未经过任何 target 适配，anchor/agreement 质量不够稳。
+# 默认从第 2 个 cycle（index 1）开始运行 Context Transformer；想后续每轮
+# 都跑可改为 [1, 2, 3]。
+_C.DUET_CONTEXT.ACTIVE_CYCLES = [1]
 # 是否处理 strict conflict（Task/CLIP Top-1 不一致）查询。
 _C.DUET_CONTEXT.USE_STRICT_CONFLICT = True
 # 是否处理 weak agreement（Top-1 一致但置信度低/熵高）查询。

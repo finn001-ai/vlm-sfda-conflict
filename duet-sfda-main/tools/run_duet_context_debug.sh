@@ -40,7 +40,7 @@ result = run_context_refinement(
     pre_prior_task_probs=task_prob, pre_prior_clip_probs=clip_prob,
     labels=gt, sample_indices=torch.arange(n),
     anchors_per_class=8, transformer=transformer, optimizer=optimizer,
-    train_steps_per_cycle=20, train_batch_size=32, seed=2020, cycle=1,
+    train_steps_per_cycle=20, train_batch_size=32, seed=2020, cycle=2,
     log_fn=logs.append,
 )
 for line in logs:

@@ -50,7 +50,7 @@ for s in 0 1 2 3; do
       MODEL.METHOD "$method" \
       SETTING.SEED "$seed" SETTING.S "$s" SETTING.T "$t" \
       ACTIVE.CYCLE 4 \
-      DUET_FCP.POWER 0.8 \
+      DUET_FCP.POWER 0.5 \
       DUET_CONTEXT.ENABLED False
 
     logs=("$task_dir"/*.txt)

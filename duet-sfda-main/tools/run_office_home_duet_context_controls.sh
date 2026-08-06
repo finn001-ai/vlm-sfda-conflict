@@ -91,7 +91,7 @@ for s in 0 1 2 3; do
       echo "Expected one ${task} log, found ${#logs[@]}" >&2
       exit 1
     fi
-    if ! grep -q "DUET context refinement: cycle=1; active=True; refiner=${refiner}" "${logs[0]}"; then
+    if ! grep -q "DUET context refinement: cycle=2; active=True; refiner=${refiner}" "${logs[0]}"; then
       echo "${task} did not run refiner=${refiner}" >&2
       exit 1
     fi

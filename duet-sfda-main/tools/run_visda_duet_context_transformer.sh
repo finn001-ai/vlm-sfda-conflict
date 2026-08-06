@@ -48,8 +48,8 @@ if ! grep -q "DUET context transformer: requested=True; enabled=True" "${logs[0]
   echo "VisDA-C did not enable the Context Transformer" >&2
   exit 1
 fi
-if [ "$(grep -c "DUET context refinement: cycle=1" "${logs[0]}")" -ne 1 ]; then
-  echo "VisDA-C did not run the cycle-1 context refinement" >&2
+if [ "$(grep -c "DUET context refinement: cycle=2" "${logs[0]}")" -ne 1 ]; then
+  echo "VisDA-C did not run the cycle-2 context refinement" >&2
   exit 1
 fi
 if [ "$(grep -c "Task: TV" "${logs[0]}")" -ne 32 ]; then

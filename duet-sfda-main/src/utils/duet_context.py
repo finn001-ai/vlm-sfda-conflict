@@ -10,7 +10,10 @@ This module implements the core of the candidate method
 3.  A lightweight cross-attention Transformer (or a cosine-kNN / prototype
     control) re-classifies those queries against the anchor context, then the
     decision rules either admit them with a hard pseudo-label, keep the
-    original agreement rule, or abstain.
+    original agreement rule, or abstain.  The first training cycle
+    (``ACTIVE_CYCLES`` default index 1, i.e. the second cycle) stays pure
+    DUET-FCP so the anchor bank is built after at least one round of
+    Task/CLIP target adaptation.
 
 The module only depends on torch.  It never sees target ground-truth except
 through the optional ``labels`` argument, which is used exclusively for
