@@ -396,6 +396,40 @@ class MethodFileContractTest(unittest.TestCase):
             'admission_matching[context_payload["weak_rejected_mask"]] = False', source
         )
 
+    def test_strong_features_guarded_by_collect_strong(self):
+        """Regression: collect_features=True 而 collect_strong=False 时，
+        strong_feas 不得被引用（上下文方法只收集 weak features）。"""
+        fn = self._function("obtain_label")
+
+        def targets(node):
+            if (
+                isinstance(node, ast.Assign)
+                and any(
+                    isinstance(t, ast.Name) and t.id == "all_strong_features"
+                    for t in node.targets
+                )
+            ):
+                return [node]
+            found = []
+            for child in ast.iter_child_nodes(node):
+                found.extend(targets(child))
+            return found
+
+        assignments = targets(fn)
+        self.assertGreaterEqual(len(assignments), 2)
+        collect_strong_ifs = [
+            node
+            for node in ast.walk(fn)
+            if isinstance(node, ast.If)
+            and "collect_strong" in ast.unparse(node.test)
+        ]
+        for assign in assignments:
+            self.assertIn(
+                assign,
+                [node for if_node in collect_strong_ifs for node in ast.walk(if_node)],
+                "all_strong_features assignment must be guarded by collect_strong",
+            )
+
     def test_no_modification_of_original_files(self):
         for name in ("plmatch.py", "plmatch_clean.py", "duet_first_cycle_prior.py"):
             self.assertNotIn(

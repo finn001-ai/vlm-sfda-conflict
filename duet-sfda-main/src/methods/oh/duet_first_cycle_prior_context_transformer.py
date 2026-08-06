@@ -1322,7 +1322,8 @@ def obtain_label(
                     all_attribute_margin = batch_attribute_margin.float().cpu()
                 if collect_features:
                     all_task_features = weak_feas.float().cpu()
-                    all_strong_features = strong_feas.float().cpu()
+                    if collect_strong:
+                        all_strong_features = strong_feas.float().cpu()
                 if return_diagnostics:
                     all_strong_output = strong_outputs.float().cpu()
                 start_test = False
@@ -1353,9 +1354,10 @@ def obtain_label(
                     all_task_features = torch.cat(
                         (all_task_features, weak_feas.float().cpu()), 0
                     )
-                    all_strong_features = torch.cat(
-                        (all_strong_features, strong_feas.float().cpu()), 0
-                    )
+                    if collect_strong:
+                        all_strong_features = torch.cat(
+                            (all_strong_features, strong_feas.float().cpu()), 0
+                        )
                 if return_diagnostics:
                     all_strong_output = torch.cat(
                         (all_strong_output, strong_outputs.float().cpu()), 0
