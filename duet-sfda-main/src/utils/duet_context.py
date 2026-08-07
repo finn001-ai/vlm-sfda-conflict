@@ -806,6 +806,29 @@ def run_context_refinement(
             int(weak_agreement_mask.sum().item()) if use_weak_agreement else 0
         )
 
+    # ---- 修正统计（不依赖 target ground-truth）----
+    strict_total = (
+        int(strict_conflict_mask.sum().item()) if use_strict_conflict else 0
+    )
+    weak_total = (
+        int(weak_agreement_mask.sum().item()) if use_weak_agreement else 0
+    )
+    stats["resolved_rate_pct"] = (
+        100.0 * stats["resolved_strict"] / strict_total if strict_total > 0 else 0.0
+    )
+    stats["weak_defer_rate_pct"] = (
+        100.0 * stats["weak_deferred"] / weak_total if weak_total > 0 else 0.0
+    )
+    stats["final_admitted"] = (
+        stats["post_prior_agreement"]
+        - stats["weak_deferred"]
+        + stats["resolved_strict"]
+    )
+    stats["admitted_delta"] = (
+        stats["resolved_strict"] - stats["weak_deferred"]
+    )
+    _log_correction_stats(stats, cycle, log_fn)
+
     _log_context_stats(stats, refiner_type, cycle, log_fn)
     if eval_only_logging and labels is not None:
         _log_eval_only_metrics(
@@ -876,6 +899,42 @@ def _log_context_stats(
             stats["weak_deferred"],
             stats["context_mean_conf"],
             stats["context_mean_margin"],
+        )
+    )
+
+
+def _log_correction_stats(
+    stats: dict,
+    cycle: int,
+    log_fn: Callable[[str], None],
+) -> None:
+    """每轮修正统计（不使用 target ground-truth）。
+
+    - resolved：原本无标签的 strict conflict 被赋予 hard label 的数量；
+    - weak_deferred：原本会被准入的 weak agreement 被暂缓的数量；
+    - final_admitted = 原始 agreement - weak_deferred + resolved。
+    """
+    log_fn(
+        "DUET context correction: cycle={}; original_agreement={}; "
+        "strict_conflicts={}; resolved={}; resolved_rate={:.2f}%; "
+        "support_task={}; support_clip={}; third_class={}; "
+        "weak_agreement={}; weak_passed={}; weak_deferred={}; "
+        "weak_defer_rate={:.2f}%; final_admitted={}; admitted_delta={}; "
+        "ground_truth_affects_training=False".format(
+            cycle,
+            stats["post_prior_agreement"],
+            stats["strict_conflicts"],
+            stats["resolved_strict"],
+            stats["resolved_rate_pct"],
+            stats["support_task"],
+            stats["support_clip"],
+            stats["third_class"],
+            stats["weak_agreement"],
+            stats["weak_passed"],
+            stats["weak_deferred"],
+            stats["weak_defer_rate_pct"],
+            stats["final_admitted"],
+            stats["admitted_delta"],
         )
     )
 
@@ -993,5 +1052,63 @@ def _log_eval_only_metrics(
             weak_orig_precision,
             weak_passed_precision,
             weak_deferred_precision,
+        )
+    )
+    # ---- 修正正确 / 修正错误（仅 eval，真标签只用于此日志）----
+    resolved_count = int(resolved_mask.sum().item())
+    resolved_correct = (
+        int((context_labels[resolved_mask] == all_label[resolved_mask]).sum().item())
+        if resolved_count
+        else 0
+    )
+    resolved_error = resolved_count - resolved_correct
+    resolved_acc_pct = (
+        100.0 * resolved_correct / resolved_count if resolved_count else float("nan")
+    )
+
+    deferred_mask = weak_agreement_mask & weak_rejected_mask
+    deferred_count = int(deferred_mask.sum().item())
+    # 暂缓正确：共同伪标签本来就是错的（common != gt），推迟是对的
+    deferred_right = (
+        int((task_top1[deferred_mask] != all_label[deferred_mask]).sum().item())
+        if deferred_count
+        else 0
+    )
+    deferred_wrong = deferred_count - deferred_right
+
+    passed_mask = weak_agreement_mask & ~weak_rejected_mask
+    passed_count = int(passed_mask.sum().item())
+    passed_right = (
+        int((task_top1[passed_mask] == all_label[passed_mask]).sum().item())
+        if passed_count
+        else 0
+    )
+    passed_wrong = passed_count - passed_right
+
+    intervention_total = resolved_count + deferred_count
+    intervention_error = resolved_error + deferred_wrong
+    intervention_error_rate_pct = (
+        100.0 * intervention_error / intervention_total
+        if intervention_total
+        else float("nan")
+    )
+    log_fn(
+        "DUET context correction eval-only: cycle={}; resolved_correct={}; "
+        "resolved_error={}; resolved_acc={:.2f}%; weak_deferred_right={}; "
+        "weak_deferred_wrong={}; weak_passed_right={}; weak_passed_wrong={}; "
+        "intervention_total={}; intervention_error={}; "
+        "intervention_error_rate={:.2f}%; "
+        "ground_truth_affects_training=False".format(
+            cycle,
+            resolved_correct,
+            resolved_error,
+            resolved_acc_pct,
+            deferred_right,
+            deferred_wrong,
+            passed_right,
+            passed_wrong,
+            intervention_total,
+            intervention_error,
+            intervention_error_rate_pct,
         )
     )

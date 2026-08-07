@@ -321,6 +321,39 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(int(result["weak_rejected_mask"].sum().item()), 0)
         self.assertTrue(torch.allclose(result["refined_targets"], clip_prob, atol=1e-6))
 
+    def test_correction_stats_and_logs(self):
+        """每个激活 cycle 输出修正数量/比例/正确/错误统计。"""
+        feat, task_prob, clip_prob, true_label = make_separable()
+        logs = []
+        result = run_context_refinement(
+            task_prob, clip_prob, feat, num_classes=8,
+            pre_prior_task_probs=task_prob, pre_prior_clip_probs=clip_prob,
+            labels=true_label, sample_indices=torch.arange(feat.size(0)),
+            anchors_per_class=8,
+            transformer=DuetContextConflictTransformer(
+                feature_dim=32, num_classes=8, model_dim=32, num_heads=4, ffn_dim=64
+            ),
+            optimizer=None, train_steps_per_cycle=0, seed=2020, cycle=2,
+            eval_only_logging=True, log_fn=logs.append,
+        )
+        stats = result["stats"]
+        for key in (
+            "resolved_rate_pct",
+            "weak_defer_rate_pct",
+            "final_admitted",
+            "admitted_delta",
+        ):
+            self.assertIn(key, stats)
+        self.assertEqual(
+            stats["final_admitted"],
+            stats["post_prior_agreement"] - stats["weak_deferred"]
+            + stats["resolved_strict"],
+        )
+        joined = "\n".join(logs)
+        self.assertIn("DUET context correction: cycle=2;", joined)
+        self.assertIn("DUET context correction eval-only: cycle=2;", joined)
+        self.assertIn("ground_truth_affects_training=False", joined)
+
     def test_controls_shapes_and_no_nan(self):
         feat, task_prob, clip_prob, true_label = make_separable(n=256, num_classes=6, feature_dim=24)
         bank = ClassBalancedAnchorBank(6, 4, 24)
@@ -482,6 +515,13 @@ class MethodFileContractTest(unittest.TestCase):
             "src/methods/oh/duet_first_cycle_prior_context_transformer.py"
         ).read_text()
         self.assertIn("第一轮（cycle index 0）保持纯 DUET-FCP", source)
+
+    def test_inactive_cycle_correction_line(self):
+        """未激活的 cycle 也输出一行 corrections=0，便于逐轮对比。"""
+        fn = self._function("obtain_label")
+        body = ast.unparse(fn)
+        self.assertIn("DUET context correction: cycle={}; active=False", body)
+        self.assertIn("corrections=0", body)
 
 
 if __name__ == "__main__":

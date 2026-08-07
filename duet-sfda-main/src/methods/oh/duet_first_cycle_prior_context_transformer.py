@@ -589,6 +589,15 @@ def obtain_label(
         context_conflict_transformer
         and curr_cycle in tuple(context_active_cycles)
     )
+    if context_conflict_transformer and not context_active:
+        # 每个 cycle 都输出一行：未激活时修正统计为 0，便于逐轮对比。
+        logging.info(
+            "DUET context correction: cycle={}; active=False; resolved=0; "
+            "resolved_rate=0.00%; weak_deferred=0; weak_defer_rate=0.00%; "
+            "corrections=0; ground_truth_affects_training=False".format(
+                curr_cycle + 1
+            )
+        )
     if context_active:
         if (
             context_cfg is None
