@@ -475,7 +475,6 @@ def train_target(
             context_cfg=cfg.DUET_CONTEXT,
             context_active_cycles=context_active_cycles,
             context_num_classes=int(cfg.class_num),
-            context_cycle_seed=int(cfg.DUET_CONTEXT.SEED),
         )
         mem_label, label_mask, confi_imag, confi_dis, kl_soft = label_result
         kl_soft = kl_soft.cuda()
@@ -573,7 +572,6 @@ def obtain_label(
     context_cfg=None,
     context_active_cycles=(0,),
     context_num_classes=None,
-    context_cycle_seed=2020,
 ):
     """收集全 target 的 Task/CLIP 概率与 Task feature，产出伪标签。
 
@@ -678,39 +676,14 @@ def obtain_label(
             clip_probs=clip_all_output,
             task_features=all_task_features,
             num_classes=int(context_num_classes),
+            context_cfg=context_cfg,
             pre_prior_task_probs=pre_prior_task_probs,
             pre_prior_clip_probs=pre_prior_clip_probs,
             labels=all_label,
             sample_indices=all_sample_index,
-            use_strict_conflict=bool(context_cfg.USE_STRICT_CONFLICT),
-            use_weak_agreement=bool(context_cfg.USE_WEAK_AGREEMENT),
-            anchors_per_class=int(context_cfg.ANCHORS_PER_CLASS),
-            anchor_task_conf=float(context_cfg.ANCHOR_TASK_CONF),
-            anchor_clip_conf=float(context_cfg.ANCHOR_CLIP_CONF),
-            anchor_task_entropy=float(context_cfg.ANCHOR_TASK_ENTROPY),
-            anchor_clip_entropy=float(context_cfg.ANCHOR_CLIP_ENTROPY),
-            entropy_weight=float(context_cfg.ENTROPY_WEIGHT),
-            require_pre_post_prior_agreement=bool(
-                context_cfg.REQUIRE_PRE_POST_PRIOR_AGREEMENT
-            ),
-            weak_conf_threshold=float(context_cfg.WEAK_CONF_THRESHOLD),
-            weak_entropy_threshold=float(context_cfg.WEAK_ENTROPY_THRESHOLD),
-            accept_conf=float(context_cfg.ACCEPT_CONF),
-            accept_margin=float(context_cfg.ACCEPT_MARGIN),
-            weak_accept_conf=float(context_cfg.WEAK_ACCEPT_CONF),
-            weak_accept_margin=float(context_cfg.WEAK_ACCEPT_MARGIN),
-            third_class_conf=float(context_cfg.THIRD_CLASS_CONF),
-            third_class_margin=float(context_cfg.THIRD_CLASS_MARGIN),
-            allow_third_class=bool(context_cfg.ALLOW_THIRD_CLASS),
-            abstain_when_uncertain=bool(context_cfg.ABSTAIN_WHEN_UNCERTAIN),
-            refiner_type=str(context_cfg.REFINER_TYPE),
             transformer=context_transformer,
             optimizer=context_optimizer,
-            train_steps_per_cycle=int(context_cfg.TRAIN_STEPS_PER_CYCLE),
-            train_batch_size=int(context_cfg.TRAIN_BATCH_SIZE),
-            seed=int(context_cycle_seed) + int(curr_cycle),
             cycle=int(curr_cycle + 1),
-            eval_only_logging=bool(context_cfg.EVAL_ONLY_LOGGING),
         )
         # weak-agreement 未通过验证：暂缓进入硬 CE（admission_matching=False），
         # 但仍参加 consistency 与 CLIP soft KL（kl_soft 保持 clip 概率）。

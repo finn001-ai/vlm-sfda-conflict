@@ -16,9 +16,38 @@ python -m pytest tests/test_duet_context_transformer.py -q
 echo "==> 3) synthetic end-to-end smoke of the refinement pipeline"
 python - <<'PY'
 import torch
+from types import SimpleNamespace
 from src.utils.duet_context import (
     DuetContextConflictTransformer,
     run_context_refinement,
+)
+
+context_cfg = SimpleNamespace(
+    USE_STRICT_CONFLICT=True,
+    USE_WEAK_AGREEMENT=True,
+    ANCHORS_PER_CLASS=8,
+    ANCHOR_TASK_CONF=0.90,
+    ANCHOR_CLIP_CONF=0.90,
+    ANCHOR_TASK_ENTROPY=0.40,
+    ANCHOR_CLIP_ENTROPY=0.40,
+    ENTROPY_WEIGHT=1.0,
+    REQUIRE_PRE_POST_PRIOR_AGREEMENT=True,
+    WEAK_CONF_THRESHOLD=0.70,
+    WEAK_ENTROPY_THRESHOLD=1.00,
+    ACCEPT_CONF=0.75,
+    ACCEPT_MARGIN=0.20,
+    WEAK_ACCEPT_CONF=0.75,
+    WEAK_ACCEPT_MARGIN=0.20,
+    THIRD_CLASS_CONF=0.85,
+    THIRD_CLASS_MARGIN=0.30,
+    ALLOW_THIRD_CLASS=True,
+    ABSTAIN_WHEN_UNCERTAIN=True,
+    REFINER_TYPE="transformer",
+    TRAIN_STEPS_PER_CYCLE=20,
+    TRAIN_BATCH_SIZE=32,
+    SEED=2020,
+    EVAL_ONLY_LOGGING=True,
+    KNN_K=5,
 )
 
 torch.manual_seed(0)
@@ -37,10 +66,10 @@ optimizer = torch.optim.Adam(transformer.parameters(), lr=1e-3)
 logs = []
 result = run_context_refinement(
     task_prob, clip_prob, feat, num_classes=c,
+    context_cfg=context_cfg,
     pre_prior_task_probs=task_prob, pre_prior_clip_probs=clip_prob,
     labels=gt, sample_indices=torch.arange(n),
-    anchors_per_class=8, transformer=transformer, optimizer=optimizer,
-    train_steps_per_cycle=20, train_batch_size=32, seed=2020, cycle=2,
+    transformer=transformer, optimizer=optimizer, cycle=2,
     log_fn=logs.append,
 )
 for line in logs:

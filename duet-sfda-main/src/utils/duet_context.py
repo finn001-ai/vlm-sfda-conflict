@@ -511,44 +511,52 @@ def run_context_refinement(
     task_features: torch.Tensor,
     *,
     num_classes: int,
+    context_cfg: object,
     pre_prior_task_probs: Optional[torch.Tensor] = None,
     pre_prior_clip_probs: Optional[torch.Tensor] = None,
     labels: Optional[torch.Tensor] = None,
     sample_indices: Optional[torch.Tensor] = None,
-    use_strict_conflict: bool = True,
-    use_weak_agreement: bool = True,
-    anchors_per_class: int = 8,
-    anchor_task_conf: float = 0.90,
-    anchor_clip_conf: float = 0.90,
-    anchor_task_entropy: float = 0.40,
-    anchor_clip_entropy: float = 0.40,
-    entropy_weight: float = 1.0,
-    require_pre_post_prior_agreement: bool = True,
-    weak_conf_threshold: float = 0.70,
-    weak_entropy_threshold: float = 1.00,
-    accept_conf: float = 0.75,
-    accept_margin: float = 0.20,
-    weak_accept_conf: float = 0.75,
-    weak_accept_margin: float = 0.20,
-    third_class_conf: float = 0.85,
-    third_class_margin: float = 0.30,
-    allow_third_class: bool = True,
-    abstain_when_uncertain: bool = True,
-    refiner_type: str = "transformer",
     transformer: Optional[DuetContextConflictTransformer] = None,
     optimizer: Optional[torch.optim.Optimizer] = None,
-    train_steps_per_cycle: int = 100,
-    train_batch_size: int = 64,
-    seed: int = 2020,
     cycle: int = 1,
-    eval_only_logging: bool = True,
     log_fn: Callable[[str], None] = logging.info,
 ) -> dict:
     """Run the whole context pipeline and return per-sample decisions + stats.
 
     All returned masks have shape [N] (or [N, C] for refined targets) and are
     aligned with the input ``task_probs`` rows.
+
+    ``context_cfg`` is the DUET_CONTEXT config block (or any object exposing
+    the same attributes); all thresholds / switches / training hyper-params
+    are read from it so the call site stays short.
     """
+    use_strict_conflict = bool(context_cfg.USE_STRICT_CONFLICT)
+    use_weak_agreement = bool(context_cfg.USE_WEAK_AGREEMENT)
+    anchors_per_class = int(context_cfg.ANCHORS_PER_CLASS)
+    anchor_task_conf = float(context_cfg.ANCHOR_TASK_CONF)
+    anchor_clip_conf = float(context_cfg.ANCHOR_CLIP_CONF)
+    anchor_task_entropy = float(context_cfg.ANCHOR_TASK_ENTROPY)
+    anchor_clip_entropy = float(context_cfg.ANCHOR_CLIP_ENTROPY)
+    entropy_weight = float(context_cfg.ENTROPY_WEIGHT)
+    require_pre_post_prior_agreement = bool(
+        context_cfg.REQUIRE_PRE_POST_PRIOR_AGREEMENT
+    )
+    weak_conf_threshold = float(context_cfg.WEAK_CONF_THRESHOLD)
+    weak_entropy_threshold = float(context_cfg.WEAK_ENTROPY_THRESHOLD)
+    accept_conf = float(context_cfg.ACCEPT_CONF)
+    accept_margin = float(context_cfg.ACCEPT_MARGIN)
+    weak_accept_conf = float(context_cfg.WEAK_ACCEPT_CONF)
+    weak_accept_margin = float(context_cfg.WEAK_ACCEPT_MARGIN)
+    third_class_conf = float(context_cfg.THIRD_CLASS_CONF)
+    third_class_margin = float(context_cfg.THIRD_CLASS_MARGIN)
+    allow_third_class = bool(context_cfg.ALLOW_THIRD_CLASS)
+    abstain_when_uncertain = bool(context_cfg.ABSTAIN_WHEN_UNCERTAIN)
+    refiner_type = str(context_cfg.REFINER_TYPE)
+    train_steps_per_cycle = int(context_cfg.TRAIN_STEPS_PER_CYCLE)
+    train_batch_size = int(context_cfg.TRAIN_BATCH_SIZE)
+    knn_k = int(getattr(context_cfg, "KNN_K", 5))
+    seed = int(context_cfg.SEED) + int(cycle - 1)
+    eval_only_logging = bool(context_cfg.EVAL_ONLY_LOGGING)
     task_probs = task_probs.float()
     clip_probs = clip_probs.float()
     num_samples = task_probs.size(0)
@@ -562,6 +570,7 @@ def run_context_refinement(
     clip_entropy = _entropy(clip_probs)
 
     strict_conflict_mask = task_top1 != clip_top1
+    # 弱一致性样本
     weak_agreement_mask = (
         (task_top1 == clip_top1)
         & (
@@ -571,23 +580,24 @@ def run_context_refinement(
             | (clip_entropy > weak_entropy_threshold)
         )
     )
+    # 高一致性样本
     anchor_mask = (
         (task_top1 == clip_top1)
         & (task_conf >= anchor_task_conf)
         & (clip_conf >= anchor_clip_conf)
         & (task_entropy <= anchor_task_entropy)
         & (clip_entropy <= anchor_clip_entropy)
-    )
-    if (
-        require_pre_post_prior_agreement
-        and pre_prior_task_probs is not None
-        and pre_prior_clip_probs is not None
-    ):
-        pre_task_top1 = pre_prior_task_probs.float().argmax(dim=1)
-        pre_clip_top1 = pre_prior_clip_probs.float().argmax(dim=1)
-        pre_agree = pre_task_top1 == pre_clip_top1
-        same_common = pre_task_top1 == task_top1
-        anchor_mask = anchor_mask & pre_agree & same_common
+    ) # 高一致性样本
+    # if (
+    #     require_pre_post_prior_agreement
+    #     and pre_prior_task_probs is not None
+    #     and pre_prior_clip_probs is not None
+    # ):
+    #     pre_task_top1 = pre_prior_task_probs.float().argmax(dim=1)
+    #     pre_clip_top1 = pre_prior_clip_probs.float().argmax(dim=1)
+    #     pre_agree = pre_task_top1 == pre_clip_top1
+    #     same_common = pre_task_top1 == task_top1
+    #     anchor_mask = anchor_mask & pre_agree & same_common
 
     query_mask = torch.zeros(num_samples, dtype=torch.bool)
     if use_strict_conflict:
@@ -608,6 +618,7 @@ def run_context_refinement(
         "weak_agreement": int(weak_agreement_mask.sum().item()),
         "query_count": query_count,
         "anchor_count": anchor_count,
+        "anchor_bank_total": 0,
         "anchor_per_class_counts": [],
         "anchor_mean_task_conf": float("nan"),
         "anchor_mean_clip_conf": float("nan"),
@@ -660,6 +671,9 @@ def run_context_refinement(
         if anchor_sample_indices is not None:
             anchor_sample_indices = anchor_sample_indices.detach().long().to(device)
         stats["anchor_per_class_counts"] = anchor_bank.per_class_counts().tolist()
+        stats["anchor_bank_total"] = int(
+            anchor_bank.per_class_counts().sum().item()
+        )
         stats["anchor_mean_task_conf"] = float(task_conf[anchor_mask].mean().item())
         stats["anchor_mean_clip_conf"] = float(clip_conf[anchor_mask].mean().item())
 
@@ -698,7 +712,7 @@ def run_context_refinement(
                     anchor_labels=anchor_labels,
                     anchor_valid_mask=anchor_valid,
                     anchor_self_exclude=self_exclude,
-                )["probabilities"]
+                )["probabilities"] # type: ignore
         elif refiner_type == "cosine_knn":
             context_probs = cosine_knn_refine(
                 query_features,
@@ -706,7 +720,7 @@ def run_context_refinement(
                 anchor_labels,
                 anchor_valid,
                 num_classes,
-                k=5,
+                k=knn_k,
             )
         elif refiner_type == "prototype":
             context_probs = prototype_refine(
@@ -875,7 +889,8 @@ def _log_context_stats(
     log_fn(
         "DUET context refinement: cycle={}; active=True; refiner={}; "
         "post_prior_agreement={}; strict_conflicts={}; weak_agreement={}; "
-        "anchors_total={}; anchors_per_class=[{}]; anchor_task_conf={:.4f}; "
+        "anchor_candidates={}; anchors_total={}; anchors_per_class=[{}]; "
+        "anchor_task_conf={:.4f}; "
         "anchor_clip_conf={:.4f}; train_loss={}; resolved_strict={}; "
         "support_task={}; support_clip={}; third_class={}; abstain={}; "
         "weak_passed={}; weak_deferred={}; context_conf={:.4f}; "
@@ -886,6 +901,7 @@ def _log_context_stats(
             stats["strict_conflicts"],
             stats["weak_agreement"],
             stats["anchor_count"],
+            stats["anchor_bank_total"],
             ",".join(str(v) for v in stats["anchor_per_class_counts"]),
             stats["anchor_mean_task_conf"],
             stats["anchor_mean_clip_conf"],

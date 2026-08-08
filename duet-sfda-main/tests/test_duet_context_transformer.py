@@ -9,6 +9,7 @@ of the method entry file.
 import ast
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import torch
 
@@ -35,6 +36,39 @@ def make_separable(n=512, num_classes=8, feature_dim=32, seed=0):
     task_prob = torch.softmax(sim * 4.0 + torch.randn(n, num_classes) * 0.1, dim=1)
     clip_prob = torch.softmax(sim * 3.5 + torch.randn(n, num_classes) * 0.3, dim=1)
     return feat, task_prob, clip_prob, true_labels
+
+
+def make_context_cfg(**overrides):
+    """构造与 DUET_CONTEXT 配置段等价的简单对象（测试不需要 yacs）。"""
+    defaults = dict(
+        USE_STRICT_CONFLICT=True,
+        USE_WEAK_AGREEMENT=True,
+        ANCHORS_PER_CLASS=8,
+        ANCHOR_TASK_CONF=0.90,
+        ANCHOR_CLIP_CONF=0.90,
+        ANCHOR_TASK_ENTROPY=0.40,
+        ANCHOR_CLIP_ENTROPY=0.40,
+        ENTROPY_WEIGHT=1.0,
+        REQUIRE_PRE_POST_PRIOR_AGREEMENT=True,
+        WEAK_CONF_THRESHOLD=0.70,
+        WEAK_ENTROPY_THRESHOLD=1.00,
+        ACCEPT_CONF=0.75,
+        ACCEPT_MARGIN=0.20,
+        WEAK_ACCEPT_CONF=0.75,
+        WEAK_ACCEPT_MARGIN=0.20,
+        THIRD_CLASS_CONF=0.85,
+        THIRD_CLASS_MARGIN=0.30,
+        ALLOW_THIRD_CLASS=True,
+        ABSTAIN_WHEN_UNCERTAIN=True,
+        REFINER_TYPE="transformer",
+        TRAIN_STEPS_PER_CYCLE=0,
+        TRAIN_BATCH_SIZE=32,
+        SEED=2020,
+        EVAL_ONLY_LOGGING=False,
+        KNN_K=5,
+    )
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
 
 
 class AnchorBankTest(unittest.TestCase):
@@ -205,35 +239,29 @@ class PipelineTest(unittest.TestCase):
             clip_probs=clip_prob,
             task_features=feat,
             num_classes=8,
+            context_cfg=make_context_cfg(**overrides),
             pre_prior_task_probs=task_prob,
             pre_prior_clip_probs=clip_prob,
             labels=true_label,
             sample_indices=torch.arange(feat.size(0)),
-            anchors_per_class=8,
             transformer=DuetContextConflictTransformer(
                 feature_dim=32, num_classes=8, model_dim=32, num_heads=4, ffn_dim=64
             ),
             optimizer=None,
-            train_steps_per_cycle=0,
-            train_batch_size=32,
-            seed=2020,
             cycle=1,
-            eval_only_logging=False,
         )
-        kwargs.update(overrides)
         return run_context_refinement(**kwargs)
 
     def test_03_ground_truth_never_affects_decisions(self):
         feat, task_prob, clip_prob, true_label = make_separable()
         base = dict(
             task_probs=task_prob, clip_probs=clip_prob, task_features=feat,
-            num_classes=8, pre_prior_task_probs=task_prob,
-            pre_prior_clip_probs=clip_prob, anchors_per_class=8,
+            num_classes=8, context_cfg=make_context_cfg(),
+            pre_prior_task_probs=task_prob, pre_prior_clip_probs=clip_prob,
             transformer=DuetContextConflictTransformer(
                 feature_dim=32, num_classes=8, model_dim=32, num_heads=4, ffn_dim=64
             ),
-            optimizer=None, train_steps_per_cycle=0, seed=2020,
-            eval_only_logging=False,
+            optimizer=None,
         )
         with_gt = run_context_refinement(**base, labels=true_label,
                                         sample_indices=torch.arange(feat.size(0)))
@@ -261,15 +289,14 @@ class PipelineTest(unittest.TestCase):
         feat, task_prob, clip_prob, _ = make_separable()
         result = run_context_refinement(
             task_prob, clip_prob, feat, num_classes=8,
+            context_cfg=make_context_cfg(),
             pre_prior_task_probs=task_prob, pre_prior_clip_probs=clip_prob,
             labels=torch.arange(feat.size(0)) % 8,
             sample_indices=torch.arange(feat.size(0)),
-            anchors_per_class=8,
             transformer=DuetContextConflictTransformer(
                 feature_dim=32, num_classes=8, model_dim=32, num_heads=4, ffn_dim=64
             ),
-            optimizer=None, train_steps_per_cycle=0, seed=2020,
-            eval_only_logging=False,
+            optimizer=None,
         )
         rejected = result["weak_rejected_mask"]
         if int(rejected.sum().item()) > 0:
@@ -295,7 +322,7 @@ class PipelineTest(unittest.TestCase):
     def test_16_resolved_rows_consistent_mem_kl(self):
         # 关闭 abstain 以强制 resolve，确保测试覆盖 resolved 一致性路径；
         # 与配置消融 #8（不允许 abstain）语义一致。
-        result = self._run(abstain_when_uncertain=False)
+        result = self._run(ABSTAIN_WHEN_UNCERTAIN=False)
         resolved = result["resolved_mask"]
         self.assertGreater(int(resolved.sum().item()), 0)
         # mem_label 候选 = refined_targets.argmax；必须 == context_labels
@@ -310,12 +337,13 @@ class PipelineTest(unittest.TestCase):
         feat, task_prob, clip_prob, true_label = make_separable()
         result = run_context_refinement(
             task_prob, clip_prob, feat, num_classes=8,
+            context_cfg=make_context_cfg(
+                USE_STRICT_CONFLICT=False, USE_WEAK_AGREEMENT=False
+            ),
             labels=true_label, sample_indices=torch.arange(feat.size(0)),
-            use_strict_conflict=False, use_weak_agreement=False,
-            anchors_per_class=8, transformer=DuetContextConflictTransformer(
+            transformer=DuetContextConflictTransformer(
                 feature_dim=32, num_classes=8, model_dim=32, num_heads=4, ffn_dim=64
             ),
-            eval_only_logging=False,
         )
         self.assertEqual(int(result["resolved_mask"].sum().item()), 0)
         self.assertEqual(int(result["weak_rejected_mask"].sum().item()), 0)
@@ -327,14 +355,13 @@ class PipelineTest(unittest.TestCase):
         logs = []
         result = run_context_refinement(
             task_prob, clip_prob, feat, num_classes=8,
+            context_cfg=make_context_cfg(EVAL_ONLY_LOGGING=True),
             pre_prior_task_probs=task_prob, pre_prior_clip_probs=clip_prob,
             labels=true_label, sample_indices=torch.arange(feat.size(0)),
-            anchors_per_class=8,
             transformer=DuetContextConflictTransformer(
                 feature_dim=32, num_classes=8, model_dim=32, num_heads=4, ffn_dim=64
             ),
-            optimizer=None, train_steps_per_cycle=0, seed=2020, cycle=2,
-            eval_only_logging=True, log_fn=logs.append,
+            optimizer=None, cycle=2, log_fn=logs.append,
         )
         stats = result["stats"]
         for key in (
@@ -349,9 +376,14 @@ class PipelineTest(unittest.TestCase):
             stats["post_prior_agreement"] - stats["weak_deferred"]
             + stats["resolved_strict"],
         )
+        self.assertEqual(
+            stats["anchor_bank_total"], sum(stats["anchor_per_class_counts"])
+        )
+        self.assertGreaterEqual(stats["anchor_count"], stats["anchor_bank_total"])
         joined = "\n".join(logs)
         self.assertIn("DUET context correction: cycle=2;", joined)
         self.assertIn("DUET context correction eval-only: cycle=2;", joined)
+        self.assertIn("anchor_candidates=", joined)
         self.assertIn("ground_truth_affects_training=False", joined)
 
     def test_controls_shapes_and_no_nan(self):
