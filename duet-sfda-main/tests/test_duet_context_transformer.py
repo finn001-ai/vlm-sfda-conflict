@@ -477,6 +477,8 @@ class ComparatorTest(unittest.TestCase):
         self.assertGreaterEqual(counts["clip_side"], 1)
         self.assertEqual(features.shape[1], 16)
         self.assertTrue(set(targets.tolist()) <= {0.0, 1.0})
+        # 回归：targets 必须和 features 同 device（GPU 训练时曾出现 CPU/GPU 不匹配）
+        self.assertEqual(targets.device, features.device)
         # 关键：证据里必须是“真 conflict”：
         #   Task 证据 Top1 = 候选 A（p_A > p_B），CLIP 证据 Top1 = 候选 B。
         # 否则就是名义 conflict（weak 概率里 A 仍领先）。

@@ -620,7 +620,11 @@ def build_synthetic_conflicts(
         )
     return (
         torch.stack(feature_rows),
-        torch.tensor(target_rows, dtype=torch.float32),
+        torch.tensor(
+            target_rows,
+            dtype=torch.float32,
+            device=feature_rows[0].device,
+        ),
         {"task_side": task_side, "clip_side": clip_side},
     )
 
@@ -651,6 +655,7 @@ def train_pairwise_comparator(
                 features.size(0), generator=generator, device=features.device
             )[:batch_size]
         logits = comparator(features[indices].detach())
+        targets = targets.to(logits.device)
         loss = F.cross_entropy(logits, targets[indices].detach().long())
         optimizer.zero_grad()
         loss.backward()
