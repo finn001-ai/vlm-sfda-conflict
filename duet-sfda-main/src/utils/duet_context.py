@@ -354,11 +354,16 @@ def _topk_mean_cosine_support(
 
     用 top-k 均值而不是 max，避免单个异常 anchor 撑高分。
     """
+    # 统一设备：anchor 特征可能在 GPU（bank），query 特征可能还在 CPU
+    # （obtain_label 里收集），先对齐到 query 的 device 再算。
+    query_feature = query_feature.detach().float()
+    class_features = class_features.detach().float().to(query_feature.device)
+    class_valid = class_valid.to(query_feature.device)
     valid_features = class_features[class_valid]
     if valid_features.numel() == 0:
         return 0.0, 0.0
-    query_norm = F.normalize(query_feature.detach().float().unsqueeze(0), dim=1)
-    anchor_norm = F.normalize(valid_features.detach().float(), dim=1)
+    query_norm = F.normalize(query_feature.unsqueeze(0), dim=1)
+    anchor_norm = F.normalize(valid_features, dim=1)
     similarities = (query_norm @ anchor_norm.t()).squeeze(0)
     k = min(int(topk), similarities.numel())
     return float(similarities.topk(k).values.mean().item()), 1.0
