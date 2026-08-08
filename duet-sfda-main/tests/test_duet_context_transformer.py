@@ -28,7 +28,6 @@ from src.utils.duet_context import (
     train_pairwise_comparator,
     train_context_transformer,
     _exclude_query_anchors,
-    _select_competitor,
     _zscore_filter,
 )
 
@@ -79,7 +78,6 @@ def make_context_cfg(**overrides):
         MIN_RUNNER_PROB=0.10,
         MAX_TOP1_MARGIN=0.60,
         COMPARATOR_GATE=0.15,
-        RUNNER_UP_FALLBACK=False,
         SOFT_ONLY_ADMISSION=False,
         DIST_MATCH_SYNTHETIC=False,
         DIST_MATCH_Z_MAX=1.5,
@@ -409,27 +407,87 @@ class PipelineTest(unittest.TestCase):
 class ComparatorTest(unittest.TestCase):
     """Pairwise conflict-resolution（REFINER_TYPE=comparator）测试。"""
 
-    def test_strong_flip_margin_rejects_decisive_flip(self):
-        """margin = p_B - p_A：B=0.98/A=0.01 的果断 flip 应被 MAX_TOP1_MARGIN
-        拦掉；B=0.42/A=0.31 的勉强 flip 才保留。"""
-        weak = torch.tensor([0.90, 0.05, 0.03, 0.02])
-        decisive = torch.tensor([0.01, 0.98, 0.005, 0.005])
-        self.assertIsNone(
-            _select_competitor(
-                weak, 0,
-                min_runner_prob=0.10, max_top1_margin=0.60,
-                strong_probabilities=decisive,
-            )
+    def _small_bank_pair(self, num_classes=6, dim=8):
+        task_bank = ClassBalancedAnchorBank(num_classes, 2, dim)
+        clip_bank = ClassBalancedAnchorBank(num_classes, 2, dim)
+        return task_bank, clip_bank
+
+    def test_same_view_conflict_cases(self):
+        """同 view：只有“一边保持 A、一边翻转”才造 synthetic 对；
+        both_flip / no_conflict 都丢弃。"""
+        num_classes, dim = 6, 8
+        n = 4
+        pool_labels = torch.tensor([0, 1, 2, 3])
+        pool_task = torch.zeros(n, num_classes)
+        pool_clip = torch.zeros(n, num_classes)
+        pool_feat = torch.randn(n, dim)
+        pool_clip_feat = torch.randn(n, dim)
+        # 同一 strong 视图下的 Task/CLIP 分布（各自归一化）
+        strong_task = torch.zeros(n, num_classes)
+        strong_clip = torch.zeros(n, num_classes)
+        strong_task[0] = torch.tensor([0.31, 0.42, 0.09, 0.06, 0.07, 0.05])  # 翻到1
+        strong_clip[0] = torch.tensor([0.45, 0.20, 0.12, 0.10, 0.08, 0.05])  # 保持0
+        strong_task[1] = torch.tensor([0.25, 0.40, 0.15, 0.08, 0.07, 0.05])  # 保持1
+        strong_clip[1] = torch.tensor([0.10, 0.31, 0.42, 0.08, 0.05, 0.04])  # 翻到2
+        strong_task[2] = torch.tensor([0.10, 0.15, 0.40, 0.15, 0.12, 0.08])  # 保持2
+        strong_clip[2] = torch.tensor([0.10, 0.15, 0.42, 0.15, 0.10, 0.08])  # 保持2
+        strong_task[3] = torch.tensor([0.35, 0.20, 0.15, 0.12, 0.10, 0.08])  # 翻到0
+        strong_clip[3] = torch.tensor([0.20, 0.35, 0.15, 0.12, 0.10, 0.08])  # 翻到1
+        task_bank, clip_bank = self._small_bank_pair(num_classes, dim)
+        task_bank.update(pool_feat, pool_labels, torch.ones(n))
+        clip_bank.update(pool_clip_feat, pool_labels, torch.ones(n))
+        features, targets, counts = build_synthetic_conflicts(
+            pool_labels,
+            pool_strong_task_probs=strong_task,
+            pool_strong_clip_probs=strong_clip,
+            pool_strong_task_features=pool_feat,
+            pool_strong_clip_features=pool_clip_feat,
+            task_bank=task_bank,
+            clip_bank=clip_bank,
+            min_runner_prob=0.10, max_top1_margin=0.60, sim_topk=2,
         )
-        borderline = torch.tensor([0.31, 0.42, 0.14, 0.13])
-        result = _select_competitor(
-            weak, 0,
-            min_runner_prob=0.10, max_top1_margin=0.60,
-            strong_probabilities=borderline,
+        self.assertEqual(counts["task_flip_only"], 1)
+        self.assertEqual(counts["clip_flip_only"], 1)
+        self.assertEqual(counts["both_flip"], 1)
+        self.assertEqual(counts["no_conflict"], 1)
+        self.assertEqual(counts["task_side"], 1)
+        self.assertEqual(counts["clip_side"], 1)
+        self.assertEqual(targets.tolist(), [1.0, 0.0])  # trust CLIP / trust Task
+        # 证据里必须是真 conflict：Task 证据 Top1=候选A，CLIP 证据 Top1=候选B
+        self.assertTrue((features[:, 0] > features[:, 1]).all())
+        self.assertTrue((features[:, 3] > features[:, 2]).all())
+        self.assertEqual(targets.device, features.device)
+
+    def test_same_view_decisive_flip_gated(self):
+        """同 view 下果断 flip（p_B - p_A 大）被 MAX_TOP1_MARGIN 拦掉。"""
+        num_classes, dim = 6, 8
+        n = 2
+        pool_labels = torch.tensor([0, 1])
+        pool_task = torch.zeros(n, num_classes)
+        pool_clip = torch.zeros(n, num_classes)
+        pool_feat = torch.randn(n, dim)
+        pool_clip_feat = torch.randn(n, dim)
+        strong_task = torch.zeros(n, num_classes)
+        strong_clip = torch.zeros(n, num_classes)
+        strong_task[0] = torch.tensor([0.01, 0.98, 0.002, 0.003, 0.003, 0.002])  # 果断翻到1
+        strong_clip[0] = torch.tensor([0.45, 0.20, 0.12, 0.10, 0.08, 0.05])  # 保持0
+        strong_task[1] = torch.tensor([0.42, 0.31, 0.09, 0.06, 0.07, 0.05])  # 勉强翻到0
+        strong_clip[1] = torch.tensor([0.10, 0.45, 0.15, 0.12, 0.10, 0.08])  # 保持1
+        task_bank, clip_bank = self._small_bank_pair(num_classes, dim)
+        task_bank.update(pool_feat, pool_labels, torch.ones(n))
+        clip_bank.update(pool_clip_feat, pool_labels, torch.ones(n))
+        _, _, counts = build_synthetic_conflicts(
+            pool_labels,
+            pool_strong_task_probs=strong_task,
+            pool_strong_clip_probs=strong_clip,
+            pool_strong_task_features=pool_feat,
+            pool_strong_clip_features=pool_clip_feat,
+            task_bank=task_bank,
+            clip_bank=clip_bank,
+            min_runner_prob=0.10, max_top1_margin=0.60, sim_topk=2,
         )
-        self.assertIsNotNone(result)
-        self.assertEqual(result[0], 1)
-        self.assertTrue(result[2])
+        self.assertEqual(counts["task_flip_only"], 2)
+        self.assertEqual(counts["task_side"], 1)  # 果断 flip 被 gate 掉
 
     def test_zscore_filter(self):
         reference = torch.tensor(
@@ -506,96 +564,6 @@ class ComparatorTest(unittest.TestCase):
         self.assertTrue((features[:, 13] == 0).all())
         self.assertTrue((features[:, 15] == 0).all())
 
-    def test_synthetic_conflicts_flip_preferred_and_gated(self):
-        """strong flip 优先；runner-up 太弱则跳过。"""
-        torch.manual_seed(0)
-        num_classes, dim = 4, 8
-        # 两个 anchor：class 0 和 class 1
-        pool_task = torch.zeros(2, num_classes)
-        pool_clip = torch.zeros(2, num_classes)
-        pool_task[0, 0] = 0.97
-        pool_task[0, 1] = 0.01  # 弱 runner-up，不加 strong 会被 gate 掉
-        pool_task[0, 2:] = 0.01
-        pool_clip[0] = pool_task[0]
-        pool_task[1, 1] = 0.55
-        pool_task[1, 2] = 0.25  # 较强 runner-up
-        pool_task[1, 0] = 0.10
-        pool_task[1, 3] = 0.10
-        pool_clip[1] = pool_task[1]
-        pool_feat = torch.randn(2, dim)
-        pool_clip_feat = torch.randn(2, dim)
-        pool_labels = torch.tensor([0, 1])
-        # strong flip：anchor 0 的 Task 在强视图下翻到 class 1（p=0.4）
-        strong_task = torch.zeros(2, num_classes)
-        strong_task[0, 1] = 0.40
-        strong_task[0, 0] = 0.35
-        strong_task[0, 2:] = 0.125
-        strong_task[1] = pool_task[1]
-        # strong flip：anchor 1 的 CLIP 在强视图下翻到 class 2（p=0.4）
-        strong_clip = torch.zeros(2, num_classes)
-        strong_clip[0] = pool_clip[0]
-        strong_clip[1, 2] = 0.40
-        strong_clip[1, 1] = 0.35
-        strong_clip[1, 0] = 0.15
-        strong_clip[1, 3] = 0.10
-
-        task_bank = ClassBalancedAnchorBank(num_classes, 2, dim)
-        clip_bank = ClassBalancedAnchorBank(num_classes, 2, dim)
-        task_bank.update(pool_feat, pool_labels, torch.ones(2))
-        clip_bank.update(pool_clip_feat, pool_labels, torch.ones(2))
-
-        features, targets, counts = build_synthetic_conflicts(
-            pool_task, pool_clip, pool_feat, pool_clip_feat, pool_labels,
-            task_bank, clip_bank,
-            min_runner_prob=0.10, max_top1_margin=0.60, sim_topk=2,
-            pool_strong_task_probs=strong_task, pool_strong_clip_probs=strong_clip,
-        )
-        self.assertGreaterEqual(counts["task_side"], 1)
-        self.assertGreaterEqual(counts["clip_side"], 1)
-        self.assertEqual(features.shape[1], 16)
-        self.assertTrue(set(targets.tolist()) <= {0.0, 1.0})
-        # 回归：targets 必须和 features 同 device（GPU 训练时曾出现 CPU/GPU 不匹配）
-        self.assertEqual(targets.device, features.device)
-        # 关键：证据里必须是“真 conflict”：
-        #   Task 证据 Top1 = 候选 A（p_A > p_B），CLIP 证据 Top1 = 候选 B。
-        # 否则就是名义 conflict（weak 概率里 A 仍领先）。
-        self.assertTrue((features[:, 0] > features[:, 1]).all())
-        self.assertTrue((features[:, 3] > features[:, 2]).all())
-
-    def test_runner_up_fallback_swaps_evidence(self):
-        """无 flip 且开 RUNNER_UP_FALLBACK 时，用交换 A/B 的证据造对，
-        特征里同样必须呈现真 conflict。"""
-        num_classes, dim = 4, 8
-        pool_task = torch.zeros(2, num_classes)
-        pool_clip = torch.zeros(2, num_classes)
-        # weak Task: A=0.62, B=0.30 → 交换后 B 领先
-        pool_task[0, 0] = 0.62
-        pool_task[0, 1] = 0.30
-        pool_task[0, 2:] = 0.04
-        pool_task[1, 1] = 0.60
-        pool_task[1, 2] = 0.30
-        pool_task[1, 0] = 0.05
-        pool_task[1, 3] = 0.05
-        pool_clip = pool_task.clone()
-        pool_feat = torch.randn(2, dim)
-        pool_clip_feat = torch.randn(2, dim)
-        pool_labels = torch.tensor([0, 1])
-        task_bank = ClassBalancedAnchorBank(num_classes, 2, dim)
-        clip_bank = ClassBalancedAnchorBank(num_classes, 2, dim)
-        task_bank.update(pool_feat, pool_labels, torch.ones(2))
-        clip_bank.update(pool_clip_feat, pool_labels, torch.ones(2))
-        features, targets, counts = build_synthetic_conflicts(
-            pool_task, pool_clip, pool_feat, pool_clip_feat, pool_labels,
-            task_bank, clip_bank,
-            min_runner_prob=0.10, max_top1_margin=0.60, sim_topk=2,
-            pool_strong_task_probs=None, pool_strong_clip_probs=None,
-            use_runner_up_fallback=True,
-        )
-        self.assertGreaterEqual(counts["task_side"], 1)
-        self.assertGreaterEqual(counts["clip_side"], 1)
-        self.assertTrue((features[:, 0] > features[:, 1]).all())
-        self.assertTrue((features[:, 3] > features[:, 2]).all())
-
     def test_training_reduces_loss(self):
         model = PairwiseConflictComparator(input_dim=16, hidden=16, layers=2)
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
@@ -646,6 +614,7 @@ class ComparatorTest(unittest.TestCase):
             labels=true_label, sample_indices=torch.arange(n),
             clip_features=clip_feat,
             strong_task_probs=strong_task, strong_clip_probs=strong_clip,
+            strong_task_features=feat, strong_clip_features=clip_feat,
             comparator=model, comparator_optimizer=optimizer,
             cycle=2, log_fn=logs.append,
         )
@@ -698,6 +667,7 @@ class ComparatorTest(unittest.TestCase):
             labels=true_label, sample_indices=torch.arange(n),
             clip_features=clip_feat,
             strong_task_probs=strong_task, strong_clip_probs=strong_clip,
+            strong_task_features=feat, strong_clip_features=clip_feat,
             comparator=model, comparator_optimizer=optimizer,
             cycle=2, log_fn=logs.append,
         )
@@ -825,15 +795,17 @@ class MethodFileContractTest(unittest.TestCase):
         self.assertIn("DUET context soft-only", source)
         self.assertIn("hard_admission=0", source)
 
-    def test_strong_feature_collection_removed(self):
-        """Regression: 之前 obtain_label 里 collect_features=True 而
-        collect_strong=False 会 UnboundLocalError；清理后 obtain_label 不再
-        收集 strong 特征。注意：内部训练循环的 strong_x 一致性仍在。"""
+    def test_strong_feature_collection_guarded_by_comparator_mode(self):
+        """Regression：旧版 collect_strong 未定义就引用 strong_feas 的
+        UnboundLocalError 已不存在；comparator 模式会在 comparator_mode
+        保护下收集 strong 视图的 Task/CLIP feature（同 view synthetic 需要）。"""
         fn = self._function("obtain_label")
         body = ast.unparse(fn)
         self.assertNotIn("all_strong_features", body)
-        self.assertNotIn("strong_feas", body)
         self.assertNotIn("collect_strong", body)
+        self.assertIn("all_strong_task_features", body)
+        self.assertIn("all_strong_clip_features", body)
+        self.assertIn("strong_task_feature", body)
 
     def test_no_modification_of_original_files(self):
         for name in ("plmatch.py", "plmatch_clean.py", "duet_first_cycle_prior.py"):

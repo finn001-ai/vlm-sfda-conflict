@@ -379,9 +379,6 @@ _C.DUET_CONTEXT.MIN_RUNNER_PROB = 0.10
 _C.DUET_CONTEXT.MAX_TOP1_MARGIN = 0.60
 # abstain 门槛：|trust_task - trust_clip| < COMPARATOR_GATE 时 abstain。
 _C.DUET_CONTEXT.COMPARATOR_GATE = 0.20
-# v1 只使用 strong augmentation 真实 flip 造 synthetic conflict；
-# 置 True 时允许在无 flip 的情况下退化为“交换该分支 A/B 概率”的 runner-up。
-_C.DUET_CONTEXT.RUNNER_UP_FALLBACK = False
 # soft-only 消融：comparator 的 resolved 决策只用于 KL soft target
 # （refined_targets / kl_soft），不再执行 label_mask |= resolved_mask，
 # 即不产生新的 hard pseudo-label。用于验证 arbitration 信号本身有没有价值。

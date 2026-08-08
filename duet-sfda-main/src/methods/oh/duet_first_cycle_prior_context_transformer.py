@@ -662,8 +662,11 @@ def obtain_label(
             if comparator_mode:
                 clip_image_feature = clip_model.encode_image(weak_x).float().cpu()
                 strong_x = inputs_test[2].cuda()
-                strong_task_outputs = netC(netB(netF(strong_x)))
+                strong_feas = netB(netF(strong_x))
+                strong_task_outputs = netC(strong_feas)
+                strong_task_feature = strong_feas.float().cpu()
                 strong_clip_logits, _ = clip_model(strong_x, text_inputs)
+                strong_clip_feature = clip_model.encode_image(strong_x).float().cpu()
                 strong_task_outputs = strong_task_outputs.float().cpu()
                 strong_clip_logits = strong_clip_logits.float().cpu()
 
@@ -678,6 +681,8 @@ def obtain_label(
                     all_clip_features = clip_image_feature
                     all_strong_task_outputs = strong_task_outputs
                     all_strong_clip_outputs = strong_clip_logits
+                    all_strong_task_features = strong_task_feature
+                    all_strong_clip_features = strong_clip_feature
                 start_test = False
             else:
                 all_output = torch.cat((all_output, weak_outputs.float().cpu()), 0)
@@ -699,6 +704,12 @@ def obtain_label(
                     )
                     all_strong_clip_outputs = torch.cat(
                         (all_strong_clip_outputs, strong_clip_logits), 0
+                    )
+                    all_strong_task_features = torch.cat(
+                        (all_strong_task_features, strong_task_feature), 0
+                    )
+                    all_strong_clip_features = torch.cat(
+                        (all_strong_clip_features, strong_clip_feature), 0
                     )
 
     all_output = nn.Softmax(dim=1)(all_output)
@@ -757,6 +768,12 @@ def obtain_label(
                 nn.Softmax(dim=1)(all_strong_clip_outputs)
                 if comparator_mode
                 else None
+            ),
+            strong_task_features=(
+                all_strong_task_features if comparator_mode else None
+            ),
+            strong_clip_features=(
+                all_strong_clip_features if comparator_mode else None
             ),
             comparator=(comparator if comparator_mode else None),
             comparator_optimizer=(

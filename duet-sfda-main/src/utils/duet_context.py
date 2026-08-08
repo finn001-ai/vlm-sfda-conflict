@@ -543,87 +543,45 @@ def build_comparator_features(
     return features
 
 
-def _select_competitor(
-    probabilities: torch.Tensor,
-    anchor_label: int,
-    *,
-    min_runner_prob: float,
-    max_top1_margin: float,
-    strong_probabilities: Optional[torch.Tensor] = None,
-    use_runner_up_fallback: bool = False,
-) -> Optional[tuple[int, torch.Tensor, bool]]:
-    """为该分支选 synthetic conflict 的对手类 B，并返回真正“会冲突”的证据。
-
-    返回 (competitor, evidence_probs, used_strong)：
-    - evidence_probs 是构造特征时该分支应使用的概率：
-      * strong 视图真的发生 Top1 flip → 用 strong 概率（v1 默认只走这条）；
-      * 否则如果开了 RUNNER_UP_FALLBACK → 用 weak 概率并交换 A/B，
-        使该分支证据里 B 真的变成 Top1（不再是“名义冲突”）；
-    - 两者都要满足 p_B >= MIN_RUNNER_PROB 且 Top1/Top2 margin <= MAX_TOP1_MARGIN。
-    """
-    if strong_probabilities is not None:
-        strong_top1 = int(strong_probabilities.argmax().item())
-        if strong_top1 != anchor_label:
-            p_b = float(strong_probabilities[strong_top1].item())
-            # flip 的“果断程度”：B 领先 A 多少。之前写成 A-B 会导致
-            # B=0.98/A=0.01 时 margin=-0.97 恒过门槛，把过分自信的 flip
-            # 也放进来；改成 B-A 后，果断 flip 会被 MAX_TOP1_MARGIN 拦掉。
-            margin = float(
-                (strong_probabilities[strong_top1] - strong_probabilities[anchor_label]).item()
-            )
-            if p_b >= min_runner_prob and margin <= max_top1_margin:
-                return strong_top1, strong_probabilities, True
-    if use_runner_up_fallback:
-        competitor = int(probabilities.argmax().item())
-        if competitor == anchor_label:
-            narrowed = probabilities.clone()
-            narrowed[anchor_label] = float("-inf")
-            competitor = int(narrowed.argmax().item())
-        p_b = float(probabilities[competitor].item())
-        margin = float((probabilities[anchor_label] - probabilities[competitor]).item())
-        if p_b < min_runner_prob or margin > max_top1_margin:
-            return None
-        # 交换 A/B 概率：该分支证据里 B 成为 Top1，避免“名义 conflict”。
-        evidence = probabilities.clone()
-        value_a = float(evidence[anchor_label].item())
-        value_b = float(evidence[competitor].item())
-        evidence[anchor_label] = value_b
-        evidence[competitor] = value_a
-        return competitor, evidence, False
-    return None
-
-
 def build_synthetic_conflicts(
-    pool_task_probs: torch.Tensor,
-    pool_clip_probs: torch.Tensor,
-    pool_task_features: torch.Tensor,
-    pool_clip_features: torch.Tensor,
     pool_labels: torch.Tensor,
+    pool_strong_task_probs: torch.Tensor,
+    pool_strong_clip_probs: torch.Tensor,
+    pool_strong_task_features: torch.Tensor,
+    pool_strong_clip_features: torch.Tensor,
     task_bank: ClassBalancedAnchorBank,
     clip_bank: ClassBalancedAnchorBank,
     *,
     min_runner_prob: float,
     max_top1_margin: float,
     sim_topk: int,
-    pool_strong_task_probs: Optional[torch.Tensor] = None,
-    pool_strong_clip_probs: Optional[torch.Tensor] = None,
-    use_runner_up_fallback: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor, dict]:
-    """从 bank 的 anchor 池构造两类 synthetic conflict。
+    """同 view synthetic conflict：同一张 strong 增广图上 Task/CLIP 的 disagreement。
 
-    每个可靠 anchor (Task=A, CLIP=A) 最多造两对：
-      - Task 侧错：Task 证据 = strong Task（或交换 A/B 的 weak Task），
-        候选 A=B_task, B=A，target=trust CLIP(1)；
-      - CLIP 侧错：CLIP 证据 = strong CLIP（或交换 A/B 的 weak CLIP），
-        候选 A=A, B=B_clip，target=trust Task(0)。
-    只有通过 hard-gate 的才保留，避免 car-vs-toothbrush 这种假样本。
-    关键：证据概率必须是“真的让该分支 Top1=B”的分布，否则就成了
-    名义 conflict（weak 概率里 A 仍然领先），训练和推理会错位。
+    高可信 weak consensus (Task=A, CLIP=A) 之后，只看同一 strong 视图：
+      - Task(strong)=B, CLIP(strong)=A  → synthetic conflict，target=trust CLIP(1)
+      - Task(strong)=A, CLIP(strong)=B  → synthetic conflict，target=trust Task(0)
+      - 两边都保持 A                    → 没有 conflict，丢弃
+      - 两边都离开 A（B≠C）             → 无法确定谁保持了原标签，丢弃
+    16 维证据全部来自同一 strong 视图：概率 = strong probs，
+    anchor similarity = strong feature vs anchor bank（bank 仍是 weak-view
+    特征库，与推理时一致）。flip 需要过 hard-gate（MIN_RUNNER_PROB /
+    MAX_TOP1_MARGIN，margin = p_B - p_A）。
     """
+    if pool_strong_task_probs is None or pool_strong_clip_probs is None:
+        raise ValueError("same-view synthetic conflicts require strong Task/CLIP probs")
+    if pool_strong_task_features is None or pool_strong_clip_features is None:
+        raise ValueError(
+            "same-view synthetic conflicts require strong Task/CLIP features"
+        )
     feature_rows = []
     target_rows = []
     task_side = 0
     clip_side = 0
+    task_flip_only = 0
+    clip_flip_only = 0
+    both_flip = 0
+    no_conflict = 0
     # 用全部 anchor 候选（不是 top-8 bank）造 synthetic 对：top-8 的 anchor
     # 太“容易”，augmentation 几乎不会把它们翻错，翻错/强 runner-up 更多
     # 出现在置信度稍低的候选里，那才是像真实 conflict 的 hard disagreement。
@@ -631,69 +589,73 @@ def build_synthetic_conflicts(
         anchor_label = int(pool_labels[pool_id].item())
         if anchor_label < 0:
             continue
-        # Task 侧 synthetic conflict：Task 错成 B，CLIP 坚持 A
-        competitor_task = _select_competitor(
-            pool_task_probs[pool_id],
-            anchor_label,
-            min_runner_prob=min_runner_prob,
-            max_top1_margin=max_top1_margin,
-            strong_probabilities=(
-                pool_strong_task_probs[pool_id]
-                if pool_strong_task_probs is not None
-                else None
-            ),
-            use_runner_up_fallback=use_runner_up_fallback,
-        )
-        if competitor_task is not None:
-            b_task, task_evidence, _used_strong = competitor_task
+        strong_task = pool_strong_task_probs[pool_id]
+        strong_clip = pool_strong_clip_probs[pool_id]
+        task_top1 = int(strong_task.argmax().item())
+        clip_top1 = int(strong_clip.argmax().item())
+        task_flipped = task_top1 != anchor_label
+        clip_flipped = clip_top1 != anchor_label
+        if task_flipped and not clip_flipped:
+            # 同一 strong 视图：Task 翻到 B，CLIP 保持 A → trust CLIP
+            task_flip_only += 1
+            p_b = float(strong_task[task_top1].item())
+            p_a = float(strong_task[anchor_label].item())
+            margin = p_b - p_a
+            if p_b < min_runner_prob or margin > max_top1_margin:
+                continue
             features = build_comparator_features(
-                task_evidence.unsqueeze(0),
-                pool_clip_probs[pool_id : pool_id + 1],
-                pool_task_features[pool_id : pool_id + 1],
-                pool_clip_features[pool_id : pool_id + 1],
+                strong_task.unsqueeze(0),
+                strong_clip.unsqueeze(0),
+                pool_strong_task_features[pool_id : pool_id + 1],
+                pool_strong_clip_features[pool_id : pool_id + 1],
                 task_bank,
                 clip_bank,
-                class_a=torch.tensor([b_task]),
+                class_a=torch.tensor([task_top1]),
                 class_b=torch.tensor([anchor_label]),
                 sim_topk=sim_topk,
             )
             feature_rows.append(features[0])
             target_rows.append(1.0)  # trust CLIP
             task_side += 1
-            # CLIP 侧 synthetic conflict：CLIP 错成 B，Task 坚持 A
-        competitor_clip = _select_competitor(
-            pool_clip_probs[pool_id],
-            anchor_label,
-            min_runner_prob=min_runner_prob,
-            max_top1_margin=max_top1_margin,
-            strong_probabilities=(
-                pool_strong_clip_probs[pool_id]
-                if pool_strong_clip_probs is not None
-                else None
-            ),
-            use_runner_up_fallback=use_runner_up_fallback,
-        )
-        if competitor_clip is not None:
-            b_clip, clip_evidence, _used_strong = competitor_clip
+        elif clip_flipped and not task_flipped:
+            # 同一 strong 视图：CLIP 翻到 B，Task 保持 A → trust Task
+            clip_flip_only += 1
+            p_b = float(strong_clip[clip_top1].item())
+            p_a = float(strong_clip[anchor_label].item())
+            margin = p_b - p_a
+            if p_b < min_runner_prob or margin > max_top1_margin:
+                continue
             features = build_comparator_features(
-                pool_task_probs[pool_id : pool_id + 1],
-                clip_evidence.unsqueeze(0),
-                pool_task_features[pool_id : pool_id + 1],
-                pool_clip_features[pool_id : pool_id + 1],
+                strong_task.unsqueeze(0),
+                strong_clip.unsqueeze(0),
+                pool_strong_task_features[pool_id : pool_id + 1],
+                pool_strong_clip_features[pool_id : pool_id + 1],
                 task_bank,
                 clip_bank,
                 class_a=torch.tensor([anchor_label]),
-                class_b=torch.tensor([b_clip]),
+                class_b=torch.tensor([clip_top1]),
                 sim_topk=sim_topk,
             )
             feature_rows.append(features[0])
             target_rows.append(0.0)  # trust Task
             clip_side += 1
+        elif task_flipped and clip_flipped:
+            both_flip += 1
+        else:
+            no_conflict += 1
+    counts = {
+        "task_flip_only": task_flip_only,
+        "clip_flip_only": clip_flip_only,
+        "both_flip": both_flip,
+        "no_conflict": no_conflict,
+        "task_side": task_side,
+        "clip_side": clip_side,
+    }
     if not feature_rows:
         return (
             torch.zeros(0, 16, dtype=torch.float32),
             torch.zeros(0, dtype=torch.float32),
-            {"task_side": 0, "clip_side": 0},
+            counts,
         )
     return (
         torch.stack(feature_rows),
@@ -702,7 +664,7 @@ def build_synthetic_conflicts(
             dtype=torch.float32,
             device=feature_rows[0].device,
         ),
-        {"task_side": task_side, "clip_side": clip_side},
+        counts,
     )
 
 
@@ -945,6 +907,8 @@ def run_context_refinement(
     clip_features: Optional[torch.Tensor] = None,
     strong_task_probs: Optional[torch.Tensor] = None,
     strong_clip_probs: Optional[torch.Tensor] = None,
+    strong_task_features: Optional[torch.Tensor] = None,
+    strong_clip_features: Optional[torch.Tensor] = None,
     comparator: Optional[PairwiseConflictComparator] = None,
     comparator_optimizer: Optional[torch.optim.Optimizer] = None,
     cycle: int = 1,
@@ -970,6 +934,8 @@ def run_context_refinement(
             clip_features=clip_features,
             strong_task_probs=strong_task_probs,
             strong_clip_probs=strong_clip_probs,
+            strong_task_features=strong_task_features,
+            strong_clip_features=strong_clip_features,
             pre_prior_task_probs=pre_prior_task_probs,
             pre_prior_clip_probs=pre_prior_clip_probs,
             labels=labels,
@@ -1335,6 +1301,8 @@ def run_comparator_refinement(
     sample_indices: Optional[torch.Tensor] = None,
     strong_task_probs: Optional[torch.Tensor] = None,
     strong_clip_probs: Optional[torch.Tensor] = None,
+    strong_task_features: Optional[torch.Tensor] = None,
+    strong_clip_features: Optional[torch.Tensor] = None,
     comparator: Optional[PairwiseConflictComparator] = None,
     comparator_optimizer: Optional[torch.optim.Optimizer] = None,
     cycle: int = 1,
@@ -1363,9 +1331,6 @@ def run_comparator_refinement(
     min_runner_prob = float(getattr(context_cfg, "MIN_RUNNER_PROB", 0.10))
     max_top1_margin = float(getattr(context_cfg, "MAX_TOP1_MARGIN", 0.60))
     gate = float(getattr(context_cfg, "COMPARATOR_GATE", 0.20))
-    use_runner_up_fallback = bool(
-        getattr(context_cfg, "RUNNER_UP_FALLBACK", False)
-    )
     dist_match_synthetic = bool(
         getattr(context_cfg, "DIST_MATCH_SYNTHETIC", False)
     )
@@ -1468,6 +1433,16 @@ def run_comparator_refinement(
             if strong_clip_probs is not None
             else None
         )
+        pool_strong_task_features = (
+            strong_task_features[anchor_mask].detach().to(device)
+            if strong_task_features is not None
+            else None
+        )
+        pool_strong_clip_features = (
+            strong_clip_features[anchor_mask].detach().to(device)
+            if strong_clip_features is not None
+            else None
+        )
 
         task_bank = ClassBalancedAnchorBank(
             num_classes=num_classes,
@@ -1501,19 +1476,27 @@ def run_comparator_refinement(
         stats["anchor_mean_clip_conf"] = float(clip_conf[anchor_mask].mean().item())
 
         synthetic_features, synthetic_targets, synthetic_counts = build_synthetic_conflicts(
-            pool_task_probs,
-            pool_clip_probs,
-            pool_task_features,
-            pool_clip_features,
             pool_labels,
-            task_bank,
-            clip_bank,
+            pool_strong_task_probs=pool_strong_task,
+            pool_strong_clip_probs=pool_strong_clip,
+            pool_strong_task_features=pool_strong_task_features,
+            pool_strong_clip_features=pool_strong_clip_features,
+            task_bank=task_bank,
+            clip_bank=clip_bank,
             min_runner_prob=min_runner_prob,
             max_top1_margin=max_top1_margin,
             sim_topk=sim_topk,
-            pool_strong_task_probs=pool_strong_task,
-            pool_strong_clip_probs=pool_strong_clip,
-            use_runner_up_fallback=use_runner_up_fallback,
+        )
+        log_fn(
+            "DUET comparator strong conflict counts: cycle={}; "
+            "task_flip_only={}; clip_flip_only={}; both_flip={}; "
+            "no_conflict={}; ground_truth_affects_training=False".format(
+                cycle,
+                synthetic_counts["task_flip_only"],
+                synthetic_counts["clip_flip_only"],
+                synthetic_counts["both_flip"],
+                synthetic_counts["no_conflict"],
+            )
         )
         log_fn(
             "DUET comparator synthetic conflicts: cycle={}; task_side={}; "
@@ -1585,6 +1568,35 @@ def run_comparator_refinement(
             )
             keep[trust_task_mask] = keep_task
             keep[trust_clip_mask] = keep_clip
+            # 训练前强制两侧数量平衡：下采样多的一侧到 min 数，
+            # 避免 trust Task / trust CLIP 比例失衡导致方向坍缩。
+            task_kept_positions = torch.nonzero(
+                keep & trust_task_mask, as_tuple=False
+            ).flatten()
+            clip_kept_positions = torch.nonzero(
+                keep & trust_clip_mask, as_tuple=False
+            ).flatten()
+            balance_n = min(
+                task_kept_positions.numel(), clip_kept_positions.numel()
+            )
+            balanced_keep = torch.zeros_like(keep)
+            if balance_n > 0:
+                # 固定 seed 的随机下采样，避免顺序/类别偏差
+                balance_generator = torch.Generator(device=match_device)
+                balance_generator.manual_seed(int(seed))
+                task_perm = torch.randperm(
+                    task_kept_positions.numel(),
+                    generator=balance_generator,
+                    device=match_device,
+                )
+                clip_perm = torch.randperm(
+                    clip_kept_positions.numel(),
+                    generator=balance_generator,
+                    device=match_device,
+                )
+                balanced_keep[task_kept_positions[task_perm[:balance_n]]] = True
+                balanced_keep[clip_kept_positions[clip_perm[:balance_n]]] = True
+            keep = balanced_keep
             kept = int(keep.sum().item())
             kept_trust_task = int((keep & trust_task_mask).sum().item())
             kept_trust_clip = int((keep & trust_clip_mask).sum().item())
@@ -1592,7 +1604,7 @@ def run_comparator_refinement(
                 "DUET comparator dist-match: cycle={}; synthetic_total={}; "
                 "kept={}; kept_rate={:.2f}%; z_max={:.2f}; dims={}; "
                 "before_trust_task={}; before_trust_clip={}; "
-                "kept_trust_task={}; kept_trust_clip={}; "
+                "kept_trust_task={}; kept_trust_clip={}; balanced=True; "
                 "mode_task={}; mode_clip={}; min_kept={}; "
                 "ground_truth_affects_training=False".format(
                     cycle,
