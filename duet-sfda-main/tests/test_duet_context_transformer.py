@@ -28,6 +28,8 @@ from src.utils.duet_context import (
     train_pairwise_comparator,
     train_context_transformer,
     _exclude_query_anchors,
+    _select_competitor,
+    _zscore_filter,
 )
 
 
@@ -79,6 +81,10 @@ def make_context_cfg(**overrides):
         COMPARATOR_GATE=0.15,
         RUNNER_UP_FALLBACK=False,
         SOFT_ONLY_ADMISSION=False,
+        DIST_MATCH_SYNTHETIC=False,
+        DIST_MATCH_Z_MAX=1.5,
+        DIST_MATCH_DIMS=[4, 5, 6, 7],
+        MIN_DIST_MATCH_KEPT=16,
     )
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -403,6 +409,76 @@ class PipelineTest(unittest.TestCase):
 class ComparatorTest(unittest.TestCase):
     """Pairwise conflict-resolution（REFINER_TYPE=comparator）测试。"""
 
+    def test_strong_flip_margin_rejects_decisive_flip(self):
+        """margin = p_B - p_A：B=0.98/A=0.01 的果断 flip 应被 MAX_TOP1_MARGIN
+        拦掉；B=0.42/A=0.31 的勉强 flip 才保留。"""
+        weak = torch.tensor([0.90, 0.05, 0.03, 0.02])
+        decisive = torch.tensor([0.01, 0.98, 0.005, 0.005])
+        self.assertIsNone(
+            _select_competitor(
+                weak, 0,
+                min_runner_prob=0.10, max_top1_margin=0.60,
+                strong_probabilities=decisive,
+            )
+        )
+        borderline = torch.tensor([0.31, 0.42, 0.14, 0.13])
+        result = _select_competitor(
+            weak, 0,
+            min_runner_prob=0.10, max_top1_margin=0.60,
+            strong_probabilities=borderline,
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result[0], 1)
+        self.assertTrue(result[2])
+
+    def test_zscore_filter(self):
+        reference = torch.tensor(
+            [
+                [0.4, 0.1, 0.1, 0.6, 2.0, 1.0, 0.3, 0.5, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0.3, 0.1, 0.1, 0.7, 2.5, 1.2, 0.2, 0.4, 0, 0, 0, 0, 0, 0, 0, 0],
+            ]
+        )
+        features = torch.tensor(
+            [
+                [0.35, 0.1, 0.1, 0.65, 2.2, 1.1, 0.25, 0.45, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0.90, 0.01, 0.01, 0.95, 0.3, 0.3, 0.85, 0.85, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0.20, 0.1, 0.1, 0.80, 3.5, 1.5, 0.1, 0.2, 0, 0, 0, 0, 0, 0, 0, 0],
+            ]
+        )
+        keep, used_fallback = _zscore_filter(
+            features, reference, [0, 4, 6], z_max=1.5, min_kept=1
+        )
+        # 第一行贴近 reference；第二行 p_task_A=0.90 太自信；第三行熵 3.5 太极端
+        self.assertEqual(keep.tolist(), [True, False, False])
+        self.assertFalse(used_fallback)
+
+    def test_zscore_filter_zero_variance(self):
+        reference = torch.zeros(3, 16)
+        features = torch.zeros(2, 16)
+        keep, used_fallback = _zscore_filter(
+            features, reference, [0, 1], z_max=1.5, min_kept=1
+        )
+        self.assertEqual(keep.tolist(), [True, True])
+        self.assertFalse(used_fallback)
+
+    def test_zscore_filter_fallback_keeps_closest(self):
+        reference = torch.tensor(
+            [[0.4, 0.1, 0.1, 0.6, 2.0, 1.0, 0.3, 0.5, 0, 0, 0, 0, 0, 0, 0, 0]] * 3
+        )
+        features = torch.tensor(
+            [
+                [0.90, 0.01, 0.01, 0.95, 0.3, 0.3, 0.85, 0.85, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0.88, 0.01, 0.01, 0.92, 0.4, 0.4, 0.80, 0.80, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0.95, 0.01, 0.01, 0.96, 0.2, 0.2, 0.90, 0.90, 0, 0, 0, 0, 0, 0, 0, 0],
+            ]
+        )
+        keep, used_fallback = _zscore_filter(
+            features, reference, [0, 4, 6], z_max=1.0, min_kept=2
+        )
+        self.assertTrue(used_fallback)
+        # 保留 mean|z| 最小的 2 个（第 1、2 行比第 3 行更接近 reference）
+        self.assertEqual(keep.tolist(), [True, True, False])
+
     def test_forward_shape_two_way(self):
         model = PairwiseConflictComparator(input_dim=16, hidden=16, layers=2)
         logits = model(torch.randn(5, 16))
@@ -594,6 +670,46 @@ class ComparatorTest(unittest.TestCase):
         self.assertTrue(
             any("DUET comparator synthetic distribution" in line for line in logs)
         )
+
+    def test_dist_match_integration(self):
+        """distribution matching 开启后：日志出现、kept 不超过 total、
+        管线照常跑通（可能全部被滤掉也不报错）。"""
+        torch.manual_seed(2)
+        n, c, d = 512, 8, 32
+        feat = torch.randn(n, d)
+        proto = torch.randn(c, d)
+        sim = feat @ proto.t()
+        task_prob = torch.softmax(sim * 3.0 + torch.randn(n, c) * 0.2, dim=1)
+        clip_prob = torch.softmax(sim * 2.8 + torch.randn(n, c) * 0.4, dim=1)
+        clip_feat = torch.randn(n, d)
+        true_label = sim.argmax(dim=1)
+        strong_task = torch.softmax(sim * 1.5 + torch.randn(n, c) * 0.7, dim=1)
+        strong_clip = torch.softmax(sim * 1.3 + torch.randn(n, c) * 0.8, dim=1)
+        model = PairwiseConflictComparator(input_dim=16, hidden=32, layers=2)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        logs = []
+        run_context_refinement(
+            task_prob, clip_prob, feat, num_classes=c,
+            context_cfg=make_context_cfg(
+                REFINER_TYPE="comparator", TRAIN_STEPS_PER_CYCLE=30,
+                COMPARATOR_GATE=0.15, DIST_MATCH_SYNTHETIC=True,
+            ),
+            pre_prior_task_probs=task_prob, pre_prior_clip_probs=clip_prob,
+            labels=true_label, sample_indices=torch.arange(n),
+            clip_features=clip_feat,
+            strong_task_probs=strong_task, strong_clip_probs=strong_clip,
+            comparator=model, comparator_optimizer=optimizer,
+            cycle=2, log_fn=logs.append,
+        )
+        match_lines = [line for line in logs if "DUET comparator dist-match" in line]
+        self.assertEqual(len(match_lines), 1)
+        self.assertIn("synthetic_total=", match_lines[0])
+        self.assertIn("kept=", match_lines[0])
+        self.assertIn("before_trust_task=", match_lines[0])
+        self.assertIn("before_trust_clip=", match_lines[0])
+        self.assertIn("kept_trust_task=", match_lines[0])
+        self.assertIn("kept_trust_clip=", match_lines[0])
+        self.assertIn("ground_truth_affects_training=False", match_lines[0])
 
     def test_controls_shapes_and_no_nan(self):
         feat, task_prob, clip_prob, true_label = make_separable(n=256, num_classes=6, feature_dim=24)

@@ -404,6 +404,40 @@ def _log_pair_distribution(
     )
 
 
+def _zscore_filter(
+    features: torch.Tensor,
+    reference: torch.Tensor,
+    dims: list,
+    z_max: float,
+    min_kept: int = 16,
+) -> tuple[torch.Tensor, bool]:
+    """按 reference（真实 conflict）的分布，过滤 synthetic 特征池。
+
+    对指定维度逐维算 z-score，要求所有匹配维度的 |z| <= z_max；
+    维度方差为 0 时视为完全匹配（z=0）。
+    命中数不足 ``min_kept`` 且池子够大时，退化为保留 mean|z| 最小的
+    ``min_kept`` 个样本，保证始终有训练数据。
+    """
+    if features.numel() == 0 or reference.numel() == 0:
+        return torch.zeros(features.size(0), dtype=torch.bool), False
+    features = features.float()
+    reference = reference.float()
+    mean = reference.mean(dim=0)
+    std = reference.std(dim=0)
+    std = torch.where(std < 1e-6, torch.ones_like(std), std)
+    z = (features - mean.unsqueeze(0)) / std.unsqueeze(0)
+    z_sub = z[:, dims]
+    keep = (z_sub.abs() <= float(z_max)).all(dim=1)
+    mean_abs_z = z_sub.abs().mean(dim=1)
+    if int(keep.sum().item()) < int(min_kept) and features.size(0) > 0:
+        order = torch.argsort(mean_abs_z)
+        n_keep = min(int(min_kept), features.size(0))
+        keep = torch.zeros_like(keep)
+        keep[order[:n_keep]] = True
+        return keep, True
+    return keep, False
+
+
 class PairwiseConflictComparator(nn.Module):
     """Pairwise conflict-resolution comparator（二选一 + 边际 abstain）。
 
@@ -531,8 +565,11 @@ def _select_competitor(
         strong_top1 = int(strong_probabilities.argmax().item())
         if strong_top1 != anchor_label:
             p_b = float(strong_probabilities[strong_top1].item())
+            # flip 的“果断程度”：B 领先 A 多少。之前写成 A-B 会导致
+            # B=0.98/A=0.01 时 margin=-0.97 恒过门槛，把过分自信的 flip
+            # 也放进来；改成 B-A 后，果断 flip 会被 MAX_TOP1_MARGIN 拦掉。
             margin = float(
-                (strong_probabilities[anchor_label] - strong_probabilities[strong_top1]).item()
+                (strong_probabilities[strong_top1] - strong_probabilities[anchor_label]).item()
             )
             if p_b >= min_runner_prob and margin <= max_top1_margin:
                 return strong_top1, strong_probabilities, True
@@ -1329,6 +1366,14 @@ def run_comparator_refinement(
     use_runner_up_fallback = bool(
         getattr(context_cfg, "RUNNER_UP_FALLBACK", False)
     )
+    dist_match_synthetic = bool(
+        getattr(context_cfg, "DIST_MATCH_SYNTHETIC", False)
+    )
+    dist_match_z_max = float(getattr(context_cfg, "DIST_MATCH_Z_MAX", 1.5))
+    dist_match_dims = [
+        int(v) for v in getattr(context_cfg, "DIST_MATCH_DIMS", [0, 1, 2, 3, 4, 5, 6, 7])
+    ]
+    min_dist_match_kept = int(getattr(context_cfg, "MIN_DIST_MATCH_KEPT", 16))
     train_steps_per_cycle = int(context_cfg.TRAIN_STEPS_PER_CYCLE)
     train_batch_size = int(context_cfg.TRAIN_BATCH_SIZE)
     seed = int(context_cfg.SEED) + int(cycle - 1)
@@ -1483,6 +1528,86 @@ def run_comparator_refinement(
         _log_pair_distribution(
             synthetic_features, "synthetic", cycle, log_fn
         )
+        strict_positions = torch.nonzero(
+            strict_conflict_mask & query_mask, as_tuple=False
+        ).flatten()
+        real_features = torch.zeros(
+            0, 16, dtype=torch.float32
+        )
+        if strict_positions.numel() > 0:
+            real_features = build_comparator_features(
+                task_probs[strict_positions],
+                clip_probs[strict_positions],
+                task_features[strict_positions],
+                clip_features[strict_positions],
+                task_bank,
+                clip_bank,
+                class_a=task_top1[strict_positions],
+                class_b=clip_top1[strict_positions],
+                sim_topk=sim_topk,
+            ).to(device)
+            _log_pair_distribution(
+                real_features.cpu(), "real-conflict", cycle, log_fn
+            )
+        # distribution matching：只保留“长得像真实 conflict”的 synthetic 对
+        if (
+            dist_match_synthetic
+            and synthetic_features.size(0) > 0
+            and real_features.numel() > 0
+        ):
+            # 按“信任方向”分别过滤再合并，避免 matching 把某一方向筛没，
+            # 导致 comparator 出现 trust Task / trust CLIP 数量严重失衡。
+            trust_task_mask = synthetic_targets == 0.0  # CLIP-error -> trust Task
+            trust_clip_mask = synthetic_targets == 1.0  # Task-error -> trust CLIP
+            before_trust_task = int(trust_task_mask.sum().item())
+            before_trust_clip = int(trust_clip_mask.sum().item())
+            keep_task, fallback_task = _zscore_filter(
+                synthetic_features[trust_task_mask].cpu(),
+                real_features.cpu(),
+                dist_match_dims,
+                dist_match_z_max,
+                min_kept=min_dist_match_kept,
+            )
+            keep_clip, fallback_clip = _zscore_filter(
+                synthetic_features[trust_clip_mask].cpu(),
+                real_features.cpu(),
+                dist_match_dims,
+                dist_match_z_max,
+                min_kept=min_dist_match_kept,
+            )
+            keep = torch.zeros(synthetic_features.size(0), dtype=torch.bool)
+            keep[trust_task_mask] = keep_task
+            keep[trust_clip_mask] = keep_clip
+            kept = int(keep.sum().item())
+            kept_trust_task = int((keep & trust_task_mask).sum().item())
+            kept_trust_clip = int((keep & trust_clip_mask).sum().item())
+            log_fn(
+                "DUET comparator dist-match: cycle={}; synthetic_total={}; "
+                "kept={}; kept_rate={:.2f}%; z_max={:.2f}; dims={}; "
+                "before_trust_task={}; before_trust_clip={}; "
+                "kept_trust_task={}; kept_trust_clip={}; "
+                "mode_task={}; mode_clip={}; min_kept={}; "
+                "ground_truth_affects_training=False".format(
+                    cycle,
+                    synthetic_features.size(0),
+                    kept,
+                    100.0 * kept / max(synthetic_features.size(0), 1),
+                    dist_match_z_max,
+                    dist_match_dims,
+                    before_trust_task,
+                    before_trust_clip,
+                    kept_trust_task,
+                    kept_trust_clip,
+                    "fallback" if fallback_task else "zscore",
+                    "fallback" if fallback_clip else "zscore",
+                    min_dist_match_kept,
+                )
+            )
+            synthetic_features = synthetic_features[keep]
+            synthetic_targets = synthetic_targets[keep]
+            _log_pair_distribution(
+                synthetic_features, "synthetic-matched", cycle, log_fn
+            )
         if comparator is None:
             raise ValueError("refiner_type=comparator requires a comparator module")
         if (
@@ -1500,27 +1625,10 @@ def run_comparator_refinement(
                 seed=seed,
             )
 
-        strict_positions = torch.nonzero(
-            strict_conflict_mask & query_mask, as_tuple=False
-        ).flatten()
         if strict_positions.numel() > 0:
-            query_features = build_comparator_features(
-                task_probs[strict_positions],
-                clip_probs[strict_positions],
-                task_features[strict_positions],
-                clip_features[strict_positions],
-                task_bank,
-                clip_bank,
-                class_a=task_top1[strict_positions],
-                class_b=clip_top1[strict_positions],
-                sim_topk=sim_topk,
-            ).to(device)
-            _log_pair_distribution(
-                query_features.cpu(), "real-conflict", cycle, log_fn
-            )
             comparator.eval()
             with torch.no_grad():
-                logits = comparator(query_features).cpu()
+                logits = comparator(real_features).cpu()
             decision = apply_pairwise_decision(
                 logits,
                 task_top1[strict_positions],

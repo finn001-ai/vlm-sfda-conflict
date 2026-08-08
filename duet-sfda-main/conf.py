@@ -386,6 +386,20 @@ _C.DUET_CONTEXT.RUNNER_UP_FALLBACK = False
 # （refined_targets / kl_soft），不再执行 label_mask |= resolved_mask，
 # 即不产生新的 hard pseudo-label。用于验证 arbitration 信号本身有没有价值。
 _C.DUET_CONTEXT.SOFT_ONLY_ADMISSION = False
+# distribution matching：synthetic conflict 只保留“长得像真实 conflict”的子集。
+# 真实 conflict 的 confidence/entropy/margin/similarity 分布无需标签即可统计；
+# 用 z-score（|z| <= DIST_MATCH_Z_MAX）在指定维度上过滤 synthetic 池，
+# 避免用“一边明显坏、一边明显好”的简单样本训练 comparator。
+_C.DUET_CONTEXT.DIST_MATCH_SYNTHETIC = True
+_C.DUET_CONTEXT.DIST_MATCH_Z_MAX = 1.5
+# 参与匹配的特征维度（v1 只匹配“困难程度”）：
+# 4 = task_entropy, 5 = clip_entropy, 6 = task_margin, 7 = clip_margin
+# （0-3 是双分支候选概率，8-11 是 anchor similarity；第一版不参与，
+#  避免多维度同时卡 z-score 把 synthetic 池筛没）
+_C.DUET_CONTEXT.DIST_MATCH_DIMS = [4, 5, 6, 7]
+# 命中数下限：z-score 过滤后不足该数量时，退化为保留 mean|z| 最小的
+# MIN_DIST_MATCH_KEPT 个样本，避免 synthetic 池被全部滤掉导致无法训练。
+_C.DUET_CONTEXT.MIN_DIST_MATCH_KEPT = 16
 # 固定随机种子（leave-one-out 采样等）。
 _C.DUET_CONTEXT.SEED = 2020
 # 是否打印 evaluation-only 指标（target label 只进日志，不进训练）。
