@@ -361,11 +361,27 @@ _C.DUET_CONTEXT.THIRD_CLASS_MARGIN = 0.30
 _C.DUET_CONTEXT.ALLOW_THIRD_CLASS = True
 # False 时跳过置信度/边际阈值（强制 resolve，但第三类限制仍然生效）。
 _C.DUET_CONTEXT.ABSTAIN_WHEN_UNCERTAIN = True
-# 对照实现：transformer | cosine_knn | prototype。用于消融：证明 Transformer
-# 不只是复杂版最近邻。
+# 对照实现：transformer | cosine_knn | prototype | comparator。
+# comparator = pairwise conflict-resolution：只学 trust Task vs trust CLIP，
+# 输出空间不再是 65 类，而是二选一 + 边际 abstain。
 _C.DUET_CONTEXT.REFINER_TYPE = "transformer"
 # cosine kNN 的邻居数（仅 REFINER_TYPE=cosine_knn 使用）。
 _C.DUET_CONTEXT.KNN_K = 5
+# pairwise comparator（REFINER_TYPE=comparator）参数。
+# 两两比较器 MLP 的隐藏层宽度 / 层数。
+_C.DUET_CONTEXT.COMPARATOR_HIDDEN = 64
+_C.DUET_CONTEXT.COMPARATOR_LAYERS = 2
+# anchor 相似度取 top-k 余弦的平均（不用 max，防异常 anchor 骗过高分）。
+_C.DUET_CONTEXT.SIM_TOPK = 3
+# synthetic conflict 门槛：runner-up（或翻转类）概率必须 >= 该值，
+# 且 Top1/Top2 margin <= MAX_TOP1_MARGIN，否则该 anchor 不造这一侧样本。
+_C.DUET_CONTEXT.MIN_RUNNER_PROB = 0.10
+_C.DUET_CONTEXT.MAX_TOP1_MARGIN = 0.60
+# abstain 门槛：|trust_task - trust_clip| < COMPARATOR_GATE 时 abstain。
+_C.DUET_CONTEXT.COMPARATOR_GATE = 0.20
+# v1 只使用 strong augmentation 真实 flip 造 synthetic conflict；
+# 置 True 时允许在无 flip 的情况下退化为“交换该分支 A/B 概率”的 runner-up。
+_C.DUET_CONTEXT.RUNNER_UP_FALLBACK = False
 # 固定随机种子（leave-one-out 采样等）。
 _C.DUET_CONTEXT.SEED = 2020
 # 是否打印 evaluation-only 指标（target label 只进日志，不进训练）。

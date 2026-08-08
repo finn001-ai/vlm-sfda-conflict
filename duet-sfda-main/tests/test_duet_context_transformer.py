@@ -16,11 +16,16 @@ import torch
 from src.utils.duet_context import (
     ClassBalancedAnchorBank,
     DuetContextConflictTransformer,
+    PairwiseConflictComparator,
+    apply_pairwise_decision,
     apply_decision_rules,
     apply_weak_verification,
+    build_comparator_features,
+    build_synthetic_conflicts,
     cosine_knn_refine,
     prototype_refine,
     run_context_refinement,
+    train_pairwise_comparator,
     train_context_transformer,
     _exclude_query_anchors,
 )
@@ -66,6 +71,13 @@ def make_context_cfg(**overrides):
         SEED=2020,
         EVAL_ONLY_LOGGING=False,
         KNN_K=5,
+        COMPARATOR_HIDDEN=32,
+        COMPARATOR_LAYERS=2,
+        SIM_TOPK=3,
+        MIN_RUNNER_PROB=0.10,
+        MAX_TOP1_MARGIN=0.60,
+        COMPARATOR_GATE=0.15,
+        RUNNER_UP_FALLBACK=False,
     )
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -386,6 +398,194 @@ class PipelineTest(unittest.TestCase):
         self.assertIn("anchor_candidates=", joined)
         self.assertIn("ground_truth_affects_training=False", joined)
 
+
+class ComparatorTest(unittest.TestCase):
+    """Pairwise conflict-resolution（REFINER_TYPE=comparator）测试。"""
+
+    def test_forward_shape_two_way(self):
+        model = PairwiseConflictComparator(input_dim=16, hidden=16, layers=2)
+        logits = model(torch.randn(5, 16))
+        self.assertEqual(logits.shape, (5, 2))
+
+    def test_features_missing_anchor_uses_zero_and_flag(self):
+        """缺失 anchor：support=0 + available=0，而不是负相似度。"""
+        task_bank = ClassBalancedAnchorBank(4, 2, 8)
+        clip_bank = ClassBalancedAnchorBank(4, 2, 8)
+        labels = torch.tensor([0, 1, 2, 0, 1, 2])
+        task_bank.update(torch.randn(6, 8), labels, torch.rand(6))
+        clip_bank.update(torch.randn(6, 8), labels, torch.rand(6))
+        features = build_comparator_features(
+            torch.randn(2, 4), torch.randn(2, 4),
+            torch.randn(2, 8), torch.randn(2, 8),
+            task_bank, clip_bank,
+            class_a=torch.tensor([0, 1]),
+            class_b=torch.tensor([3, 3]),  # class 3 无 anchor
+            sim_topk=2,
+        )
+        self.assertEqual(features.shape, (2, 16))
+        # class 3 缺失：B 侧两个 sim 和 B 侧 available 标志都是 0
+        self.assertTrue((features[:, 9] == 0).all())
+        self.assertTrue((features[:, 11] == 0).all())
+        self.assertTrue((features[:, 13] == 0).all())
+        self.assertTrue((features[:, 15] == 0).all())
+
+    def test_synthetic_conflicts_flip_preferred_and_gated(self):
+        """strong flip 优先；runner-up 太弱则跳过。"""
+        torch.manual_seed(0)
+        num_classes, dim = 4, 8
+        # 两个 anchor：class 0 和 class 1
+        pool_task = torch.zeros(2, num_classes)
+        pool_clip = torch.zeros(2, num_classes)
+        pool_task[0, 0] = 0.97
+        pool_task[0, 1] = 0.01  # 弱 runner-up，不加 strong 会被 gate 掉
+        pool_task[0, 2:] = 0.01
+        pool_clip[0] = pool_task[0]
+        pool_task[1, 1] = 0.55
+        pool_task[1, 2] = 0.25  # 较强 runner-up
+        pool_task[1, 0] = 0.10
+        pool_task[1, 3] = 0.10
+        pool_clip[1] = pool_task[1]
+        pool_feat = torch.randn(2, dim)
+        pool_clip_feat = torch.randn(2, dim)
+        pool_labels = torch.tensor([0, 1])
+        # strong flip：anchor 0 的 Task 在强视图下翻到 class 1（p=0.4）
+        strong_task = torch.zeros(2, num_classes)
+        strong_task[0, 1] = 0.40
+        strong_task[0, 0] = 0.35
+        strong_task[0, 2:] = 0.125
+        strong_task[1] = pool_task[1]
+        # strong flip：anchor 1 的 CLIP 在强视图下翻到 class 2（p=0.4）
+        strong_clip = torch.zeros(2, num_classes)
+        strong_clip[0] = pool_clip[0]
+        strong_clip[1, 2] = 0.40
+        strong_clip[1, 1] = 0.35
+        strong_clip[1, 0] = 0.15
+        strong_clip[1, 3] = 0.10
+
+        task_bank = ClassBalancedAnchorBank(num_classes, 2, dim)
+        clip_bank = ClassBalancedAnchorBank(num_classes, 2, dim)
+        task_bank.update(pool_feat, pool_labels, torch.ones(2))
+        clip_bank.update(pool_clip_feat, pool_labels, torch.ones(2))
+
+        features, targets, counts = build_synthetic_conflicts(
+            pool_task, pool_clip, pool_feat, pool_clip_feat, pool_labels,
+            task_bank, clip_bank,
+            min_runner_prob=0.10, max_top1_margin=0.60, sim_topk=2,
+            pool_strong_task_probs=strong_task, pool_strong_clip_probs=strong_clip,
+        )
+        self.assertGreaterEqual(counts["task_side"], 1)
+        self.assertGreaterEqual(counts["clip_side"], 1)
+        self.assertEqual(features.shape[1], 16)
+        self.assertTrue(set(targets.tolist()) <= {0.0, 1.0})
+        # 关键：证据里必须是“真 conflict”：
+        #   Task 证据 Top1 = 候选 A（p_A > p_B），CLIP 证据 Top1 = 候选 B。
+        # 否则就是名义 conflict（weak 概率里 A 仍领先）。
+        self.assertTrue((features[:, 0] > features[:, 1]).all())
+        self.assertTrue((features[:, 3] > features[:, 2]).all())
+
+    def test_runner_up_fallback_swaps_evidence(self):
+        """无 flip 且开 RUNNER_UP_FALLBACK 时，用交换 A/B 的证据造对，
+        特征里同样必须呈现真 conflict。"""
+        num_classes, dim = 4, 8
+        pool_task = torch.zeros(2, num_classes)
+        pool_clip = torch.zeros(2, num_classes)
+        # weak Task: A=0.62, B=0.30 → 交换后 B 领先
+        pool_task[0, 0] = 0.62
+        pool_task[0, 1] = 0.30
+        pool_task[0, 2:] = 0.04
+        pool_task[1, 1] = 0.60
+        pool_task[1, 2] = 0.30
+        pool_task[1, 0] = 0.05
+        pool_task[1, 3] = 0.05
+        pool_clip = pool_task.clone()
+        pool_feat = torch.randn(2, dim)
+        pool_clip_feat = torch.randn(2, dim)
+        pool_labels = torch.tensor([0, 1])
+        task_bank = ClassBalancedAnchorBank(num_classes, 2, dim)
+        clip_bank = ClassBalancedAnchorBank(num_classes, 2, dim)
+        task_bank.update(pool_feat, pool_labels, torch.ones(2))
+        clip_bank.update(pool_clip_feat, pool_labels, torch.ones(2))
+        features, targets, counts = build_synthetic_conflicts(
+            pool_task, pool_clip, pool_feat, pool_clip_feat, pool_labels,
+            task_bank, clip_bank,
+            min_runner_prob=0.10, max_top1_margin=0.60, sim_topk=2,
+            pool_strong_task_probs=None, pool_strong_clip_probs=None,
+            use_runner_up_fallback=True,
+        )
+        self.assertGreaterEqual(counts["task_side"], 1)
+        self.assertGreaterEqual(counts["clip_side"], 1)
+        self.assertTrue((features[:, 0] > features[:, 1]).all())
+        self.assertTrue((features[:, 3] > features[:, 2]).all())
+
+    def test_training_reduces_loss(self):
+        model = PairwiseConflictComparator(input_dim=16, hidden=16, layers=2)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
+        features = torch.randn(32, 16)
+        targets = torch.randint(0, 2, (32,)).float()
+        loss1 = train_pairwise_comparator(
+            model, optimizer, features, targets, steps=10, batch_size=32, seed=1
+        )
+        loss2 = train_pairwise_comparator(
+            model, optimizer, features, targets, steps=10, batch_size=32, seed=1
+        )
+        self.assertIsNotNone(loss1)
+        self.assertLess(loss2, loss1)
+
+    def test_decision_margin_gate(self):
+        logits = torch.tensor([[1.0, -1.0], [-1.0, 1.0], [0.05, -0.05]])
+        task_top1 = torch.tensor([0, 0, 0])
+        clip_top1 = torch.tensor([1, 1, 1])
+        decision = apply_pairwise_decision(logits, task_top1, clip_top1, gate=0.2)
+        self.assertEqual(decision["resolved"].tolist(), [True, True, False])
+        self.assertEqual(decision["chosen"][0].item(), 0)  # trust Task
+        self.assertEqual(decision["chosen"][1].item(), 1)  # trust CLIP
+
+    def test_comparator_pipeline_end_to_end(self):
+        """整条 comparator 管线：resolved 标签只可能是 A 或 B，
+        refined target 的 argmax == chosen，weak 全部保持原样。"""
+        torch.manual_seed(2)
+        n, c, d = 512, 8, 32
+        feat = torch.randn(n, d)
+        proto = torch.randn(c, d)
+        sim = feat @ proto.t()
+        task_prob = torch.softmax(sim * 3.0 + torch.randn(n, c) * 0.2, dim=1)
+        clip_prob = torch.softmax(sim * 2.8 + torch.randn(n, c) * 0.4, dim=1)
+        clip_feat = torch.randn(n, d)
+        true_label = sim.argmax(dim=1)
+        strong_task = torch.softmax(sim * 1.5 + torch.randn(n, c) * 0.7, dim=1)
+        strong_clip = torch.softmax(sim * 1.3 + torch.randn(n, c) * 0.8, dim=1)
+        model = PairwiseConflictComparator(input_dim=16, hidden=32, layers=2)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        logs = []
+        result = run_context_refinement(
+            task_prob, clip_prob, feat, num_classes=c,
+            context_cfg=make_context_cfg(
+                REFINER_TYPE="comparator", TRAIN_STEPS_PER_CYCLE=30,
+                COMPARATOR_GATE=0.15,
+            ),
+            pre_prior_task_probs=task_prob, pre_prior_clip_probs=clip_prob,
+            labels=true_label, sample_indices=torch.arange(n),
+            clip_features=clip_feat,
+            strong_task_probs=strong_task, strong_clip_probs=strong_clip,
+            comparator=model, comparator_optimizer=optimizer,
+            cycle=2, log_fn=logs.append,
+        )
+        resolved = result["resolved_mask"]
+        self.assertEqual(int(result["weak_rejected_mask"].sum().item()), 0)
+        if int(resolved.sum().item()) > 0:
+            chosen = result["context_labels"][resolved]
+            task_side = task_prob[resolved].argmax(dim=1)
+            clip_side = clip_prob[resolved].argmax(dim=1)
+            self.assertTrue(
+                ((chosen == task_side) | (chosen == clip_side)).all()
+            )
+            self.assertTrue(
+                (
+                    result["refined_targets"][resolved].argmax(dim=1) == chosen
+                ).all()
+            )
+        self.assertTrue(any("DUET comparator synthetic conflicts" in line for line in logs))
+
     def test_controls_shapes_and_no_nan(self):
         feat, task_prob, clip_prob, true_label = make_separable(n=256, num_classes=6, feature_dim=24)
         bank = ClassBalancedAnchorBank(6, 4, 24)
@@ -536,7 +736,12 @@ class MethodFileContractTest(unittest.TestCase):
                 data = yaml.safe_load(handle)
             self.assertEqual(data["DUET_FCP"]["POWER"], 0.8)
             self.assertTrue(data["DUET_CONTEXT"]["ENABLED"])
-            self.assertEqual(data["DUET_CONTEXT"]["ACTIVE_CYCLES"], [1])
+            self.assertEqual(data["DUET_CONTEXT"]["USE_WEAK_AGREEMENT"], False)
+            self.assertEqual(data["DUET_CONTEXT"]["REFINER_TYPE"], "comparator")
+            active_cycles = data["DUET_CONTEXT"]["ACTIVE_CYCLES"]
+            self.assertIsInstance(active_cycles, list)
+            self.assertTrue(all(isinstance(v, int) for v in active_cycles))
+            self.assertNotIn(0, active_cycles)  # 第一轮保持纯 FCP
 
     def test_first_cycle_stays_pure_fcp(self):
         """第一轮（cycle index 0）不运行 Transformer：默认 ACTIVE_CYCLES

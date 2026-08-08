@@ -344,6 +344,348 @@ def prototype_refine(
     return _softmax_probabilities(similarity)
 
 
+def _topk_mean_cosine_support(
+    query_feature: torch.Tensor,
+    class_features: torch.Tensor,
+    class_valid: torch.Tensor,
+    topk: int,
+) -> tuple[float, float]:
+    """query 与该类 anchor 的 top-k 余弦相似度均值 + 是否有 anchor。
+
+    用 top-k 均值而不是 max，避免单个异常 anchor 撑高分。
+    """
+    valid_features = class_features[class_valid]
+    if valid_features.numel() == 0:
+        return 0.0, 0.0
+    query_norm = F.normalize(query_feature.detach().float().unsqueeze(0), dim=1)
+    anchor_norm = F.normalize(valid_features.detach().float(), dim=1)
+    similarities = (query_norm @ anchor_norm.t()).squeeze(0)
+    k = min(int(topk), similarities.numel())
+    return float(similarities.topk(k).values.mean().item()), 1.0
+
+
+class PairwiseConflictComparator(nn.Module):
+    """Pairwise conflict-resolution comparator（二选一 + 边际 abstain）。
+
+    输入是 class-agnostic 的相对证据（16 维），输出只有 2 个 logits：
+    trust Task 侧候选 vs trust CLIP 侧候选。abstain 由边际门槛决定，
+    不训练第三个类。
+    """
+
+    def __init__(
+        self,
+        input_dim: int = 16,
+        hidden: int = 64,
+        layers: int = 2,
+        dropout: float = 0.1,
+    ) -> None:
+        super().__init__()
+        if layers < 1:
+            raise ValueError("COMPARATOR_LAYERS must be >= 1")
+        blocks = []
+        current = int(input_dim)
+        for _ in range(int(layers)):
+            blocks.append(nn.Linear(current, int(hidden)))
+            blocks.append(nn.GELU())
+            blocks.append(nn.Dropout(dropout))
+            current = int(hidden)
+        blocks.append(nn.Linear(current, 2))
+        self.mlp = nn.Sequential(*blocks)
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        return self.mlp(features.float())
+
+
+def build_comparator_features(
+    task_probs: torch.Tensor,
+    clip_probs: torch.Tensor,
+    task_features: torch.Tensor,
+    clip_features: Optional[torch.Tensor],
+    task_bank: ClassBalancedAnchorBank,
+    clip_bank: Optional[ClassBalancedAnchorBank],
+    class_a: torch.Tensor,
+    class_b: torch.Tensor,
+    sim_topk: int,
+) -> torch.Tensor:
+    """为每个 (A=Task 候选, B=CLIP 候选) 构造 16 维 class-agnostic 特征。
+
+    维度：
+        [p_task(A), p_task(B), p_clip(A), p_clip(B),
+         task_entropy, clip_entropy, task_margin, clip_margin,
+         task_sim_A, task_sim_B, clip_sim_A, clip_sim_B,
+         task_A_avail, task_B_avail, clip_A_avail, clip_B_avail]
+    """
+    batch = class_a.numel()
+    features = torch.zeros(batch, 16, dtype=torch.float32, device=task_probs.device)
+    task_probs = task_probs.float()
+    clip_probs = clip_probs.float()
+    for i in range(batch):
+        a = int(class_a[i].item())
+        b = int(class_b[i].item())
+        task_sorted = task_probs[i].sort(descending=True).values
+        clip_sorted = clip_probs[i].sort(descending=True).values
+        task_margin = float(task_sorted[0] - task_sorted[1])
+        clip_margin = float(clip_sorted[0] - clip_sorted[1])
+        task_entropy = float(_entropy(task_probs[i : i + 1])[0].item())
+        clip_entropy = float(_entropy(clip_probs[i : i + 1])[0].item())
+        task_sim_a, task_avail_a = _topk_mean_cosine_support(
+            task_features[i], task_bank.anchor_features[a], task_bank.anchor_valid[a], sim_topk
+        )
+        task_sim_b, task_avail_b = _topk_mean_cosine_support(
+            task_features[i], task_bank.anchor_features[b], task_bank.anchor_valid[b], sim_topk
+        )
+        if clip_features is not None and clip_bank is not None:
+            clip_sim_a, clip_avail_a = _topk_mean_cosine_support(
+                clip_features[i], clip_bank.anchor_features[a], clip_bank.anchor_valid[a], sim_topk
+            )
+            clip_sim_b, clip_avail_b = _topk_mean_cosine_support(
+                clip_features[i], clip_bank.anchor_features[b], clip_bank.anchor_valid[b], sim_topk
+            )
+        else:
+            clip_sim_a = clip_sim_b = 0.0
+            clip_avail_a = clip_avail_b = 0.0
+        features[i] = torch.tensor(
+            [
+                float(task_probs[i, a]),
+                float(task_probs[i, b]),
+                float(clip_probs[i, a]),
+                float(clip_probs[i, b]),
+                task_entropy,
+                clip_entropy,
+                task_margin,
+                clip_margin,
+                task_sim_a,
+                task_sim_b,
+                clip_sim_a,
+                clip_sim_b,
+                task_avail_a,
+                task_avail_b,
+                clip_avail_a,
+                clip_avail_b,
+            ],
+            dtype=torch.float32,
+            device=features.device,
+        )
+    return features
+
+
+def _select_competitor(
+    probabilities: torch.Tensor,
+    anchor_label: int,
+    *,
+    min_runner_prob: float,
+    max_top1_margin: float,
+    strong_probabilities: Optional[torch.Tensor] = None,
+    use_runner_up_fallback: bool = False,
+) -> Optional[tuple[int, torch.Tensor, bool]]:
+    """为该分支选 synthetic conflict 的对手类 B，并返回真正“会冲突”的证据。
+
+    返回 (competitor, evidence_probs, used_strong)：
+    - evidence_probs 是构造特征时该分支应使用的概率：
+      * strong 视图真的发生 Top1 flip → 用 strong 概率（v1 默认只走这条）；
+      * 否则如果开了 RUNNER_UP_FALLBACK → 用 weak 概率并交换 A/B，
+        使该分支证据里 B 真的变成 Top1（不再是“名义冲突”）；
+    - 两者都要满足 p_B >= MIN_RUNNER_PROB 且 Top1/Top2 margin <= MAX_TOP1_MARGIN。
+    """
+    if strong_probabilities is not None:
+        strong_top1 = int(strong_probabilities.argmax().item())
+        if strong_top1 != anchor_label:
+            p_b = float(strong_probabilities[strong_top1].item())
+            margin = float(
+                (strong_probabilities[anchor_label] - strong_probabilities[strong_top1]).item()
+            )
+            if p_b >= min_runner_prob and margin <= max_top1_margin:
+                return strong_top1, strong_probabilities, True
+    if use_runner_up_fallback:
+        competitor = int(probabilities.argmax().item())
+        if competitor == anchor_label:
+            narrowed = probabilities.clone()
+            narrowed[anchor_label] = float("-inf")
+            competitor = int(narrowed.argmax().item())
+        p_b = float(probabilities[competitor].item())
+        margin = float((probabilities[anchor_label] - probabilities[competitor]).item())
+        if p_b < min_runner_prob or margin > max_top1_margin:
+            return None
+        # 交换 A/B 概率：该分支证据里 B 成为 Top1，避免“名义 conflict”。
+        evidence = probabilities.clone()
+        value_a = float(evidence[anchor_label].item())
+        value_b = float(evidence[competitor].item())
+        evidence[anchor_label] = value_b
+        evidence[competitor] = value_a
+        return competitor, evidence, False
+    return None
+
+
+def build_synthetic_conflicts(
+    pool_task_probs: torch.Tensor,
+    pool_clip_probs: torch.Tensor,
+    pool_task_features: torch.Tensor,
+    pool_clip_features: torch.Tensor,
+    pool_labels: torch.Tensor,
+    task_bank: ClassBalancedAnchorBank,
+    clip_bank: ClassBalancedAnchorBank,
+    *,
+    min_runner_prob: float,
+    max_top1_margin: float,
+    sim_topk: int,
+    pool_strong_task_probs: Optional[torch.Tensor] = None,
+    pool_strong_clip_probs: Optional[torch.Tensor] = None,
+    use_runner_up_fallback: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor, dict]:
+    """从 bank 的 anchor 池构造两类 synthetic conflict。
+
+    每个可靠 anchor (Task=A, CLIP=A) 最多造两对：
+      - Task 侧错：Task 证据 = strong Task（或交换 A/B 的 weak Task），
+        候选 A=B_task, B=A，target=trust CLIP(1)；
+      - CLIP 侧错：CLIP 证据 = strong CLIP（或交换 A/B 的 weak CLIP），
+        候选 A=A, B=B_clip，target=trust Task(0)。
+    只有通过 hard-gate 的才保留，避免 car-vs-toothbrush 这种假样本。
+    关键：证据概率必须是“真的让该分支 Top1=B”的分布，否则就成了
+    名义 conflict（weak 概率里 A 仍然领先），训练和推理会错位。
+    """
+    feature_rows = []
+    target_rows = []
+    task_side = 0
+    clip_side = 0
+    # 用全部 anchor 候选（不是 top-8 bank）造 synthetic 对：top-8 的 anchor
+    # 太“容易”，augmentation 几乎不会把它们翻错，翻错/强 runner-up 更多
+    # 出现在置信度稍低的候选里，那才是像真实 conflict 的 hard disagreement。
+    for pool_id in range(pool_labels.numel()):
+        anchor_label = int(pool_labels[pool_id].item())
+        if anchor_label < 0:
+            continue
+        # Task 侧 synthetic conflict：Task 错成 B，CLIP 坚持 A
+        competitor_task = _select_competitor(
+            pool_task_probs[pool_id],
+            anchor_label,
+            min_runner_prob=min_runner_prob,
+            max_top1_margin=max_top1_margin,
+            strong_probabilities=(
+                pool_strong_task_probs[pool_id]
+                if pool_strong_task_probs is not None
+                else None
+            ),
+            use_runner_up_fallback=use_runner_up_fallback,
+        )
+        if competitor_task is not None:
+            b_task, task_evidence, _used_strong = competitor_task
+            features = build_comparator_features(
+                task_evidence.unsqueeze(0),
+                pool_clip_probs[pool_id : pool_id + 1],
+                pool_task_features[pool_id : pool_id + 1],
+                pool_clip_features[pool_id : pool_id + 1],
+                task_bank,
+                clip_bank,
+                class_a=torch.tensor([b_task]),
+                class_b=torch.tensor([anchor_label]),
+                sim_topk=sim_topk,
+            )
+            feature_rows.append(features[0])
+            target_rows.append(1.0)  # trust CLIP
+            task_side += 1
+            # CLIP 侧 synthetic conflict：CLIP 错成 B，Task 坚持 A
+        competitor_clip = _select_competitor(
+            pool_clip_probs[pool_id],
+            anchor_label,
+            min_runner_prob=min_runner_prob,
+            max_top1_margin=max_top1_margin,
+            strong_probabilities=(
+                pool_strong_clip_probs[pool_id]
+                if pool_strong_clip_probs is not None
+                else None
+            ),
+            use_runner_up_fallback=use_runner_up_fallback,
+        )
+        if competitor_clip is not None:
+            b_clip, clip_evidence, _used_strong = competitor_clip
+            features = build_comparator_features(
+                pool_task_probs[pool_id : pool_id + 1],
+                clip_evidence.unsqueeze(0),
+                pool_task_features[pool_id : pool_id + 1],
+                pool_clip_features[pool_id : pool_id + 1],
+                task_bank,
+                clip_bank,
+                class_a=torch.tensor([anchor_label]),
+                class_b=torch.tensor([b_clip]),
+                sim_topk=sim_topk,
+            )
+            feature_rows.append(features[0])
+            target_rows.append(0.0)  # trust Task
+            clip_side += 1
+    if not feature_rows:
+        return (
+            torch.zeros(0, 16, dtype=torch.float32),
+            torch.zeros(0, dtype=torch.float32),
+            {"task_side": 0, "clip_side": 0},
+        )
+    return (
+        torch.stack(feature_rows),
+        torch.tensor(target_rows, dtype=torch.float32),
+        {"task_side": task_side, "clip_side": clip_side},
+    )
+
+
+def train_pairwise_comparator(
+    comparator: PairwiseConflictComparator,
+    optimizer: torch.optim.Optimizer,
+    features: torch.Tensor,
+    targets: torch.Tensor,
+    *,
+    steps: int,
+    batch_size: int,
+    seed: int,
+) -> Optional[float]:
+    """在 synthetic conflict 对上训练 comparator（2-way CE）。"""
+    if features.numel() == 0 or features.size(0) < 2:
+        return None
+    comparator.train()
+    generator = torch.Generator(device=features.device)
+    generator.manual_seed(int(seed))
+    total_loss = 0.0
+    counted = 0
+    for _ in range(max(1, int(steps))):
+        if features.size(0) <= batch_size:
+            indices = torch.arange(features.size(0), device=features.device)
+        else:
+            indices = torch.randperm(
+                features.size(0), generator=generator, device=features.device
+            )[:batch_size]
+        logits = comparator(features[indices].detach())
+        loss = F.cross_entropy(logits, targets[indices].detach().long())
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        total_loss += float(loss.detach().item())
+        counted += 1
+    comparator.eval()
+    return total_loss / counted if counted else None
+
+
+def apply_pairwise_decision(
+    logits: torch.Tensor,
+    task_top1: torch.Tensor,
+    clip_top1: torch.Tensor,
+    *,
+    gate: float,
+) -> dict:
+    """2-way 决策：|trust_task - trust_clip| >= gate 才 resolved。"""
+    probabilities = _softmax_probabilities(logits)
+    trust_task = probabilities[:, 0]
+    trust_clip = probabilities[:, 1]
+    margin = (trust_task - trust_clip).abs()
+    resolved = margin >= gate
+    chosen = torch.where(trust_task >= trust_clip, task_top1, clip_top1)
+    return {
+        "resolved": resolved,
+        "chosen": chosen,
+        "trust_task": trust_task,
+        "trust_clip": trust_clip,
+        "confidence": torch.maximum(trust_task, trust_clip),
+        "margin": margin,
+        "probabilities": probabilities,
+    }
+
+
 def apply_decision_rules(
     context_probs: torch.Tensor,
     task_top1: torch.Tensor,
@@ -518,6 +860,11 @@ def run_context_refinement(
     sample_indices: Optional[torch.Tensor] = None,
     transformer: Optional[DuetContextConflictTransformer] = None,
     optimizer: Optional[torch.optim.Optimizer] = None,
+    clip_features: Optional[torch.Tensor] = None,
+    strong_task_probs: Optional[torch.Tensor] = None,
+    strong_clip_probs: Optional[torch.Tensor] = None,
+    comparator: Optional[PairwiseConflictComparator] = None,
+    comparator_optimizer: Optional[torch.optim.Optimizer] = None,
     cycle: int = 1,
     log_fn: Callable[[str], None] = logging.info,
 ) -> dict:
@@ -530,6 +877,26 @@ def run_context_refinement(
     the same attributes); all thresholds / switches / training hyper-params
     are read from it so the call site stays short.
     """
+    if str(context_cfg.REFINER_TYPE) == "comparator":
+        # pairwise conflict-resolution 是独立管线，走专用入口。
+        return run_comparator_refinement(
+            task_probs=task_probs,
+            clip_probs=clip_probs,
+            task_features=task_features,
+            num_classes=num_classes,
+            context_cfg=context_cfg,
+            clip_features=clip_features,
+            strong_task_probs=strong_task_probs,
+            strong_clip_probs=strong_clip_probs,
+            pre_prior_task_probs=pre_prior_task_probs,
+            pre_prior_clip_probs=pre_prior_clip_probs,
+            labels=labels,
+            sample_indices=sample_indices,
+            comparator=comparator,
+            comparator_optimizer=comparator_optimizer,
+            cycle=cycle,
+            log_fn=log_fn,
+        )
     use_strict_conflict = bool(context_cfg.USE_STRICT_CONFLICT)
     use_weak_agreement = bool(context_cfg.USE_WEAK_AGREEMENT)
     anchors_per_class = int(context_cfg.ANCHORS_PER_CLASS)
@@ -844,6 +1211,325 @@ def run_context_refinement(
     _log_correction_stats(stats, cycle, log_fn)
 
     _log_context_stats(stats, refiner_type, cycle, log_fn)
+    if eval_only_logging and labels is not None:
+        _log_eval_only_metrics(
+            stats,
+            resolved_mask=resolved_mask,
+            weak_rejected_mask=weak_rejected_mask,
+            context_labels=context_labels,
+            task_top1=task_top1,
+            clip_top1=clip_top1,
+            all_label=labels,
+            anchor_mask=anchor_mask,
+            weak_agreement_mask=weak_agreement_mask,
+            strict_conflict_mask=strict_conflict_mask,
+            cycle=cycle,
+            log_fn=log_fn,
+        )
+    return {
+        "strict_conflict_mask": strict_conflict_mask,
+        "weak_agreement_mask": weak_agreement_mask,
+        "query_mask": query_mask,
+        "anchor_mask": anchor_mask,
+        "resolved_mask": resolved_mask,
+        "weak_rejected_mask": weak_rejected_mask,
+        "context_labels": context_labels,
+        "refined_targets": refined_targets,
+        "stats": stats,
+    }
+
+
+def run_comparator_refinement(
+    task_probs: torch.Tensor,
+    clip_probs: torch.Tensor,
+    task_features: torch.Tensor,
+    *,
+    num_classes: int,
+    context_cfg: object,
+    clip_features: Optional[torch.Tensor],
+    pre_prior_task_probs: Optional[torch.Tensor] = None,
+    pre_prior_clip_probs: Optional[torch.Tensor] = None,
+    labels: Optional[torch.Tensor] = None,
+    sample_indices: Optional[torch.Tensor] = None,
+    strong_task_probs: Optional[torch.Tensor] = None,
+    strong_clip_probs: Optional[torch.Tensor] = None,
+    comparator: Optional[PairwiseConflictComparator] = None,
+    comparator_optimizer: Optional[torch.optim.Optimizer] = None,
+    cycle: int = 1,
+    log_fn: Callable[[str], None] = logging.info,
+) -> dict:
+    """Pairwise conflict-resolution 专用管线（REFINER_TYPE=comparator）。
+
+    只处理 strict conflict：对每个冲突 (Task=A, CLIP=B) 构造 class-agnostic
+    的相对证据特征，用 2-way comparator 输出 trust Task / trust CLIP，
+    再按 |trust_T - trust_C| >= gate 决定 resolved / abstain。
+    训练用 anchor 池造两类 synthetic conflict（Task 侧错 / CLIP 侧错），
+    对手类 B 优先取 strong 增广真实 flip 的类别，fallback 到该分支 runner-up，
+    且都要求 hard-gate（MIN_RUNNER_PROB / MAX_TOP1_MARGIN）。
+    """
+    use_strict_conflict = bool(context_cfg.USE_STRICT_CONFLICT)
+    anchors_per_class = int(context_cfg.ANCHORS_PER_CLASS)
+    anchor_task_conf = float(context_cfg.ANCHOR_TASK_CONF)
+    anchor_clip_conf = float(context_cfg.ANCHOR_CLIP_CONF)
+    anchor_task_entropy = float(context_cfg.ANCHOR_TASK_ENTROPY)
+    anchor_clip_entropy = float(context_cfg.ANCHOR_CLIP_ENTROPY)
+    entropy_weight = float(context_cfg.ENTROPY_WEIGHT)
+    require_pre_post_prior_agreement = bool(
+        context_cfg.REQUIRE_PRE_POST_PRIOR_AGREEMENT
+    )
+    sim_topk = int(getattr(context_cfg, "SIM_TOPK", 3))
+    min_runner_prob = float(getattr(context_cfg, "MIN_RUNNER_PROB", 0.10))
+    max_top1_margin = float(getattr(context_cfg, "MAX_TOP1_MARGIN", 0.60))
+    gate = float(getattr(context_cfg, "COMPARATOR_GATE", 0.20))
+    use_runner_up_fallback = bool(
+        getattr(context_cfg, "RUNNER_UP_FALLBACK", False)
+    )
+    train_steps_per_cycle = int(context_cfg.TRAIN_STEPS_PER_CYCLE)
+    train_batch_size = int(context_cfg.TRAIN_BATCH_SIZE)
+    seed = int(context_cfg.SEED) + int(cycle - 1)
+    eval_only_logging = bool(context_cfg.EVAL_ONLY_LOGGING)
+
+    task_probs = task_probs.float()
+    clip_probs = clip_probs.float()
+    num_samples = task_probs.size(0)
+    device = task_features.device
+    if comparator is not None:
+        device = next(comparator.parameters()).device
+    task_conf, task_top1 = task_probs.max(dim=1)
+    clip_conf, clip_top1 = clip_probs.max(dim=1)
+    task_entropy = _entropy(task_probs)
+    clip_entropy = _entropy(clip_probs)
+
+    strict_conflict_mask = task_top1 != clip_top1
+    weak_agreement_mask = torch.zeros(num_samples, dtype=torch.bool)
+    anchor_mask = (
+        (task_top1 == clip_top1)
+        & (task_conf >= anchor_task_conf)
+        & (clip_conf >= anchor_clip_conf)
+        & (task_entropy <= anchor_task_entropy)
+        & (clip_entropy <= anchor_clip_entropy)
+    )
+    if (
+        require_pre_post_prior_agreement
+        and pre_prior_task_probs is not None
+        and pre_prior_clip_probs is not None
+    ):
+        pre_task_top1 = pre_prior_task_probs.float().argmax(dim=1)
+        pre_clip_top1 = pre_prior_clip_probs.float().argmax(dim=1)
+        pre_agree = pre_task_top1 == pre_clip_top1
+        same_common = pre_task_top1 == task_top1
+        anchor_mask = anchor_mask & pre_agree & same_common
+
+    query_mask = strict_conflict_mask.clone() if use_strict_conflict else torch.zeros(
+        num_samples, dtype=torch.bool
+    )
+    resolved_mask = torch.zeros(num_samples, dtype=torch.bool)
+    weak_rejected_mask = torch.zeros(num_samples, dtype=torch.bool)
+    context_labels = torch.full((num_samples,), -1, dtype=torch.long)
+    refined_targets = clip_probs.detach().clone()
+
+    strict_total = int(strict_conflict_mask.sum().item())
+    anchor_count = int(anchor_mask.sum().item())
+    stats = {
+        "post_prior_agreement": int((task_top1 == clip_top1).sum().item()),
+        "strict_conflicts": strict_total,
+        "weak_agreement": 0,
+        "query_count": int(query_mask.sum().item()),
+        "anchor_count": anchor_count,
+        "anchor_bank_total": 0,
+        "anchor_per_class_counts": [],
+        "anchor_mean_task_conf": float("nan"),
+        "anchor_mean_clip_conf": float("nan"),
+        "train_loss": None,
+        "resolved_strict": 0,
+        "support_task": 0,
+        "support_clip": 0,
+        "third_class": 0,
+        "abstain": strict_total,
+        "weak_passed": 0,
+        "weak_deferred": 0,
+        "context_mean_conf": float("nan"),
+        "context_mean_margin": float("nan"),
+    }
+
+    if clip_features is None:
+        raise ValueError("refiner_type=comparator requires clip_features")
+    if strict_total > 0 and anchor_count >= 2:
+        reliability = (
+            task_conf[anchor_mask]
+            + clip_conf[anchor_mask]
+            - entropy_weight * (task_entropy[anchor_mask] + clip_entropy[anchor_mask])
+        )
+        # pool 数组按候选位置索引，bank 也存候选位置（不是全局 sample id），
+        # 保证 build_synthetic_conflicts 用 anchor_indices 能正确取回 probs/特征。
+        pool_ids = torch.arange(anchor_count, device=device)
+        pool_task_probs = task_probs[anchor_mask].detach().to(device)
+        pool_clip_probs = clip_probs[anchor_mask].detach().to(device)
+        pool_task_features = task_features[anchor_mask].detach().to(device)
+        pool_clip_features = clip_features[anchor_mask].detach().to(device)
+        pool_labels = task_top1[anchor_mask].detach().long().to(device)
+        pool_strong_task = (
+            strong_task_probs[anchor_mask].detach().to(device)
+            if strong_task_probs is not None
+            else None
+        )
+        pool_strong_clip = (
+            strong_clip_probs[anchor_mask].detach().to(device)
+            if strong_clip_probs is not None
+            else None
+        )
+
+        task_bank = ClassBalancedAnchorBank(
+            num_classes=num_classes,
+            anchors_per_class=anchors_per_class,
+            feature_dim=task_features.size(1),
+            seed=seed,
+            device=device,
+        )
+        task_bank.update(
+            features=pool_task_features,
+            labels=pool_labels,
+            scores=reliability.detach().to(device),
+            sample_indices=pool_ids,
+        )
+        clip_bank = ClassBalancedAnchorBank(
+            num_classes=num_classes,
+            anchors_per_class=anchors_per_class,
+            feature_dim=clip_features.size(1),
+            seed=seed,
+            device=device,
+        )
+        clip_bank.update(
+            features=pool_clip_features,
+            labels=pool_labels,
+            scores=reliability.detach().to(device),
+            sample_indices=pool_ids,
+        )
+        stats["anchor_bank_total"] = int(task_bank.per_class_counts().sum().item())
+        stats["anchor_per_class_counts"] = task_bank.per_class_counts().tolist()
+        stats["anchor_mean_task_conf"] = float(task_conf[anchor_mask].mean().item())
+        stats["anchor_mean_clip_conf"] = float(clip_conf[anchor_mask].mean().item())
+
+        synthetic_features, synthetic_targets, synthetic_counts = build_synthetic_conflicts(
+            pool_task_probs,
+            pool_clip_probs,
+            pool_task_features,
+            pool_clip_features,
+            pool_labels,
+            task_bank,
+            clip_bank,
+            min_runner_prob=min_runner_prob,
+            max_top1_margin=max_top1_margin,
+            sim_topk=sim_topk,
+            pool_strong_task_probs=pool_strong_task,
+            pool_strong_clip_probs=pool_strong_clip,
+            use_runner_up_fallback=use_runner_up_fallback,
+        )
+        log_fn(
+            "DUET comparator synthetic conflicts: cycle={}; task_side={}; "
+            "clip_side={}; total={}; "
+            "ground_truth_affects_training=False".format(
+                cycle,
+                synthetic_counts["task_side"],
+                synthetic_counts["clip_side"],
+                synthetic_features.size(0),
+            )
+        )
+        if comparator is None:
+            raise ValueError("refiner_type=comparator requires a comparator module")
+        if (
+            synthetic_features.size(0) >= 2
+            and train_steps_per_cycle > 0
+            and comparator_optimizer is not None
+        ):
+            stats["train_loss"] = train_pairwise_comparator(
+                comparator,
+                comparator_optimizer,
+                synthetic_features,
+                synthetic_targets,
+                steps=train_steps_per_cycle,
+                batch_size=train_batch_size,
+                seed=seed,
+            )
+
+        strict_positions = torch.nonzero(
+            strict_conflict_mask & query_mask, as_tuple=False
+        ).flatten()
+        if strict_positions.numel() > 0:
+            query_features = build_comparator_features(
+                task_probs[strict_positions],
+                clip_probs[strict_positions],
+                task_features[strict_positions],
+                clip_features[strict_positions],
+                task_bank,
+                clip_bank,
+                class_a=task_top1[strict_positions],
+                class_b=clip_top1[strict_positions],
+                sim_topk=sim_topk,
+            ).to(device)
+            comparator.eval()
+            with torch.no_grad():
+                logits = comparator(query_features).cpu()
+            decision = apply_pairwise_decision(
+                logits,
+                task_top1[strict_positions],
+                clip_top1[strict_positions],
+                gate=gate,
+            )
+            resolved_strict = strict_positions[decision["resolved"]]
+            resolved_mask[resolved_strict] = True
+            context_labels[resolved_strict] = decision["chosen"][
+                decision["resolved"]
+            ].long()
+            winning_distribution = torch.where(
+                (
+                    decision["trust_task"].unsqueeze(1)
+                    >= decision["trust_clip"].unsqueeze(1)
+                ).cpu(),
+                task_probs[strict_positions],
+                clip_probs[strict_positions],
+            )
+            refined_targets[resolved_strict] = winning_distribution[
+                decision["resolved"]
+            ].detach()
+            stats["resolved_strict"] = int(decision["resolved"].sum().item())
+            stats["support_task"] = int(
+                (
+                    decision["resolved"]
+                    & (decision["trust_task"] >= decision["trust_clip"])
+                )
+                .sum()
+                .item()
+            )
+            stats["support_clip"] = int(
+                (
+                    decision["resolved"]
+                    & (decision["trust_task"] < decision["trust_clip"])
+                )
+                .sum()
+                .item()
+            )
+            stats["abstain"] = int((~decision["resolved"]).sum().item())
+            stats["context_mean_conf"] = float(
+                decision["confidence"][decision["resolved"]].mean().item()
+            ) if int(decision["resolved"].sum().item()) > 0 else float("nan")
+            stats["context_mean_margin"] = float(
+                decision["margin"][decision["resolved"]].mean().item()
+            ) if int(decision["resolved"].sum().item()) > 0 else float("nan")
+
+    strict_total_used = strict_total if use_strict_conflict else 0
+    stats["resolved_rate_pct"] = (
+        100.0 * stats["resolved_strict"] / strict_total_used
+        if strict_total_used > 0
+        else 0.0
+    )
+    stats["weak_defer_rate_pct"] = 0.0
+    stats["final_admitted"] = (
+        stats["post_prior_agreement"] - stats["weak_deferred"] + stats["resolved_strict"]
+    )
+    stats["admitted_delta"] = stats["resolved_strict"] - stats["weak_deferred"]
+    _log_correction_stats(stats, cycle, log_fn)
+    _log_context_stats(stats, "comparator", cycle, log_fn)
     if eval_only_logging and labels is not None:
         _log_eval_only_metrics(
             stats,

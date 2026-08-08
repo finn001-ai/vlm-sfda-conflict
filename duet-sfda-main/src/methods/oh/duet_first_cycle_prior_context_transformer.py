@@ -42,6 +42,7 @@ from src.utils.adaptation_lists import load_adaptation_and_evaluation_rows
 from src.utils.first_cycle_prior import apply_first_cycle_prior
 from src.utils.duet_context import (
     DuetContextConflictTransformer,
+    PairwiseConflictComparator,
     run_context_refinement,
 )
 
@@ -322,10 +323,11 @@ def train_target(
         "transformer",
         "cosine_knn",
         "prototype",
+        "comparator",
     ):
         raise ValueError(
             "DUET_CONTEXT.REFINER_TYPE must be one of "
-            "transformer | cosine_knn | prototype"
+            "transformer | cosine_knn | prototype | comparator"
         )
     if context_enabled and int(cfg.DUET_CONTEXT.ANCHORS_PER_CLASS) < 1:
         raise ValueError("DUET_CONTEXT.ANCHORS_PER_CLASS must be >= 1")
@@ -426,33 +428,58 @@ def train_target(
     text_features = None
     context_transformer = None
     context_optimizer = None
+    context_comparator = None
+    context_comparator_optimizer = None
     if context_enabled:
-        context_transformer = DuetContextConflictTransformer(
-            feature_dim=int(cfg.bottleneck),
-            num_classes=int(cfg.class_num),
-            model_dim=int(cfg.DUET_CONTEXT.MODEL_DIM),
-            num_heads=int(cfg.DUET_CONTEXT.NUM_HEADS),
-            ffn_dim=int(cfg.DUET_CONTEXT.FFN_DIM),
-            dropout=float(cfg.DUET_CONTEXT.DROPOUT),
-        ).cuda()
-        context_optimizer = optim.Adam(
-            context_transformer.parameters(),
-            lr=float(cfg.DUET_CONTEXT.LR),
-            weight_decay=float(cfg.DUET_CONTEXT.WEIGHT_DECAY),
-        )
-        logging.info(
-            "DUET context transformer initialized: feature_dim={}; "
-            "num_classes={}; model_dim={}; num_heads={}; ffn_dim={}; "
-            "dropout={:.2f}; trainable_parameters={}".format(
-                int(cfg.bottleneck),
-                int(cfg.class_num),
-                int(cfg.DUET_CONTEXT.MODEL_DIM),
-                int(cfg.DUET_CONTEXT.NUM_HEADS),
-                int(cfg.DUET_CONTEXT.FFN_DIM),
-                float(cfg.DUET_CONTEXT.DROPOUT),
-                sum(p.numel() for p in context_transformer.parameters()),
+        if context_refiner == "comparator":
+            context_comparator = PairwiseConflictComparator(
+                input_dim=16,
+                hidden=int(cfg.DUET_CONTEXT.COMPARATOR_HIDDEN),
+                layers=int(cfg.DUET_CONTEXT.COMPARATOR_LAYERS),
+                dropout=float(cfg.DUET_CONTEXT.DROPOUT),
+            ).cuda()
+            context_comparator_optimizer = optim.Adam(
+                context_comparator.parameters(),
+                lr=float(cfg.DUET_CONTEXT.LR),
+                weight_decay=float(cfg.DUET_CONTEXT.WEIGHT_DECAY),
             )
-        )
+            logging.info(
+                "DUET pairwise comparator initialized: input_dim=16; "
+                "hidden={}; layers={}; dropout={:.2f}; "
+                "trainable_parameters={}".format(
+                    int(cfg.DUET_CONTEXT.COMPARATOR_HIDDEN),
+                    int(cfg.DUET_CONTEXT.COMPARATOR_LAYERS),
+                    float(cfg.DUET_CONTEXT.DROPOUT),
+                    sum(p.numel() for p in context_comparator.parameters()),
+                )
+            )
+        else:
+            context_transformer = DuetContextConflictTransformer(
+                feature_dim=int(cfg.bottleneck),
+                num_classes=int(cfg.class_num),
+                model_dim=int(cfg.DUET_CONTEXT.MODEL_DIM),
+                num_heads=int(cfg.DUET_CONTEXT.NUM_HEADS),
+                ffn_dim=int(cfg.DUET_CONTEXT.FFN_DIM),
+                dropout=float(cfg.DUET_CONTEXT.DROPOUT),
+            ).cuda()
+            context_optimizer = optim.Adam(
+                context_transformer.parameters(),
+                lr=float(cfg.DUET_CONTEXT.LR),
+                weight_decay=float(cfg.DUET_CONTEXT.WEIGHT_DECAY),
+            )
+            logging.info(
+                "DUET context transformer initialized: feature_dim={}; "
+                "num_classes={}; model_dim={}; num_heads={}; ffn_dim={}; "
+                "dropout={:.2f}; trainable_parameters={}".format(
+                    int(cfg.bottleneck),
+                    int(cfg.class_num),
+                    int(cfg.DUET_CONTEXT.MODEL_DIM),
+                    int(cfg.DUET_CONTEXT.NUM_HEADS),
+                    int(cfg.DUET_CONTEXT.FFN_DIM),
+                    float(cfg.DUET_CONTEXT.DROPOUT),
+                    sum(p.numel() for p in context_transformer.parameters()),
+                )
+            )
 
     curr_cycle = 0
     # office-home : 1.0 / VisDA-C : 1.05
@@ -472,6 +499,8 @@ def train_target(
             context_conflict_transformer=context_enabled,
             context_transformer=context_transformer,
             context_optimizer=context_optimizer,
+            comparator=context_comparator,
+            comparator_optimizer=context_comparator_optimizer,
             context_cfg=cfg.DUET_CONTEXT,
             context_active_cycles=context_active_cycles,
             context_num_classes=int(cfg.class_num),
@@ -569,6 +598,8 @@ def obtain_label(
     context_conflict_transformer=False,
     context_transformer=None,
     context_optimizer=None,
+    comparator=None,
+    comparator_optimizer=None,
     context_cfg=None,
     context_active_cycles=(0,),
     context_num_classes=None,
@@ -587,6 +618,11 @@ def obtain_label(
         context_conflict_transformer
         and curr_cycle in tuple(context_active_cycles)
     )
+    comparator_mode = bool(
+        context_active
+        and context_cfg is not None
+        and str(context_cfg.REFINER_TYPE) == "comparator"
+    )
     if context_conflict_transformer and not context_active:
         # 每个 cycle 都输出一行：未激活时修正统计为 0，便于逐轮对比。
         logging.info(
@@ -596,7 +632,7 @@ def obtain_label(
                 curr_cycle + 1
             )
         )
-    if context_active:
+    if context_active and not comparator_mode:
         if (
             context_cfg is None
             or context_transformer is None
@@ -604,6 +640,11 @@ def obtain_label(
         ):
             raise ValueError(
                 "context-conflict transformer requires cfg, module and optimizer"
+            )
+    if comparator_mode:
+        if comparator is None or comparator_optimizer is None:
+            raise ValueError(
+                "comparator mode requires the comparator module and optimizer"
             )
     with torch.no_grad():
         iter_test = iter(loader)
@@ -618,6 +659,13 @@ def obtain_label(
             else:
                 clip_score, _ = clip_model(weak_x, text_inputs)
             clip_score = clip_score.cpu()
+            if comparator_mode:
+                clip_image_feature = clip_model.encode_image(weak_x).float().cpu()
+                strong_x = inputs_test[2].cuda()
+                strong_task_outputs = netC(netB(netF(strong_x)))
+                strong_clip_logits, _ = clip_model(strong_x, text_inputs)
+                strong_task_outputs = strong_task_outputs.float().cpu()
+                strong_clip_logits = strong_clip_logits.float().cpu()
 
             if start_test:
                 all_output = weak_outputs.float().cpu()
@@ -626,6 +674,10 @@ def obtain_label(
                 if context_active:
                     all_sample_index = sample_index.long().cpu()
                     all_task_features = weak_feas.float().cpu()
+                if comparator_mode:
+                    all_clip_features = clip_image_feature
+                    all_strong_task_outputs = strong_task_outputs
+                    all_strong_clip_outputs = strong_clip_logits
                 start_test = False
             else:
                 all_output = torch.cat((all_output, weak_outputs.float().cpu()), 0)
@@ -637,6 +689,16 @@ def obtain_label(
                     )
                     all_task_features = torch.cat(
                         (all_task_features, weak_feas.float().cpu()), 0
+                    )
+                if comparator_mode:
+                    all_clip_features = torch.cat(
+                        (all_clip_features, clip_image_feature), 0
+                    )
+                    all_strong_task_outputs = torch.cat(
+                        (all_strong_task_outputs, strong_task_outputs), 0
+                    )
+                    all_strong_clip_outputs = torch.cat(
+                        (all_strong_clip_outputs, strong_clip_logits), 0
                     )
 
     all_output = nn.Softmax(dim=1)(all_output)
@@ -683,6 +745,23 @@ def obtain_label(
             sample_indices=all_sample_index,
             transformer=context_transformer,
             optimizer=context_optimizer,
+            clip_features=(
+                all_clip_features if comparator_mode else None
+            ),
+            strong_task_probs=(
+                nn.Softmax(dim=1)(all_strong_task_outputs)
+                if comparator_mode
+                else None
+            ),
+            strong_clip_probs=(
+                nn.Softmax(dim=1)(all_strong_clip_outputs)
+                if comparator_mode
+                else None
+            ),
+            comparator=(comparator if comparator_mode else None),
+            comparator_optimizer=(
+                comparator_optimizer if comparator_mode else None
+            ),
             cycle=int(curr_cycle + 1),
         )
         # weak-agreement 未通过验证：暂缓进入硬 CE（admission_matching=False），
