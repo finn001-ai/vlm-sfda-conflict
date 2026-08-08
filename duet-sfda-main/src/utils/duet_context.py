@@ -1557,8 +1557,9 @@ def run_comparator_refinement(
         ):
             # 按“信任方向”分别过滤再合并，避免 matching 把某一方向筛没，
             # 导致 comparator 出现 trust Task / trust CLIP 数量严重失衡。
-            trust_task_mask = synthetic_targets == 0.0  # CLIP-error -> trust Task
-            trust_clip_mask = synthetic_targets == 1.0  # Task-error -> trust CLIP
+            match_device = synthetic_features.device
+            trust_task_mask = (synthetic_targets == 0.0).to(match_device)  # CLIP-error -> trust Task
+            trust_clip_mask = (synthetic_targets == 1.0).to(match_device)  # Task-error -> trust CLIP
             before_trust_task = int(trust_task_mask.sum().item())
             before_trust_clip = int(trust_clip_mask.sum().item())
             keep_task, fallback_task = _zscore_filter(
@@ -1568,6 +1569,7 @@ def run_comparator_refinement(
                 dist_match_z_max,
                 min_kept=min_dist_match_kept,
             )
+            keep_task = keep_task.to(match_device)
             keep_clip, fallback_clip = _zscore_filter(
                 synthetic_features[trust_clip_mask].cpu(),
                 real_features.cpu(),
@@ -1575,7 +1577,12 @@ def run_comparator_refinement(
                 dist_match_z_max,
                 min_kept=min_dist_match_kept,
             )
-            keep = torch.zeros(synthetic_features.size(0), dtype=torch.bool)
+            keep_clip = keep_clip.to(match_device)
+            keep = torch.zeros(
+                synthetic_features.size(0),
+                dtype=torch.bool,
+                device=match_device,
+            )
             keep[trust_task_mask] = keep_task
             keep[trust_clip_mask] = keep_clip
             kept = int(keep.sum().item())
