@@ -78,6 +78,7 @@ def make_context_cfg(**overrides):
         MAX_TOP1_MARGIN=0.60,
         COMPARATOR_GATE=0.15,
         RUNNER_UP_FALLBACK=False,
+        SOFT_ONLY_ADMISSION=False,
     )
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -581,12 +582,18 @@ class ComparatorTest(unittest.TestCase):
             self.assertTrue(
                 ((chosen == task_side) | (chosen == clip_side)).all()
             )
-            self.assertTrue(
-                (
-                    result["refined_targets"][resolved].argmax(dim=1) == chosen
-                ).all()
-            )
+        self.assertTrue(
+            (
+                result["refined_targets"][resolved].argmax(dim=1) == chosen
+            ).all()
+        )
         self.assertTrue(any("DUET comparator synthetic conflicts" in line for line in logs))
+        self.assertTrue(
+            any("DUET comparator real-conflict distribution" in line for line in logs)
+        )
+        self.assertTrue(
+            any("DUET comparator synthetic distribution" in line for line in logs)
+        )
 
     def test_controls_shapes_and_no_nan(self):
         feat, task_prob, clip_prob, true_label = make_separable(n=256, num_classes=6, feature_dim=24)
@@ -692,6 +699,15 @@ class MethodFileContractTest(unittest.TestCase):
         self.assertIn(
             'admission_matching[context_payload["weak_rejected_mask"]] = False', source
         )
+
+    def test_soft_only_admission_gate(self):
+        """soft-only 消融：resolved 只做 KL soft target，不进 label_mask。"""
+        source = Path(
+            "src/methods/oh/duet_first_cycle_prior_context_transformer.py"
+        ).read_text()
+        self.assertIn("SOFT_ONLY_ADMISSION", source)
+        self.assertIn("DUET context soft-only", source)
+        self.assertIn("hard_admission=0", source)
 
     def test_strong_feature_collection_removed(self):
         """Regression: 之前 obtain_label 里 collect_features=True 而

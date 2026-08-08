@@ -778,25 +778,38 @@ def obtain_label(
 
     kl_soft_output = clip_all_output
     if context_payload is not None:
-        # resolved 的 strict conflict 必须同时修改：
-        #   label_mask -> True（进入硬 CE）
-        #   mem_label  -> context_top1（见下方 all_mix_output 覆盖）
-        #   kl_soft    -> refined context target（不再要求学习原始 CLIP 类）
+        soft_only_admission = bool(
+            getattr(context_cfg, "SOFT_ONLY_ADMISSION", False)
+        )
         resolved_mask = context_payload["resolved_mask"]
         if int(resolved_mask.sum().item()) > 0:
-            label_mask = label_mask | resolved_mask
             kl_soft_output = clip_all_output.clone()
             kl_soft_output[resolved_mask] = context_payload["refined_targets"][
                 resolved_mask
             ]
-            logging.info(
-                "DUET context transformer admitted: cycle={}; resolved={}; "
-                "unresolved_conflicts_stay_in_consistency_and_clip_kl=True; "
-                "ground_truth_affects_training=False".format(
-                    curr_cycle + 1,
-                    int(resolved_mask.sum().item()),
+            if soft_only_admission:
+                # 消融：resolved 决策只做 KL soft target，不产生 hard label。
+                logging.info(
+                    "DUET context soft-only: cycle={}; resolved_soft_targets={}; "
+                    "hard_admission=0; ground_truth_affects_training=False".format(
+                        curr_cycle + 1,
+                        int(resolved_mask.sum().item()),
+                    )
                 )
-            )
+            else:
+                # resolved 的 strict conflict 必须同时修改：
+                #   label_mask -> True（进入硬 CE）
+                #   mem_label  -> context_top1（见下方 all_mix_output 覆盖）
+                #   kl_soft    -> refined context target
+                label_mask = label_mask | resolved_mask
+                logging.info(
+                    "DUET context transformer admitted: cycle={}; resolved={}; "
+                    "unresolved_conflicts_stay_in_consistency_and_clip_kl=True; "
+                    "ground_truth_affects_training=False".format(
+                        curr_cycle + 1,
+                        int(resolved_mask.sum().item()),
+                    )
+                )
 
     # 伪标签精度日志（与原 DUET 一致）
     valid_preds = all_output_pred[label_mask]
@@ -812,12 +825,16 @@ def obtain_label(
 
     # 混合分布：先按原始 DUET 生成，再覆盖 resolved 行
     all_mix_output = (all_output + clip_all_output) / 2.0
-    if context_payload is not None:
+    if context_payload is not None and not bool(
+        getattr(context_cfg, "SOFT_ONLY_ADMISSION", False)
+    ):
         all_mix_output[context_payload["resolved_mask"]] = context_payload[
             "refined_targets"
         ][context_payload["resolved_mask"]]
     _, all_mix_output_pred = torch.max(all_mix_output, dim=1)
-    if context_payload is not None:
+    if context_payload is not None and not bool(
+        getattr(context_cfg, "SOFT_ONLY_ADMISSION", False)
+    ):
         resolved_mask = context_payload["resolved_mask"]
         if int(resolved_mask.sum().item()) > 0:
             mem_kl_consistent = bool(

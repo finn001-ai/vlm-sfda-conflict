@@ -382,6 +382,10 @@ _C.DUET_CONTEXT.COMPARATOR_GATE = 0.20
 # v1 只使用 strong augmentation 真实 flip 造 synthetic conflict；
 # 置 True 时允许在无 flip 的情况下退化为“交换该分支 A/B 概率”的 runner-up。
 _C.DUET_CONTEXT.RUNNER_UP_FALLBACK = False
+# soft-only 消融：comparator 的 resolved 决策只用于 KL soft target
+# （refined_targets / kl_soft），不再执行 label_mask |= resolved_mask，
+# 即不产生新的 hard pseudo-label。用于验证 arbitration 信号本身有没有价值。
+_C.DUET_CONTEXT.SOFT_ONLY_ADMISSION = False
 # 固定随机种子（leave-one-out 采样等）。
 _C.DUET_CONTEXT.SEED = 2020
 # 是否打印 evaluation-only 指标（target label 只进日志，不进训练）。

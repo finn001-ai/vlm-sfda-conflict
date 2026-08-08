@@ -369,6 +369,41 @@ def _topk_mean_cosine_support(
     return float(similarities.topk(k).values.mean().item()), 1.0
 
 
+def _log_pair_distribution(
+    features: torch.Tensor,
+    tag: str,
+    cycle: int,
+    log_fn: Callable[[str], None],
+) -> None:
+    """输出一组 pair 特征（16 维）的均值分布，用于对比 synthetic vs real。"""
+    if features.numel() == 0:
+        return
+    means = features.float().mean(dim=0)
+    log_fn(
+        "DUET comparator {} distribution: cycle={}; p_task_A={:.4f}; "
+        "p_task_B={:.4f}; p_clip_A={:.4f}; p_clip_B={:.4f}; "
+        "task_margin={:.4f}; clip_margin={:.4f}; task_entropy={:.4f}; "
+        "clip_entropy={:.4f}; task_sim_A={:.4f}; task_sim_B={:.4f}; "
+        "clip_sim_A={:.4f}; clip_sim_B={:.4f}; "
+        "ground_truth_affects_training=False".format(
+            tag,
+            cycle,
+            means[0].item(),
+            means[1].item(),
+            means[2].item(),
+            means[3].item(),
+            means[6].item(),
+            means[7].item(),
+            means[4].item(),
+            means[5].item(),
+            means[8].item(),
+            means[9].item(),
+            means[10].item(),
+            means[11].item(),
+        )
+    )
+
+
 class PairwiseConflictComparator(nn.Module):
     """Pairwise conflict-resolution comparator（二选一 + 边际 abstain）。
 
@@ -1445,6 +1480,9 @@ def run_comparator_refinement(
                 synthetic_features.size(0),
             )
         )
+        _log_pair_distribution(
+            synthetic_features, "synthetic", cycle, log_fn
+        )
         if comparator is None:
             raise ValueError("refiner_type=comparator requires a comparator module")
         if (
@@ -1477,6 +1515,9 @@ def run_comparator_refinement(
                 class_b=clip_top1[strict_positions],
                 sim_topk=sim_topk,
             ).to(device)
+            _log_pair_distribution(
+                query_features.cpu(), "real-conflict", cycle, log_fn
+            )
             comparator.eval()
             with torch.no_grad():
                 logits = comparator(query_features).cpu()
