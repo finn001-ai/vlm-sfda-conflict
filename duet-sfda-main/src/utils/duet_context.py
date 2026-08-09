@@ -677,21 +677,66 @@ def train_pairwise_comparator(
     steps: int,
     batch_size: int,
     seed: int,
+    val_features: Optional[torch.Tensor] = None,
+    val_targets: Optional[torch.Tensor] = None,
+    patience: int = 20,
+    log_fn: Callable[[str], None] = logging.info,
 ) -> Optional[float]:
-    """在 synthetic conflict 对上训练 comparator（2-way CE）。"""
+    """在 synthetic conflict 对上训练 comparator（2-way CE，按方向平衡采样）。
+
+    提供 ``val_features/val_targets`` 时启用 early stopping：以 synthetic
+    validation accuracy 为准，连续 ``patience`` 步无提升则停止，并恢复
+    最佳状态。validation 来自无标签可构造的 synthetic 划分，不需要 GT。
+    """
     if features.numel() == 0 or features.size(0) < 2:
         return None
     comparator.train()
     generator = torch.Generator(device=features.device)
     generator.manual_seed(int(seed))
+    device = features.device
+    trust_task_positions = torch.nonzero(targets == 0.0, as_tuple=False).flatten()
+    trust_clip_positions = torch.nonzero(targets == 1.0, as_tuple=False).flatten()
+    balanced = (
+        trust_task_positions.numel() > 0
+        and trust_clip_positions.numel() > 0
+    )
+    use_val = val_features is not None and val_targets is not None and val_features.size(0) >= 2
+    best_state = None
+    best_val_acc = -1.0
+    best_step = 0
+    steps_without_improvement = 0
     total_loss = 0.0
     counted = 0
-    for _ in range(max(1, int(steps))):
-        if features.size(0) <= batch_size:
-            indices = torch.arange(features.size(0), device=features.device)
+    for step in range(max(1, int(steps))):
+        if balanced:
+            half = max(1, int(batch_size) // 2)
+            task_sel = trust_task_positions[
+                torch.randint(
+                    0,
+                    trust_task_positions.numel(),
+                    (half,),
+                    generator=generator,
+                    device=device,
+                )
+            ]
+            clip_sel = trust_clip_positions[
+                torch.randint(
+                    0,
+                    trust_clip_positions.numel(),
+                    (half,),
+                    generator=generator,
+                    device=device,
+                )
+            ]
+            indices = torch.cat([task_sel, clip_sel])
+            indices = indices[
+                torch.randperm(indices.numel(), generator=generator, device=device)
+            ]
+        elif features.size(0) <= batch_size:
+            indices = torch.arange(features.size(0), device=device)
         else:
             indices = torch.randperm(
-                features.size(0), generator=generator, device=features.device
+                features.size(0), generator=generator, device=device
             )[:batch_size]
         logits = comparator(features[indices].detach())
         targets = targets.to(logits.device)
@@ -701,8 +746,149 @@ def train_pairwise_comparator(
         optimizer.step()
         total_loss += float(loss.detach().item())
         counted += 1
+        if use_val:
+            val_acc = _comparator_val_accuracy(
+                comparator, val_features, val_targets
+            )
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                best_step = step + 1
+                best_state = {
+                    key: value.detach().clone()
+                    for key, value in comparator.state_dict().items()
+                }
+                steps_without_improvement = 0
+            else:
+                steps_without_improvement += 1
+                if steps_without_improvement >= max(1, int(patience)):
+                    log_fn(
+                        "DUET comparator early stop: best_step={}; "
+                        "best_val_acc={:.4f}; stopped_at={}; "
+                        "ground_truth_affects_training=False".format(
+                            best_step, best_val_acc, step + 1
+                        )
+                    )
+                    break
+    if use_val and best_state is not None:
+        comparator.load_state_dict(best_state)
+        log_fn(
+            "DUET comparator early stop: best_step={}; best_val_acc={:.4f}; "
+            "completed={}; ground_truth_affects_training=False".format(
+                best_step, best_val_acc, step + 1
+            )
+        )
     comparator.eval()
     return total_loss / counted if counted else None
+
+
+def _comparator_val_accuracy(
+    comparator: PairwiseConflictComparator,
+    val_features: torch.Tensor,
+    val_targets: torch.Tensor,
+) -> float:
+    device = next(comparator.parameters()).device
+    val_features = val_features.to(device)
+    val_targets = val_targets.to(device)
+    comparator.eval()
+    with torch.no_grad():
+        probabilities = _softmax_probabilities(comparator(val_features))
+    # target 约定：0 = trust Task，1 = trust CLIP；
+    # tie（p_task == p_clip）与 inference 的 chosen 保持一致 → trust Task。
+    side = (probabilities[:, 1] > probabilities[:, 0]).long()
+    correct = (side == val_targets.long().to(side.device)).float()
+    comparator.train()
+    return float(correct.mean().item())
+
+
+def split_balanced_train_val(
+    features: torch.Tensor,
+    targets: torch.Tensor,
+    *,
+    val_fraction: float,
+    seed: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """按信任方向分别划分 train/val，保持两侧数量平衡。"""
+    device = features.device
+    generator = torch.Generator(device=device)
+    generator.manual_seed(int(seed))
+    val_positions = []
+    for direction in (0.0, 1.0):
+        positions = torch.nonzero(targets == direction, as_tuple=False).flatten()
+        if positions.numel() == 0:
+            continue
+        permutation = torch.randperm(
+            positions.numel(), generator=generator, device=device
+        )
+        n_val = max(1, int(round(val_fraction * positions.numel())))
+        n_val = min(n_val, positions.numel() - 1)
+        val_positions.append(positions[permutation[:n_val]])
+    if not val_positions:
+        empty = torch.zeros(0, dtype=torch.bool, device=device)
+        return features, targets, features[empty], targets[empty]
+    val_mask = torch.zeros(features.size(0), dtype=torch.bool, device=device)
+    val_mask[torch.cat(val_positions)] = True
+    return (
+        features[~val_mask],
+        targets[~val_mask],
+        features[val_mask],
+        targets[val_mask],
+    )
+
+
+def calibrate_comparator_gate(
+    comparator: PairwiseConflictComparator,
+    val_features: torch.Tensor,
+    val_targets: torch.Tensor,
+    *,
+    target_precision: float,
+    min_coverage: int = 2,
+) -> dict:
+    """在 synthetic validation 上无监督校准 abstain gate。
+
+    选一个 margin 门槛 g：validation 中 margin >= g 的样本，仲裁精度
+    （选中正确方向的占比）>= target_precision；找不到时退化为选精度
+    最高的门槛。完全不需要 target GT。
+    """
+    device = next(comparator.parameters()).device
+    val_features = val_features.to(device)
+    val_targets = val_targets.to(device)
+    comparator.eval()
+    with torch.no_grad():
+        probabilities = _softmax_probabilities(comparator(val_features))
+    margin = (probabilities[:, 0] - probabilities[:, 1]).abs()
+    # target 约定：0 = trust Task，1 = trust CLIP；
+    # tie（p_task == p_clip）与 inference 的 chosen 保持一致 → trust Task。
+    side = (probabilities[:, 1] > probabilities[:, 0]).long()
+    correct = (side == val_targets.long().to(side.device)).float()
+    candidates = torch.sort(margin).values
+    best_gate = None
+    best_precision = -1.0
+    best_coverage = 0
+    target_met = False
+    for threshold in candidates:
+        mask = margin >= threshold
+        coverage = int(mask.sum().item())
+        if coverage < min_coverage:
+            continue
+        precision = float(correct[mask].mean().item())
+        if precision >= target_precision and not target_met:
+            # 最宽松（threshold 最小）且满足目标精度的门槛 → 覆盖最大
+            best_gate = float(threshold.item())
+            best_precision = precision
+            best_coverage = coverage
+            target_met = True
+            break
+        if precision > best_precision:
+            best_gate = float(threshold.item())
+            best_precision = precision
+            best_coverage = coverage
+    comparator.train()
+    return {
+        "gate": best_gate if best_gate is not None else 1.0,
+        "precision": best_precision if best_gate is not None else 0.0,
+        "coverage": best_coverage,
+        "target_met": target_met,
+    }
 
 
 def apply_pairwise_decision(
@@ -1341,6 +1527,16 @@ def run_comparator_refinement(
     min_dist_match_kept = int(getattr(context_cfg, "MIN_DIST_MATCH_KEPT", 16))
     train_steps_per_cycle = int(context_cfg.TRAIN_STEPS_PER_CYCLE)
     train_batch_size = int(context_cfg.TRAIN_BATCH_SIZE)
+    gate_calibrate = bool(
+        getattr(context_cfg, "COMPARATOR_GATE_CALIBRATE", False)
+    )
+    gate_target_precision = float(
+        getattr(context_cfg, "COMPARATOR_GATE_TARGET_PRECISION", 0.80)
+    )
+    val_fraction = float(getattr(context_cfg, "COMPARATOR_VAL_FRACTION", 0.20))
+    early_stop_patience = int(
+        getattr(context_cfg, "COMPARATOR_EARLY_STOP_PATIENCE", 20)
+    )
     seed = int(context_cfg.SEED) + int(cycle - 1)
     eval_only_logging = bool(context_cfg.EVAL_ONLY_LOGGING)
 
@@ -1629,19 +1825,47 @@ def run_comparator_refinement(
             )
         if comparator is None:
             raise ValueError("refiner_type=comparator requires a comparator module")
+        # matched synthetic -> train/validation 划分（按方向分层，保持平衡）
+        (
+            train_features,
+            train_targets,
+            val_features,
+            val_targets,
+        ) = split_balanced_train_val(
+            synthetic_features,
+            synthetic_targets,
+            val_fraction=val_fraction,
+            seed=seed,
+        )
+        log_fn(
+            "DUET comparator train/val split: cycle={}; train={}; val={}; "
+            "ground_truth_affects_training=False".format(
+                cycle,
+                train_features.size(0),
+                val_features.size(0),
+            )
+        )
         if (
-            synthetic_features.size(0) >= 2
+            train_features.size(0) >= 2
             and train_steps_per_cycle > 0
             and comparator_optimizer is not None
         ):
             stats["train_loss"] = train_pairwise_comparator(
                 comparator,
                 comparator_optimizer,
-                synthetic_features,
-                synthetic_targets,
+                train_features,
+                train_targets,
                 steps=train_steps_per_cycle,
                 batch_size=train_batch_size,
                 seed=seed,
+                val_features=(
+                    val_features if val_features.size(0) >= 2 else None
+                ),
+                val_targets=(
+                    val_targets if val_features.size(0) >= 2 else None
+                ),
+                patience=early_stop_patience,
+                log_fn=log_fn,
             )
 
         if strict_positions.numel() > 0:
@@ -1654,10 +1878,44 @@ def run_comparator_refinement(
                 clip_top1[strict_positions],
                 gate=gate,
             )
-            resolved_strict = strict_positions[decision["resolved"]]
+            final_gate = gate
+            if (
+                gate_calibrate
+                and val_features is not None
+                and val_features.size(0) >= 2
+            ):
+                # 动态最小覆盖：至少 4 个或 val 的 30%，避免 2 个样本
+                # 偶然达到 100% precision 就定 gate。
+                calibration_min_coverage = max(
+                    4,
+                    int(round(0.30 * val_features.size(0))),
+                )
+                calibration = calibrate_comparator_gate(
+                    comparator,
+                    val_features,
+                    val_targets,
+                    target_precision=gate_target_precision,
+                    min_coverage=calibration_min_coverage,
+                )
+                final_gate = calibration["gate"]
+                log_fn(
+                    "DUET comparator gate calibration: cycle={}; gate={:.4f}; "
+                    "val_precision={:.4f}; val_coverage={}; "
+                    "target_precision={:.4f}; target_met={}; "
+                    "ground_truth_affects_training=False".format(
+                        cycle,
+                        calibration["gate"],
+                        calibration["precision"],
+                        calibration["coverage"],
+                        gate_target_precision,
+                        calibration["target_met"],
+                    )
+                )
+            resolved_rows = decision["margin"] >= final_gate
+            resolved_strict = strict_positions[resolved_rows]
             resolved_mask[resolved_strict] = True
             context_labels[resolved_strict] = decision["chosen"][
-                decision["resolved"]
+                resolved_rows
             ].long()
             winning_distribution = torch.where(
                 (
@@ -1668,12 +1926,12 @@ def run_comparator_refinement(
                 clip_probs[strict_positions],
             )
             refined_targets[resolved_strict] = winning_distribution[
-                decision["resolved"]
+                resolved_rows
             ].detach()
-            stats["resolved_strict"] = int(decision["resolved"].sum().item())
+            stats["resolved_strict"] = int(resolved_rows.sum().item())
             stats["support_task"] = int(
                 (
-                    decision["resolved"]
+                    resolved_rows
                     & (decision["trust_task"] >= decision["trust_clip"])
                 )
                 .sum()
@@ -1681,19 +1939,19 @@ def run_comparator_refinement(
             )
             stats["support_clip"] = int(
                 (
-                    decision["resolved"]
+                    resolved_rows
                     & (decision["trust_task"] < decision["trust_clip"])
                 )
                 .sum()
                 .item()
             )
-            stats["abstain"] = int((~decision["resolved"]).sum().item())
+            stats["abstain"] = int((~resolved_rows).sum().item())
             stats["context_mean_conf"] = float(
-                decision["confidence"][decision["resolved"]].mean().item()
-            ) if int(decision["resolved"].sum().item()) > 0 else float("nan")
+                decision["confidence"][resolved_rows].mean().item()
+            ) if int(resolved_rows.sum().item()) > 0 else float("nan")
             stats["context_mean_margin"] = float(
-                decision["margin"][decision["resolved"]].mean().item()
-            ) if int(decision["resolved"].sum().item()) > 0 else float("nan")
+                decision["margin"][resolved_rows].mean().item()
+            ) if int(resolved_rows.sum().item()) > 0 else float("nan")
 
     strict_total_used = strict_total if use_strict_conflict else 0
     stats["resolved_rate_pct"] = (

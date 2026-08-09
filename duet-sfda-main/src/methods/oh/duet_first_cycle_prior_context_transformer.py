@@ -430,56 +430,33 @@ def train_target(
     context_optimizer = None
     context_comparator = None
     context_comparator_optimizer = None
-    if context_enabled:
-        if context_refiner == "comparator":
-            context_comparator = PairwiseConflictComparator(
-                input_dim=16,
-                hidden=int(cfg.DUET_CONTEXT.COMPARATOR_HIDDEN),
-                layers=int(cfg.DUET_CONTEXT.COMPARATOR_LAYERS),
-                dropout=float(cfg.DUET_CONTEXT.DROPOUT),
-            ).cuda()
-            context_comparator_optimizer = optim.Adam(
-                context_comparator.parameters(),
-                lr=float(cfg.DUET_CONTEXT.LR),
-                weight_decay=float(cfg.DUET_CONTEXT.WEIGHT_DECAY),
+    if context_enabled and context_refiner != "comparator":
+        context_transformer = DuetContextConflictTransformer(
+            feature_dim=int(cfg.bottleneck),
+            num_classes=int(cfg.class_num),
+            model_dim=int(cfg.DUET_CONTEXT.MODEL_DIM),
+            num_heads=int(cfg.DUET_CONTEXT.NUM_HEADS),
+            ffn_dim=int(cfg.DUET_CONTEXT.FFN_DIM),
+            dropout=float(cfg.DUET_CONTEXT.DROPOUT),
+        ).cuda()
+        context_optimizer = optim.Adam(
+            context_transformer.parameters(),
+            lr=float(cfg.DUET_CONTEXT.LR),
+            weight_decay=float(cfg.DUET_CONTEXT.WEIGHT_DECAY),
+        )
+        logging.info(
+            "DUET context transformer initialized: feature_dim={}; "
+            "num_classes={}; model_dim={}; num_heads={}; ffn_dim={}; "
+            "dropout={:.2f}; trainable_parameters={}".format(
+                int(cfg.bottleneck),
+                int(cfg.class_num),
+                int(cfg.DUET_CONTEXT.MODEL_DIM),
+                int(cfg.DUET_CONTEXT.NUM_HEADS),
+                int(cfg.DUET_CONTEXT.FFN_DIM),
+                float(cfg.DUET_CONTEXT.DROPOUT),
+                sum(p.numel() for p in context_transformer.parameters()),
             )
-            logging.info(
-                "DUET pairwise comparator initialized: input_dim=16; "
-                "hidden={}; layers={}; dropout={:.2f}; "
-                "trainable_parameters={}".format(
-                    int(cfg.DUET_CONTEXT.COMPARATOR_HIDDEN),
-                    int(cfg.DUET_CONTEXT.COMPARATOR_LAYERS),
-                    float(cfg.DUET_CONTEXT.DROPOUT),
-                    sum(p.numel() for p in context_comparator.parameters()),
-                )
-            )
-        else:
-            context_transformer = DuetContextConflictTransformer(
-                feature_dim=int(cfg.bottleneck),
-                num_classes=int(cfg.class_num),
-                model_dim=int(cfg.DUET_CONTEXT.MODEL_DIM),
-                num_heads=int(cfg.DUET_CONTEXT.NUM_HEADS),
-                ffn_dim=int(cfg.DUET_CONTEXT.FFN_DIM),
-                dropout=float(cfg.DUET_CONTEXT.DROPOUT),
-            ).cuda()
-            context_optimizer = optim.Adam(
-                context_transformer.parameters(),
-                lr=float(cfg.DUET_CONTEXT.LR),
-                weight_decay=float(cfg.DUET_CONTEXT.WEIGHT_DECAY),
-            )
-            logging.info(
-                "DUET context transformer initialized: feature_dim={}; "
-                "num_classes={}; model_dim={}; num_heads={}; ffn_dim={}; "
-                "dropout={:.2f}; trainable_parameters={}".format(
-                    int(cfg.bottleneck),
-                    int(cfg.class_num),
-                    int(cfg.DUET_CONTEXT.MODEL_DIM),
-                    int(cfg.DUET_CONTEXT.NUM_HEADS),
-                    int(cfg.DUET_CONTEXT.FFN_DIM),
-                    float(cfg.DUET_CONTEXT.DROPOUT),
-                    sum(p.numel() for p in context_transformer.parameters()),
-                )
-            )
+        )
 
     curr_cycle = 0
     # office-home : 1.0 / VisDA-C : 1.05
@@ -490,6 +467,43 @@ def train_target(
 
         netF.eval()
         netB.eval()
+        if context_enabled and context_refiner == "comparator":
+            # fresh comparator per active cycle：每个 adaptation stage 的
+            # Task/CLIP reliability 关系不同，仲裁器按当前 cycle 的
+            # synthetic 重新估计，避免跨轮复用导致 over-confidence。
+            if curr_cycle in context_active_cycles:
+                with torch.random.fork_rng(
+                    devices=[torch.cuda.current_device()]
+                ):
+                    # 初始化权重也绑定 cycle seed，且不污染全局 RNG
+                    torch.manual_seed(
+                        int(cfg.DUET_CONTEXT.SEED) + int(curr_cycle)
+                    )
+                    context_comparator = PairwiseConflictComparator(
+                        input_dim=16,
+                        hidden=int(cfg.DUET_CONTEXT.COMPARATOR_HIDDEN),
+                        layers=int(cfg.DUET_CONTEXT.COMPARATOR_LAYERS),
+                        dropout=float(cfg.DUET_CONTEXT.DROPOUT),
+                    ).cuda()
+                context_comparator_optimizer = optim.Adam(
+                    context_comparator.parameters(),
+                    lr=float(cfg.DUET_CONTEXT.LR),
+                    weight_decay=float(cfg.DUET_CONTEXT.WEIGHT_DECAY),
+                )
+                logging.info(
+                    "DUET pairwise comparator initialized (cycle {}): "
+                    "input_dim=16; hidden={}; layers={}; dropout={:.2f}; "
+                    "trainable_parameters={}".format(
+                        curr_cycle + 1,
+                        int(cfg.DUET_CONTEXT.COMPARATOR_HIDDEN),
+                        int(cfg.DUET_CONTEXT.COMPARATOR_LAYERS),
+                        float(cfg.DUET_CONTEXT.DROPOUT),
+                        sum(p.numel() for p in context_comparator.parameters()),
+                    )
+                )
+            else:
+                context_comparator = None
+                context_comparator_optimizer = None
         label_result = obtain_label(
             dset_loaders['test_aug'], netF, netB, netC, text_inputs, text_features,
             clip_model, prev_label_mask, curr_cycle,
