@@ -41,6 +41,7 @@ from data.domain_datasets import domain_datasets
 from src.utils.adaptation_lists import load_adaptation_and_evaluation_rows
 from src.utils.first_cycle_prior import apply_first_cycle_prior
 from src.utils.duet_context import (
+    ComparatorReplayMemory,
     DuetContextConflictTransformer,
     PairwiseConflictComparator,
     run_context_refinement,
@@ -482,6 +483,12 @@ def train_target(
                 sum(p.numel() for p in context_comparator.parameters()),
             )
         )
+        context_replay_memory = ComparatorReplayMemory(
+            per_direction_capacity=int(cfg.DUET_CONTEXT.REPLAY_PER_DIRECTION),
+            # replay 存的是 comparator 的 16 维 pair evidence，不是 Task feature。
+            feature_dim=16,
+            device=next(context_comparator.parameters()).device,
+        )
 
     curr_cycle = 0
     # office-home : 1.0 / VisDA-C : 1.05
@@ -492,43 +499,8 @@ def train_target(
 
         netF.eval()
         netB.eval()
-        if context_enabled and context_refiner == "comparator":
-            if curr_cycle in context_active_cycles:
-                if curr_cycle >= 2:
-                    # Cycle 3/4 换 fresh comparator：独立 RNG 初始化，
-                    # 不污染后续 Task 训练 / 增广的全局 RNG。
-                    with torch.random.fork_rng(
-                        devices=[torch.cuda.current_device()]
-                    ):
-                        torch.manual_seed(
-                            int(cfg.DUET_CONTEXT.SEED) + int(curr_cycle)
-                        )
-                        context_comparator = PairwiseConflictComparator(
-                            input_dim=16,
-                            hidden=int(cfg.DUET_CONTEXT.COMPARATOR_HIDDEN),
-                            layers=int(cfg.DUET_CONTEXT.COMPARATOR_LAYERS),
-                            dropout=float(cfg.DUET_CONTEXT.DROPOUT),
-                        ).cuda()
-                    context_comparator_optimizer = optim.Adam(
-                        context_comparator.parameters(),
-                        lr=float(cfg.DUET_CONTEXT.LR),
-                        weight_decay=float(cfg.DUET_CONTEXT.WEIGHT_DECAY),
-                    )
-                    logging.info(
-                        "DUET pairwise comparator initialized (cycle {}): "
-                        "input_dim=16; hidden={}; layers={}; dropout={:.2f}; "
-                        "trainable_parameters={}".format(
-                            curr_cycle + 1,
-                            int(cfg.DUET_CONTEXT.COMPARATOR_HIDDEN),
-                            int(cfg.DUET_CONTEXT.COMPARATOR_LAYERS),
-                            float(cfg.DUET_CONTEXT.DROPOUT),
-                            sum(p.numel() for p in context_comparator.parameters()),
-                        )
-                    )
-                # Cycle 2（index 1）：沿用训练开始前创建的 comparator，
-                # 从未训练过，因此同样是 fresh；且不消耗任何全局 RNG。
-            # Cycle 1（index 0）不激活：保留预创建的 comparator 但不用，
-            # obtain_label 里 comparator_mode=False 会自动忽略它，无需清空。
+        # persistent comparator：Cycle 2/3/4 沿用同一个 comparator + optimizer，
+        # 不 reset（Run 9/10 行为）；Cycle 1 不激活，obtain_label 自动忽略。
         label_result = obtain_label(
             dset_loaders['test_aug'], netF, netB, netC, text_inputs, text_features,
             clip_model, prev_label_mask, curr_cycle,
@@ -540,6 +512,11 @@ def train_target(
             context_optimizer=context_optimizer,
             comparator=context_comparator,
             comparator_optimizer=context_comparator_optimizer,
+            replay_memory=(
+                context_replay_memory
+                if context_enabled and context_refiner == "comparator"
+                else None
+            ),
             context_cfg=cfg.DUET_CONTEXT,
             context_active_cycles=context_active_cycles,
             context_num_classes=int(cfg.class_num),
@@ -639,6 +616,7 @@ def obtain_label(
     context_optimizer=None,
     comparator=None,
     comparator_optimizer=None,
+    replay_memory=None,
     context_cfg=None,
     context_active_cycles=(0,),
     context_num_classes=None,
@@ -818,6 +796,7 @@ def obtain_label(
             comparator_optimizer=(
                 comparator_optimizer if comparator_mode else None
             ),
+            replay_memory=(replay_memory if comparator_mode else None),
             cycle=int(curr_cycle + 1),
         )
         # weak-agreement 未通过验证：暂缓进入硬 CE（admission_matching=False），

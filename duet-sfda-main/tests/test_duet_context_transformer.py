@@ -15,6 +15,7 @@ import torch
 
 from src.utils.duet_context import (
     ClassBalancedAnchorBank,
+    ComparatorReplayMemory,
     DuetContextConflictTransformer,
     PairwiseConflictComparator,
     apply_pairwise_decision,
@@ -78,6 +79,8 @@ def make_context_cfg(**overrides):
         MIN_RUNNER_PROB=0.10,
         MAX_TOP1_MARGIN=0.60,
         COMPARATOR_GATE=0.15,
+        REPLAY_PER_DIRECTION=64,
+        REPLAY_MIX_FRACTION=0.25,
         SOFT_ONLY_ADMISSION=False,
         DIST_MATCH_SYNTHETIC=False,
         DIST_MATCH_Z_MAX=1.5,
@@ -577,6 +580,91 @@ class ComparatorTest(unittest.TestCase):
         )
         self.assertIsNotNone(loss1)
         self.assertLess(loss2, loss1)
+
+    def test_replay_memory_per_direction_cap_and_update(self):
+        memory = ComparatorReplayMemory(per_direction_capacity=4, feature_dim=8)
+        features = torch.randn(10, 8)
+        targets = torch.tensor([0.0] * 5 + [1.0] * 5)
+        memory.update(features, targets)
+        self.assertEqual(memory.task_features.size(0), 4)
+        self.assertEqual(memory.clip_features.size(0), 4)
+        mem_f, mem_t = memory.as_tensors()
+        self.assertEqual(mem_f.size(0), 8)
+        self.assertTrue(torch.allclose(mem_f[:4], features[1:5]))
+        self.assertTrue(torch.allclose(mem_f[4:], features[6:]))
+        # 继续 update 仍 cap，保留最新
+        memory.update(features[5:6], torch.tensor([1.0]))
+        self.assertEqual(memory.clip_features.size(0), 4)
+        # 均衡采样：两方向各半
+        generator = torch.Generator()
+        generator.manual_seed(0)
+        s_f, s_t = memory.sample(4, generator)
+        self.assertEqual(s_f.size(0), 4)
+        self.assertEqual(int((s_t == 0).sum()), int((s_t == 1).sum()))
+
+    def test_train_pairwise_comparator_with_replay_mixing(self):
+        torch.manual_seed(0)
+        pos = torch.randn(20, 8) + 1.0
+        neg = torch.randn(20, 8) - 1.0
+        current_f = torch.cat([neg, pos])
+        current_t = torch.tensor([0.0] * 20 + [1.0] * 20)
+        mem_f = torch.cat([neg[:4], pos[:4]])
+        mem_t = torch.tensor([0.0] * 4 + [1.0] * 4)
+        model = PairwiseConflictComparator(input_dim=8, hidden=16, layers=2)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
+        loss1 = train_pairwise_comparator(
+            model, optimizer, current_f, current_t,
+            steps=20, batch_size=32, seed=1,
+            memory_features=mem_f, memory_targets=mem_t, memory_fraction=0.25,
+        )
+        loss2 = train_pairwise_comparator(
+            model, optimizer, current_f, current_t,
+            steps=20, batch_size=32, seed=1,
+            memory_features=mem_f, memory_targets=mem_t, memory_fraction=0.25,
+        )
+        self.assertIsNotNone(loss1)
+        self.assertLess(loss2, loss1)
+        with torch.no_grad():
+            probs = torch.softmax(model(current_f), 1)
+            acc = (probs.argmax(1) == current_t.long()).float().mean().item()
+        self.assertGreater(acc, 0.7)
+
+    def test_replay_memory_integration_log(self):
+        """带 replay memory 的 comparator 管线：日志出现 replay 行。"""
+        torch.manual_seed(2)
+        n, c, d = 512, 8, 32
+        feat = torch.randn(n, d)
+        proto = torch.randn(c, d)
+        sim = feat @ proto.t()
+        task_prob = torch.softmax(sim * 3.0 + torch.randn(n, c) * 0.2, dim=1)
+        clip_prob = torch.softmax(sim * 2.8 + torch.randn(n, c) * 0.4, dim=1)
+        clip_feat = torch.randn(n, d)
+        true_label = sim.argmax(dim=1)
+        strong_task = torch.softmax(sim * 1.5 + torch.randn(n, c) * 0.7, dim=1)
+        strong_clip = torch.softmax(sim * 1.3 + torch.randn(n, c) * 0.8, dim=1)
+        memory = ComparatorReplayMemory(
+            per_direction_capacity=8, feature_dim=16, device=torch.device("cpu")
+        )
+        memory.update(torch.randn(10, 16), torch.tensor([0.0] * 5 + [1.0] * 5))
+        model = PairwiseConflictComparator(input_dim=16, hidden=32, layers=2)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        logs = []
+        run_context_refinement(
+            task_prob, clip_prob, feat, num_classes=c,
+            context_cfg=make_context_cfg(
+                REFINER_TYPE="comparator", TRAIN_STEPS_PER_CYCLE=30,
+            ),
+            pre_prior_task_probs=task_prob, pre_prior_clip_probs=clip_prob,
+            labels=true_label, sample_indices=torch.arange(n),
+            clip_features=clip_feat,
+            strong_task_probs=strong_task, strong_clip_probs=strong_clip,
+            strong_task_features=feat, strong_clip_features=clip_feat,
+            comparator=model, comparator_optimizer=optimizer,
+            replay_memory=memory, cycle=3, log_fn=logs.append,
+        )
+        self.assertTrue(
+            any("DUET comparator replay" in line for line in logs)
+        )
 
     def test_decision_margin_gate(self):
         logits = torch.tensor([[1.0, -1.0], [-1.0, 1.0], [0.05, -0.05]])

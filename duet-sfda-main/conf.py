@@ -379,6 +379,11 @@ _C.DUET_CONTEXT.MIN_RUNNER_PROB = 0.10
 _C.DUET_CONTEXT.MAX_TOP1_MARGIN = 0.60
 # abstain 门槛：|trust_task - trust_clip| < COMPARATOR_GATE 时 abstain。
 _C.DUET_CONTEXT.COMPARATOR_GATE = 0.20
+# comparator synthetic replay memory（persistent + replay 实验）：
+# 每个信任方向最多保留 REPLAY_PER_DIRECTION 个历史 matched synthetic；
+# 训练时每个 step 用 当前 matched : memory = (1-REPLAY_MIX_FRACTION) : REPLAY_MIX_FRACTION。
+_C.DUET_CONTEXT.REPLAY_PER_DIRECTION = 64
+_C.DUET_CONTEXT.REPLAY_MIX_FRACTION = 0.25
 # soft-only 消融：comparator 的 resolved 决策只用于 KL soft target
 # （refined_targets / kl_soft），不再执行 label_mask |= resolved_mask，
 # 即不产生新的 hard pseudo-label。用于验证 arbitration 信号本身有没有价值。

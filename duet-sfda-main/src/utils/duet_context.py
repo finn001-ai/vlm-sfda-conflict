@@ -668,6 +668,127 @@ def build_synthetic_conflicts(
     )
 
 
+class ComparatorReplayMemory:
+    """Persistent comparator 的历史 synthetic replay buffer。
+
+    按信任方向（trust Task / trust CLIP）分别保存最多
+    ``per_direction_capacity`` 个 matched synthetic 样本；
+    训练时与当前 cycle 的 matched synthetic 按比例混合。
+    """
+
+    def __init__(
+        self,
+        per_direction_capacity: int = 64,
+        feature_dim: Optional[int] = None,
+        device: Optional[torch.device] = None,
+    ) -> None:
+        self.per_direction_capacity = int(per_direction_capacity)
+        self.device = device or torch.device("cpu")
+        self.feature_dim = int(feature_dim) if feature_dim is not None else None
+        self.task_features = torch.zeros(
+            0, self.feature_dim or 0, dtype=torch.float32, device=self.device
+        )
+        self.clip_features = torch.zeros(
+            0, self.feature_dim or 0, dtype=torch.float32, device=self.device
+        )
+
+    @torch.no_grad()
+    def update(self, features: torch.Tensor, targets: torch.Tensor) -> "ComparatorReplayMemory":
+        """按方向追加 matched synthetic，每个方向最多保留 capacity 个（去旧保新）。"""
+        features = features.detach().float().to(self.device)
+        targets = targets.detach().float().to(self.device)
+        if features.dim() != 2:
+            return self
+        if self.feature_dim is None:
+            self.feature_dim = features.size(1)
+            self.task_features = torch.zeros(
+                0, self.feature_dim, dtype=torch.float32, device=self.device
+            )
+            self.clip_features = torch.zeros(
+                0, self.feature_dim, dtype=torch.float32, device=self.device
+            )
+        for direction, storage in ((0.0, "task_features"), (1.0, "clip_features")):
+            mask = targets == direction
+            if int(mask.sum().item()) == 0:
+                continue
+            current = getattr(self, storage)
+            new_chunk = features[mask]
+            merged = (
+                torch.cat([current, new_chunk], dim=0)
+                if current.numel() > 0
+                else new_chunk
+            )
+            if merged.size(0) > self.per_direction_capacity:
+                merged = merged[-self.per_direction_capacity:]
+            setattr(self, storage, merged)
+        return self
+
+    def sample(self, n: int, generator: torch.Generator) -> tuple[torch.Tensor, torch.Tensor]:
+        """从 memory 中均衡采样 n 个样本（两个方向各一半）。"""
+        n = max(1, int(n))
+        pools = ((self.task_features, 0.0), (self.clip_features, 1.0))
+        half = max(1, n // 2)
+        feature_rows = []
+        target_rows = []
+        for pool, target_value in pools:
+            if pool.size(0) == 0:
+                continue
+            indices = torch.randint(
+                0,
+                pool.size(0),
+                (half,),
+                generator=generator,
+                device=self.device,
+            )
+            feature_rows.append(pool[indices])
+            target_rows.append(
+                torch.full((half,), target_value, dtype=torch.float32, device=self.device)
+            )
+        if not feature_rows:
+            return (
+                torch.zeros(0, self.feature_dim or 0, device=self.device),
+                torch.zeros(0, dtype=torch.float32, device=self.device),
+            )
+        return torch.cat(feature_rows), torch.cat(target_rows)
+
+    def as_tensors(self) -> tuple[torch.Tensor, torch.Tensor]:
+        """返回 memory 的全部 (features, targets)。"""
+        parts_features = []
+        parts_targets = []
+        for pool, target_value in (
+            (self.task_features, 0.0),
+            (self.clip_features, 1.0),
+        ):
+            if pool.size(0) > 0:
+                parts_features.append(pool)
+                parts_targets.append(
+                    torch.full(
+                        (pool.size(0),),
+                        target_value,
+                        dtype=torch.float32,
+                        device=self.device,
+                    )
+                )
+        if not parts_features:
+            return (
+                torch.zeros(0, self.feature_dim or 0, device=self.device),
+                torch.zeros(0, dtype=torch.float32, device=self.device),
+            )
+        return torch.cat(parts_features), torch.cat(parts_targets)
+
+    def total(self) -> int:
+        return int(self.task_features.size(0)) + int(self.clip_features.size(0))
+
+    def clear(self) -> "ComparatorReplayMemory":
+        self.task_features = torch.zeros(
+            0, self.feature_dim or 0, dtype=torch.float32, device=self.device
+        )
+        self.clip_features = torch.zeros(
+            0, self.feature_dim or 0, dtype=torch.float32, device=self.device
+        )
+        return self
+
+
 def train_pairwise_comparator(
     comparator: PairwiseConflictComparator,
     optimizer: torch.optim.Optimizer,
@@ -677,29 +798,74 @@ def train_pairwise_comparator(
     steps: int,
     batch_size: int,
     seed: int,
+    memory_features: Optional[torch.Tensor] = None,
+    memory_targets: Optional[torch.Tensor] = None,
+    memory_fraction: float = 0.25,
 ) -> Optional[float]:
-    """在 synthetic conflict 对上训练 comparator（2-way CE，旧版均匀采样）。
+    """在 synthetic conflict 对上训练 comparator（2-way CE）。
 
     与 Run 9/10 的训练方式完全一致：matched synthetic 已经 1:1 平衡，
     池子 <= batch_size 时每个 step 直接用全部样本，否则随机抽 batch。
+    提供 ``memory_features/memory_targets`` 时启用 replay：每个 step 按
+    ``memory_fraction`` 从历史 memory 采样、其余从当前 matched synthetic
+    采样（persistent + replay 实验）。
     """
     if features.numel() == 0 or features.size(0) < 2:
         return None
     comparator.train()
     generator = torch.Generator(device=features.device)
     generator.manual_seed(int(seed))
+    use_memory = (
+        memory_features is not None
+        and memory_targets is not None
+        and memory_features.size(0) >= 1
+    )
+    if use_memory:
+        combined_features = torch.cat(
+            [features, memory_features.detach().to(features.device)], dim=0
+        )
+        combined_targets = torch.cat(
+            [targets, memory_targets.detach().to(features.device)], dim=0
+        )
+        n_memory = max(1, int(round(batch_size * memory_fraction)))
+        n_current = max(1, batch_size - n_memory)
     total_loss = 0.0
     counted = 0
     for _ in range(max(1, int(steps))):
-        if features.size(0) <= batch_size:
-            indices = torch.arange(features.size(0), device=features.device)
+        if use_memory:
+            current_indices = torch.randint(
+                0,
+                features.size(0),
+                (n_current,),
+                generator=generator,
+                device=features.device,
+            )
+            memory_indices = torch.randint(
+                0,
+                memory_features.size(0),
+                (n_memory,),
+                generator=generator,
+                device=features.device,
+            )
+            indices = torch.cat(
+                [current_indices, features.size(0) + memory_indices]
+            )
+            indices = indices[
+                torch.randperm(indices.numel(), generator=generator, device=features.device)
+            ]
+            logits = comparator(combined_features[indices].detach())
+            batch_targets = combined_targets[indices].detach().long()
         else:
-            indices = torch.randperm(
-                features.size(0), generator=generator, device=features.device
-            )[:batch_size]
-        logits = comparator(features[indices].detach())
-        targets = targets.to(logits.device)
-        loss = F.cross_entropy(logits, targets[indices].detach().long())
+            if features.size(0) <= batch_size:
+                indices = torch.arange(features.size(0), device=features.device)
+            else:
+                indices = torch.randperm(
+                    features.size(0), generator=generator, device=features.device
+                )[:batch_size]
+            logits = comparator(features[indices].detach())
+            batch_targets = targets[indices].detach().long()
+        batch_targets = batch_targets.to(logits.device)
+        loss = F.cross_entropy(logits, batch_targets)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -915,6 +1081,7 @@ def run_context_refinement(
     strong_clip_features: Optional[torch.Tensor] = None,
     comparator: Optional[PairwiseConflictComparator] = None,
     comparator_optimizer: Optional[torch.optim.Optimizer] = None,
+    replay_memory: Optional[ComparatorReplayMemory] = None,
     cycle: int = 1,
     log_fn: Callable[[str], None] = logging.info,
 ) -> dict:
@@ -946,6 +1113,7 @@ def run_context_refinement(
             sample_indices=sample_indices,
             comparator=comparator,
             comparator_optimizer=comparator_optimizer,
+            replay_memory=replay_memory,
             cycle=cycle,
             log_fn=log_fn,
         )
@@ -1309,6 +1477,7 @@ def run_comparator_refinement(
     strong_clip_features: Optional[torch.Tensor] = None,
     comparator: Optional[PairwiseConflictComparator] = None,
     comparator_optimizer: Optional[torch.optim.Optimizer] = None,
+    replay_memory: Optional[ComparatorReplayMemory] = None,
     cycle: int = 1,
     log_fn: Callable[[str], None] = logging.info,
 ) -> dict:
@@ -1345,6 +1514,9 @@ def run_comparator_refinement(
     min_dist_match_kept = int(getattr(context_cfg, "MIN_DIST_MATCH_KEPT", 16))
     train_steps_per_cycle = int(context_cfg.TRAIN_STEPS_PER_CYCLE)
     train_batch_size = int(context_cfg.TRAIN_BATCH_SIZE)
+    replay_mix_fraction = float(
+        getattr(context_cfg, "REPLAY_MIX_FRACTION", 0.25)
+    )
     seed = int(context_cfg.SEED) + int(cycle - 1)
     eval_only_logging = bool(context_cfg.EVAL_ONLY_LOGGING)
 
@@ -1638,6 +1810,19 @@ def run_comparator_refinement(
             and train_steps_per_cycle > 0
             and comparator_optimizer is not None
         ):
+            memory_features = None
+            memory_targets = None
+            if replay_memory is not None and replay_memory.total() >= 1:
+                memory_features, memory_targets = replay_memory.as_tensors()
+                log_fn(
+                    "DUET comparator replay: cycle={}; memory_total={}; "
+                    "mix_fraction={:.2f}; "
+                    "ground_truth_affects_training=False".format(
+                        cycle,
+                        replay_memory.total(),
+                        replay_mix_fraction,
+                    )
+                )
             stats["train_loss"] = train_pairwise_comparator(
                 comparator,
                 comparator_optimizer,
@@ -1646,7 +1831,13 @@ def run_comparator_refinement(
                 steps=train_steps_per_cycle,
                 batch_size=train_batch_size,
                 seed=seed,
+                memory_features=memory_features,
+                memory_targets=memory_targets,
+                memory_fraction=replay_mix_fraction,
             )
+            if replay_memory is not None:
+                # 训练后把当前 cycle 的 matched synthetic 写入历史 memory
+                replay_memory.update(synthetic_features, synthetic_targets)
 
         if strict_positions.numel() > 0:
             comparator.eval()
