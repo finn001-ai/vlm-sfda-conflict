@@ -159,3 +159,77 @@ synthetic conflict 只来自 strong augmentation 真实 flip。
    “anchor 相似度”而非 comparator 本身。
 3. 对照纯 FCP baseline（同 POWER 0.8 / CLS_PAR 0.4）确认 73.x 是否是
    基线水平；用户的 74 参考需要明确口径后对齐。
+
+## Run 9：same-view synthetic + strong features + dist-match + balance（08-08 17:35）
+
+最终 Task：**73.17%**。三个机制指标全部达标：
+
+### 1. synthetic ≈ real（目标达成，cycle 2）
+
+| | task_margin | task_entropy | clip_margin | clip_entropy |
+|---|---|---|---|---|
+| synthetic（同 view） | 0.295 | 2.149 | 0.484 | 1.069 |
+| real-conflict | 0.222 | 2.395 | 0.492 | 1.084 |
+| synthetic-matched | **0.216** | **2.330** | **0.427** | **1.118** |
+
+matched 与 real 基本重合，clip_margin 不再反向漂移到 0.80。
+
+### 2. 两侧数量平衡（目标达成）
+
+- cycle 2：kept 28:28；cycle 3：42:42；cycle 4：33:33，全部 balanced=True；
+- 不再坍缩：cycle 4 support_task=299 / support_clip=303。
+
+### 3. cycle 2 决策质量达到历史最好
+
+| cycle | resolved | resolved_acc | support_task_acc | support_clip_acc |
+|---|---|---|---|---|
+| 2 | 341 (25%) | **50.15%** | 28.42% | **58.54%** |
+| 3 | 666 (79%) | 35.59% | 34.77% | 36.26% |
+| 4 | 602 (91%) | 35.88% | 38.13% | 33.66% |
+
+cycle 2 的 trust CLIP 精度 58.5%（CLIP 原始仅 32%），comparator 第一次
+真正提供了仲裁价值。
+
+### 4. 但最终精度仍然 73.17%（≈ 之前 73.06~73.29）
+
+- cycle 3/4 再次退化：resolved 79%/91%，resolved_acc 只有 35~36%；
+- 模式与前几版一致：cycle 2 决定质量最好，跨轮继续训练后 over-confident；
+- 机制干净了，但精度瓶颈没有解决。
+
+### 结论 / 下一步
+
+1. 同 view + dist-match + balance 机制验证全部通过；
+2. 剩余主要矛盾：后期 cycle 训练把 comparator 训坏；
+3. 下个实验：cycle 2 训练后冻结（或只训 cycle 2），用新版重新跑
+   ACTIVE_CYCLES=[1]（之前 73.20 是旧版 mixed-view 的结果）。
+
+## Run 10：same-view + ACTIVE_CYCLES=[1]（只 cycle 2 干预）（08-08 17:52）
+
+最终 Task：**73.04%**。
+
+- cycle 2：resolved=301（22.1%），resolved_acc=**52.82%**，
+  support_task=53（34.0%），support_clip=248（56.9%）
+- cycle 3/4 纯 FCP（无 comparator）
+- 对比 Run 9（全轮 73.17）：只 cycle 2 = 73.04，几乎无差别
+
+### 全量结论（Run 3~10，10 组）
+
+| 变体 | 最终精度 |
+|---|---|
+| gate 0.2 / 0.4 | 73.13 / 73.29 |
+| soft-only | 73.06 |
+| 只 cycle 2（旧 mixed-view） | 73.20 |
+| same-view 全轮 | 73.17 |
+| same-view 只 cycle 2 | 73.04 |
+
+**无论 hard/soft/gate/轮次范围/same-view/dist-match/balance 怎么改，
+AC 最终精度都锁死在 73.0~73.3。** comparator 机制已经干净，但对最终精度
+贡献约等于 0。73.x 就是 DUET-FCP + CLIP 适配的基线水平。
+
+### 下一步（该换方向了）
+
+1. 先补最关键的缺失对照：**纯 FCP baseline（同 POWER 0.8）**，确认 73.x
+   就是基线——大概率是，那 comparator 这条路在 AC 上推不到 74；
+2. 若要推 74，转向 base pipeline 超参（POWER / CLS_PAR / KL_PAR /
+   CLIP FINE_LR / epoch）；
+3. comparator 方向上唯一没试的是“两边都错”synthetic 对，但预期收益有限。
