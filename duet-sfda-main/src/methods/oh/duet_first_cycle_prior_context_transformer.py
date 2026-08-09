@@ -472,19 +472,14 @@ def train_target(
             # Task/CLIP reliability 关系不同，仲裁器按当前 cycle 的
             # synthetic 重新估计，避免跨轮复用导致 over-confidence。
             if curr_cycle in context_active_cycles:
-                with torch.random.fork_rng(
-                    devices=[torch.cuda.current_device()]
-                ):
-                    # 初始化权重也绑定 cycle seed，且不污染全局 RNG
-                    torch.manual_seed(
-                        int(cfg.DUET_CONTEXT.SEED) + int(curr_cycle)
-                    )
-                    context_comparator = PairwiseConflictComparator(
-                        input_dim=16,
-                        hidden=int(cfg.DUET_CONTEXT.COMPARATOR_HIDDEN),
-                        layers=int(cfg.DUET_CONTEXT.COMPARATOR_LAYERS),
-                        dropout=float(cfg.DUET_CONTEXT.DROPOUT),
-                    ).cuda()
+                # 与 Run 9/10 的初始化方式完全一致（不额外 seed），
+                # 保证消融只差 fresh comparator 一个变量。
+                context_comparator = PairwiseConflictComparator(
+                    input_dim=16,
+                    hidden=int(cfg.DUET_CONTEXT.COMPARATOR_HIDDEN),
+                    layers=int(cfg.DUET_CONTEXT.COMPARATOR_LAYERS),
+                    dropout=float(cfg.DUET_CONTEXT.DROPOUT),
+                ).cuda()
                 context_comparator_optimizer = optim.Adam(
                     context_comparator.parameters(),
                     lr=float(cfg.DUET_CONTEXT.LR),
