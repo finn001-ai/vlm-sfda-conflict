@@ -875,6 +875,104 @@ def train_pairwise_comparator(
     return total_loss / counted if counted else None
 
 
+def train_pairwise_comparator_epochs(
+    comparator: PairwiseConflictComparator,
+    optimizer: torch.optim.Optimizer,
+    features: torch.Tensor,
+    targets: torch.Tensor,
+    *,
+    epochs: int,
+    batch_size: int,
+    seed: int,
+    memory_features: Optional[torch.Tensor] = None,
+    memory_targets: Optional[torch.Tensor] = None,
+    memory_fraction: float = 0.25,
+) -> Optional[float]:
+    """Epoch-based comparator 训练（替代固定 200 步）。
+
+    每个 epoch 把当前 matched synthetic 基本看一遍（不放回地遍历），
+    每一步再按 ``memory_fraction`` 从历史 replay memory 采样。这样当前
+    样本每个 epoch 只出现一次，总共 ``epochs`` 次，而不是被 200 步
+    反复背诵上百遍。
+    """
+    if features.numel() == 0 or features.size(0) < 2:
+        return None
+    comparator.train()
+    generator = torch.Generator(device=features.device)
+    generator.manual_seed(int(seed))
+    device = features.device
+    use_memory = (
+        memory_features is not None
+        and memory_targets is not None
+        and memory_features.size(0) >= 1
+    )
+    if use_memory:
+        n_current_per_step = max(
+            1, int(round(batch_size * (1.0 - memory_fraction)))
+        )
+    else:
+        n_current_per_step = batch_size
+    steps_per_epoch = max(
+        1,
+        (int(features.size(0)) + n_current_per_step - 1) // n_current_per_step,
+    )
+    total_loss = 0.0
+    counted = 0
+    for _ in range(max(1, int(epochs))):
+        permutation = torch.randperm(
+            features.size(0), generator=generator, device=device
+        )
+        for step in range(steps_per_epoch):
+            current_indices = permutation[
+                step * n_current_per_step : (step + 1) * n_current_per_step
+            ]
+            if current_indices.numel() == 0:
+                break
+            current_features = features[current_indices].detach()
+            current_targets = targets[current_indices].detach()
+            if use_memory:
+                # memory 数跟随当前 batch 大小，保证每个 batch 内都是
+                # current : memory = (1-fraction) : fraction
+                n_memory_this_step = max(
+                    1,
+                    int(
+                        round(
+                            current_indices.numel()
+                            * memory_fraction
+                            / (1.0 - memory_fraction)
+                        )
+                    ),
+                )
+                memory_indices = torch.randint(
+                    0,
+                    memory_features.size(0),
+                    (n_memory_this_step,),
+                    generator=generator,
+                    device=device,
+                )
+                batch_features = torch.cat(
+                    [current_features, memory_features[memory_indices].detach()],
+                    dim=0,
+                )
+                batch_targets = torch.cat(
+                    [current_targets, memory_targets[memory_indices].detach()],
+                    dim=0,
+                )
+            else:
+                batch_features = current_features
+                batch_targets = current_targets
+            logits = comparator(batch_features)
+            batch_targets = batch_targets.to(logits.device)
+            loss = F.cross_entropy(logits, batch_targets.long())
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            total_loss += float(loss.detach().item())
+            counted += 1
+    comparator.eval()
+    return total_loss / counted if counted else None
+
+
 def apply_pairwise_decision(
     logits: torch.Tensor,
     task_top1: torch.Tensor,
@@ -1517,6 +1615,7 @@ def run_comparator_refinement(
     replay_mix_fraction = float(
         getattr(context_cfg, "REPLAY_MIX_FRACTION", 0.25)
     )
+    comparator_epochs = int(getattr(context_cfg, "COMPARATOR_EPOCHS", 0))
     seed = int(context_cfg.SEED) + int(cycle - 1)
     eval_only_logging = bool(context_cfg.EVAL_ONLY_LOGGING)
 
@@ -1807,8 +1906,8 @@ def run_comparator_refinement(
             raise ValueError("refiner_type=comparator requires a comparator module")
         if (
             synthetic_features.size(0) >= 2
-            and train_steps_per_cycle > 0
             and comparator_optimizer is not None
+            and (comparator_epochs > 0 or train_steps_per_cycle > 0)
         ):
             memory_features = None
             memory_targets = None
@@ -1823,18 +1922,44 @@ def run_comparator_refinement(
                         replay_mix_fraction,
                     )
                 )
-            stats["train_loss"] = train_pairwise_comparator(
-                comparator,
-                comparator_optimizer,
-                synthetic_features,
-                synthetic_targets,
-                steps=train_steps_per_cycle,
-                batch_size=train_batch_size,
-                seed=seed,
-                memory_features=memory_features,
-                memory_targets=memory_targets,
-                memory_fraction=replay_mix_fraction,
-            )
+            if comparator_epochs > 0:
+                stats["train_loss"] = train_pairwise_comparator_epochs(
+                    comparator,
+                    comparator_optimizer,
+                    synthetic_features,
+                    synthetic_targets,
+                    epochs=comparator_epochs,
+                    batch_size=train_batch_size,
+                    seed=seed,
+                    memory_features=memory_features,
+                    memory_targets=memory_targets,
+                    memory_fraction=replay_mix_fraction,
+                )
+                log_fn(
+                    "DUET comparator training: cycle={}; mode=epochs; "
+                    "epochs={}; current={}; memory={}; "
+                    "ground_truth_affects_training=False".format(
+                        cycle,
+                        comparator_epochs,
+                        synthetic_features.size(0),
+                        memory_features.size(0)
+                        if memory_features is not None
+                        else 0,
+                    )
+                )
+            else:
+                stats["train_loss"] = train_pairwise_comparator(
+                    comparator,
+                    comparator_optimizer,
+                    synthetic_features,
+                    synthetic_targets,
+                    steps=train_steps_per_cycle,
+                    batch_size=train_batch_size,
+                    seed=seed,
+                    memory_features=memory_features,
+                    memory_targets=memory_targets,
+                    memory_fraction=replay_mix_fraction,
+                )
             if replay_memory is not None:
                 # 训练后把当前 cycle 的 matched synthetic 写入历史 memory
                 replay_memory.update(synthetic_features, synthetic_targets)

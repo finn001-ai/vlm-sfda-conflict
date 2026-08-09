@@ -233,3 +233,41 @@ AC 最终精度都锁死在 73.0~73.3。** comparator 机制已经干净，但�
 2. 若要推 74，转向 base pipeline 超参（POWER / CLS_PAR / KL_PAR /
    CLIP FINE_LR / epoch）；
 3. comparator 方向上唯一没试的是“两边都错”synthetic 对，但预期收益有限。
+
+## Run 11：Persistent Comparator + Replay Memory（08-09 10:20）
+
+单一变量：persistent + direction-balanced recency replay（每方向 64，
+current:memory = 75:25）。最终 Task：**72.85%**。
+
+### 三个 sanity 关卡
+
+| 关卡 | 期望 | 实际 |
+|---|---|---|
+| Cycle 1 | 1916 / ~65.6 | 1916 / **65.48** ✓ |
+| Cycle 2 | resolved ~25-33% / acc ~50% / Task ~70.7 | 419 (30.5%) / **48.93%** / **70.72** ✓ |
+| Cycle 3+ | replay 日志 | `memory_total=66`（C3）、`128`（C4）✓ |
+
+### 结果 vs Run 9（persistent 无 replay）
+
+| | Run 9 | Replay |
+|---|---|---|
+| C3 resolved / acc | 666 / 35.59% | 617 / **37.76%** |
+| C3 Task | 71.89% | **71.98%** |
+| C4 resolved / acc | 602 / 35.88% | 575 / 35.65% |
+| C4 Task | 73.17% | 72.85% |
+| 最终 | 73.17% | 72.85% |
+
+### 结论
+
+1. replay ≈ persistent：replay 只是把 persistent 隐式学到的历史信息显式化，
+   最终精度几乎无差别（C3 略好 +0.09，C4 略差 -0.32，整体在噪声内）；
+2. **replay 没有解决 over-confidence**：C3/C4 仍 resolve 74%/89%，
+   精度 36~38%，和 persistent 一模一样——说明 confidence 膨胀不是“忘记
+   历史”造成的，而是“持续在自身分布上训练”的固有现象；
+3. 所有 comparator 变体（persistent/fresh/replay/gate/soft）最终都落在
+   72.85~73.29，comparator 训练侧的可调杠杆基本穷尽。
+
+### 下一步
+
+回到缺失的对照：**纯 FCP baseline（POWER 0.8）**，确认 73.x 是否就是
+DUET-FCP + CLIP 适配的基线；若是，74 的差距不在 comparator 方向。

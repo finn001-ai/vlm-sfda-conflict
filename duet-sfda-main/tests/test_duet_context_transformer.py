@@ -27,6 +27,7 @@ from src.utils.duet_context import (
     prototype_refine,
     run_context_refinement,
     train_pairwise_comparator,
+    train_pairwise_comparator_epochs,
     train_context_transformer,
     _exclude_query_anchors,
     _zscore_filter,
@@ -81,6 +82,7 @@ def make_context_cfg(**overrides):
         COMPARATOR_GATE=0.15,
         REPLAY_PER_DIRECTION=64,
         REPLAY_MIX_FRACTION=0.25,
+        COMPARATOR_EPOCHS=0,
         SOFT_ONLY_ADMISSION=False,
         DIST_MATCH_SYNTHETIC=False,
         DIST_MATCH_Z_MAX=1.5,
@@ -629,6 +631,30 @@ class ComparatorTest(unittest.TestCase):
             acc = (probs.argmax(1) == current_t.long()).float().mean().item()
         self.assertGreater(acc, 0.7)
 
+    def test_train_pairwise_comparator_epochs(self):
+        """epoch-based：每个 epoch 当前 synthetic 看一遍 + replay，loss 下降。"""
+        torch.manual_seed(0)
+        pos = torch.randn(24, 8) + 1.0
+        neg = torch.randn(24, 8) - 1.0
+        current_f = torch.cat([neg, pos])
+        current_t = torch.tensor([0.0] * 24 + [1.0] * 24)
+        mem_f = torch.cat([neg[:4], pos[:4]])
+        mem_t = torch.tensor([0.0] * 4 + [1.0] * 4)
+        model = PairwiseConflictComparator(input_dim=8, hidden=16, layers=2)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
+        loss1 = train_pairwise_comparator_epochs(
+            model, optimizer, current_f, current_t,
+            epochs=5, batch_size=32, seed=1,
+            memory_features=mem_f, memory_targets=mem_t, memory_fraction=0.25,
+        )
+        loss2 = train_pairwise_comparator_epochs(
+            model, optimizer, current_f, current_t,
+            epochs=5, batch_size=32, seed=1,
+            memory_features=mem_f, memory_targets=mem_t, memory_fraction=0.25,
+        )
+        self.assertIsNotNone(loss1)
+        self.assertLess(loss2, loss1)
+
     def test_replay_memory_integration_log(self):
         """带 replay memory 的 comparator 管线：日志出现 replay 行。"""
         torch.manual_seed(2)
@@ -653,6 +679,7 @@ class ComparatorTest(unittest.TestCase):
             task_prob, clip_prob, feat, num_classes=c,
             context_cfg=make_context_cfg(
                 REFINER_TYPE="comparator", TRAIN_STEPS_PER_CYCLE=30,
+                COMPARATOR_EPOCHS=20,
             ),
             pre_prior_task_probs=task_prob, pre_prior_clip_probs=clip_prob,
             labels=true_label, sample_indices=torch.arange(n),
@@ -664,6 +691,9 @@ class ComparatorTest(unittest.TestCase):
         )
         self.assertTrue(
             any("DUET comparator replay" in line for line in logs)
+        )
+        self.assertTrue(
+            any("DUET comparator training: cycle=3; mode=epochs" in line for line in logs)
         )
 
     def test_decision_margin_gate(self):
