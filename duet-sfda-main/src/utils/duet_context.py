@@ -808,6 +808,9 @@ def split_balanced_train_val(
     seed: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """按信任方向分别划分 train/val，保持两侧数量平衡。"""
+    if val_fraction <= 0.0:
+        empty = torch.zeros(0, dtype=torch.bool, device=features.device)
+        return features, targets, features[empty], targets[empty]
     device = features.device
     generator = torch.Generator(device=device)
     generator.manual_seed(int(seed))
@@ -1825,26 +1828,34 @@ def run_comparator_refinement(
             )
         if comparator is None:
             raise ValueError("refiner_type=comparator requires a comparator module")
-        # matched synthetic -> train/validation 划分（按方向分层，保持平衡）
-        (
-            train_features,
-            train_targets,
-            val_features,
-            val_targets,
-        ) = split_balanced_train_val(
-            synthetic_features,
-            synthetic_targets,
-            val_fraction=val_fraction,
-            seed=seed,
-        )
-        log_fn(
-            "DUET comparator train/val split: cycle={}; train={}; val={}; "
-            "ground_truth_affects_training=False".format(
-                cycle,
-                train_features.size(0),
-                val_features.size(0),
+        # matched synthetic -> train/validation 划分（按方向分层，保持平衡）。
+        # VAL_FRACTION<=0 时不做划分：不 early stop、不校准 gate，
+        # 只保留 fresh comparator 本身（消融用）。
+        if val_fraction > 0.0:
+            (
+                train_features,
+                train_targets,
+                val_features,
+                val_targets,
+            ) = split_balanced_train_val(
+                synthetic_features,
+                synthetic_targets,
+                val_fraction=val_fraction,
+                seed=seed,
             )
-        )
+            log_fn(
+                "DUET comparator train/val split: cycle={}; train={}; val={}; "
+                "ground_truth_affects_training=False".format(
+                    cycle,
+                    train_features.size(0),
+                    val_features.size(0),
+                )
+            )
+        else:
+            train_features = synthetic_features
+            train_targets = synthetic_targets
+            val_features = None
+            val_targets = None
         if (
             train_features.size(0) >= 2
             and train_steps_per_cycle > 0
@@ -1859,10 +1870,14 @@ def run_comparator_refinement(
                 batch_size=train_batch_size,
                 seed=seed,
                 val_features=(
-                    val_features if val_features.size(0) >= 2 else None
+                    val_features
+                    if val_features is not None and val_features.size(0) >= 2
+                    else None
                 ),
                 val_targets=(
-                    val_targets if val_features.size(0) >= 2 else None
+                    val_targets
+                    if val_features is not None and val_features.size(0) >= 2
+                    else None
                 ),
                 patience=early_stop_patience,
                 log_fn=log_fn,
