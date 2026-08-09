@@ -457,6 +457,31 @@ def train_target(
                 sum(p.numel() for p in context_transformer.parameters()),
             )
         )
+    if context_enabled and context_refiner == "comparator":
+        # 第一个 comparator 在训练开始前创建（与旧版 persistent 相同的
+        # 初始化时机）：Cycle 1 的全局 RNG 轨迹必须和旧版一致，
+        # 否则连 baseline（65.6 vs 64.9）都会漂。
+        context_comparator = PairwiseConflictComparator(
+            input_dim=16,
+            hidden=int(cfg.DUET_CONTEXT.COMPARATOR_HIDDEN),
+            layers=int(cfg.DUET_CONTEXT.COMPARATOR_LAYERS),
+            dropout=float(cfg.DUET_CONTEXT.DROPOUT),
+        ).cuda()
+        context_comparator_optimizer = optim.Adam(
+            context_comparator.parameters(),
+            lr=float(cfg.DUET_CONTEXT.LR),
+            weight_decay=float(cfg.DUET_CONTEXT.WEIGHT_DECAY),
+        )
+        logging.info(
+            "DUET pairwise comparator initialized: input_dim=16; "
+            "hidden={}; layers={}; dropout={:.2f}; "
+            "trainable_parameters={}".format(
+                int(cfg.DUET_CONTEXT.COMPARATOR_HIDDEN),
+                int(cfg.DUET_CONTEXT.COMPARATOR_LAYERS),
+                float(cfg.DUET_CONTEXT.DROPOUT),
+                sum(p.numel() for p in context_comparator.parameters()),
+            )
+        )
 
     curr_cycle = 0
     # office-home : 1.0 / VisDA-C : 1.05
@@ -468,37 +493,42 @@ def train_target(
         netF.eval()
         netB.eval()
         if context_enabled and context_refiner == "comparator":
-            # fresh comparator per active cycle：每个 adaptation stage 的
-            # Task/CLIP reliability 关系不同，仲裁器按当前 cycle 的
-            # synthetic 重新估计，避免跨轮复用导致 over-confidence。
             if curr_cycle in context_active_cycles:
-                # 与 Run 9/10 的初始化方式完全一致（不额外 seed），
-                # 保证消融只差 fresh comparator 一个变量。
-                context_comparator = PairwiseConflictComparator(
-                    input_dim=16,
-                    hidden=int(cfg.DUET_CONTEXT.COMPARATOR_HIDDEN),
-                    layers=int(cfg.DUET_CONTEXT.COMPARATOR_LAYERS),
-                    dropout=float(cfg.DUET_CONTEXT.DROPOUT),
-                ).cuda()
-                context_comparator_optimizer = optim.Adam(
-                    context_comparator.parameters(),
-                    lr=float(cfg.DUET_CONTEXT.LR),
-                    weight_decay=float(cfg.DUET_CONTEXT.WEIGHT_DECAY),
-                )
-                logging.info(
-                    "DUET pairwise comparator initialized (cycle {}): "
-                    "input_dim=16; hidden={}; layers={}; dropout={:.2f}; "
-                    "trainable_parameters={}".format(
-                        curr_cycle + 1,
-                        int(cfg.DUET_CONTEXT.COMPARATOR_HIDDEN),
-                        int(cfg.DUET_CONTEXT.COMPARATOR_LAYERS),
-                        float(cfg.DUET_CONTEXT.DROPOUT),
-                        sum(p.numel() for p in context_comparator.parameters()),
+                if curr_cycle >= 2:
+                    # Cycle 3/4 换 fresh comparator：独立 RNG 初始化，
+                    # 不污染后续 Task 训练 / 增广的全局 RNG。
+                    with torch.random.fork_rng(
+                        devices=[torch.cuda.current_device()]
+                    ):
+                        torch.manual_seed(
+                            int(cfg.DUET_CONTEXT.SEED) + int(curr_cycle)
+                        )
+                        context_comparator = PairwiseConflictComparator(
+                            input_dim=16,
+                            hidden=int(cfg.DUET_CONTEXT.COMPARATOR_HIDDEN),
+                            layers=int(cfg.DUET_CONTEXT.COMPARATOR_LAYERS),
+                            dropout=float(cfg.DUET_CONTEXT.DROPOUT),
+                        ).cuda()
+                    context_comparator_optimizer = optim.Adam(
+                        context_comparator.parameters(),
+                        lr=float(cfg.DUET_CONTEXT.LR),
+                        weight_decay=float(cfg.DUET_CONTEXT.WEIGHT_DECAY),
                     )
-                )
-            else:
-                context_comparator = None
-                context_comparator_optimizer = None
+                    logging.info(
+                        "DUET pairwise comparator initialized (cycle {}): "
+                        "input_dim=16; hidden={}; layers={}; dropout={:.2f}; "
+                        "trainable_parameters={}".format(
+                            curr_cycle + 1,
+                            int(cfg.DUET_CONTEXT.COMPARATOR_HIDDEN),
+                            int(cfg.DUET_CONTEXT.COMPARATOR_LAYERS),
+                            float(cfg.DUET_CONTEXT.DROPOUT),
+                            sum(p.numel() for p in context_comparator.parameters()),
+                        )
+                    )
+                # Cycle 2（index 1）：沿用训练开始前创建的 comparator，
+                # 从未训练过，因此同样是 fresh；且不消耗任何全局 RNG。
+            # Cycle 1（index 0）不激活：保留预创建的 comparator 但不用，
+            # obtain_label 里 comparator_mode=False 会自动忽略它，无需清空。
         label_result = obtain_label(
             dset_loaders['test_aug'], netF, netB, netC, text_inputs, text_features,
             clip_model, prev_label_mask, curr_cycle,

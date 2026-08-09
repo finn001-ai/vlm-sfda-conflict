@@ -22,11 +22,9 @@ from src.utils.duet_context import (
     apply_weak_verification,
     build_comparator_features,
     build_synthetic_conflicts,
-    calibrate_comparator_gate,
     cosine_knn_refine,
     prototype_refine,
     run_context_refinement,
-    split_balanced_train_val,
     train_pairwise_comparator,
     train_context_transformer,
     _exclude_query_anchors,
@@ -80,10 +78,6 @@ def make_context_cfg(**overrides):
         MIN_RUNNER_PROB=0.10,
         MAX_TOP1_MARGIN=0.60,
         COMPARATOR_GATE=0.15,
-        COMPARATOR_GATE_CALIBRATE=False,
-        COMPARATOR_GATE_TARGET_PRECISION=0.80,
-        COMPARATOR_VAL_FRACTION=0.20,
-        COMPARATOR_EARLY_STOP_PATIENCE=20,
         SOFT_ONLY_ADMISSION=False,
         DIST_MATCH_SYNTHETIC=False,
         DIST_MATCH_Z_MAX=1.5,
@@ -583,94 +577,6 @@ class ComparatorTest(unittest.TestCase):
         )
         self.assertIsNotNone(loss1)
         self.assertLess(loss2, loss1)
-
-    def test_split_balanced_train_val_keeps_directions(self):
-        features = torch.randn(40, 8)
-        targets = torch.tensor([0.0] * 20 + [1.0] * 20)
-        train_f, train_t, val_f, val_t = split_balanced_train_val(
-            features, targets, val_fraction=0.2, seed=1
-        )
-        self.assertEqual(int((train_t == 0).sum()), int((train_t == 1).sum()))
-        self.assertEqual(int((val_t == 0).sum()), int((val_t == 1).sum()))
-        self.assertGreaterEqual(train_f.size(0), 2)
-        self.assertGreaterEqual(val_f.size(0), 2)
-
-    def test_early_stopping_improves_val_accuracy(self):
-        torch.manual_seed(0)
-        pos = torch.randn(40, 8) + 1.0
-        neg = torch.randn(40, 8) - 1.0
-        features = torch.cat([neg, pos])
-        targets = torch.tensor([0.0] * 40 + [1.0] * 40)
-        model = PairwiseConflictComparator(input_dim=8, hidden=16, layers=2)
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
-        logs = []
-        train_pairwise_comparator(
-            model, optimizer, features[:60], targets[:60],
-            steps=300, batch_size=32, seed=1,
-            val_features=features[60:], val_targets=targets[60:],
-            patience=10, log_fn=logs.append,
-        )
-        self.assertTrue(any("DUET comparator early stop" in line for line in logs))
-        with torch.no_grad():
-            probs = torch.softmax(model(features[60:]), dim=1)
-            acc = (probs.argmax(1) == targets[60:].long()).float().mean().item()
-        self.assertGreater(acc, 0.8)
-
-    def test_gate_calibration_reaches_target_precision(self):
-        torch.manual_seed(0)
-        features = torch.randn(20, 8)
-        features[:10] += 2.0
-        targets = torch.tensor([1.0] * 10 + [0.0] * 10)
-        model = PairwiseConflictComparator(input_dim=8, hidden=16, layers=2)
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
-        train_pairwise_comparator(
-            model, optimizer, features[:10], targets[:10],
-            steps=100, batch_size=16, seed=1,
-        )
-        result = calibrate_comparator_gate(
-            model, features, targets, target_precision=0.8, min_coverage=2
-        )
-        self.assertTrue(result["target_met"])
-        self.assertGreaterEqual(result["precision"], 0.8)
-        self.assertGreaterEqual(result["coverage"], 2)
-
-    def test_gate_calibration_integration(self):
-        """开启 COMPARATOR_GATE_CALIBRATE 后，日志出现 calibration / split 行。"""
-        torch.manual_seed(2)
-        n, c, d = 512, 8, 32
-        feat = torch.randn(n, d)
-        proto = torch.randn(c, d)
-        sim = feat @ proto.t()
-        task_prob = torch.softmax(sim * 3.0 + torch.randn(n, c) * 0.2, dim=1)
-        clip_prob = torch.softmax(sim * 2.8 + torch.randn(n, c) * 0.4, dim=1)
-        clip_feat = torch.randn(n, d)
-        true_label = sim.argmax(dim=1)
-        strong_task = torch.softmax(sim * 1.5 + torch.randn(n, c) * 0.7, dim=1)
-        strong_clip = torch.softmax(sim * 1.3 + torch.randn(n, c) * 0.8, dim=1)
-        model = PairwiseConflictComparator(input_dim=16, hidden=32, layers=2)
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-        logs = []
-        run_context_refinement(
-            task_prob, clip_prob, feat, num_classes=c,
-            context_cfg=make_context_cfg(
-                REFINER_TYPE="comparator", TRAIN_STEPS_PER_CYCLE=40,
-                COMPARATOR_GATE_CALIBRATE=True,
-                EVAL_ONLY_LOGGING=True,
-            ),
-            pre_prior_task_probs=task_prob, pre_prior_clip_probs=clip_prob,
-            labels=true_label, sample_indices=torch.arange(n),
-            clip_features=clip_feat,
-            strong_task_probs=strong_task, strong_clip_probs=strong_clip,
-            strong_task_features=feat, strong_clip_features=clip_feat,
-            comparator=model, comparator_optimizer=optimizer,
-            cycle=2, log_fn=logs.append,
-        )
-        self.assertTrue(
-            any("DUET comparator gate calibration" in line for line in logs)
-        )
-        self.assertTrue(
-            any("DUET comparator train/val split" in line for line in logs)
-        )
 
     def test_decision_margin_gate(self):
         logits = torch.tensor([[1.0, -1.0], [-1.0, 1.0], [0.05, -0.05]])

@@ -379,14 +379,6 @@ _C.DUET_CONTEXT.MIN_RUNNER_PROB = 0.10
 _C.DUET_CONTEXT.MAX_TOP1_MARGIN = 0.60
 # abstain 门槛：|trust_task - trust_clip| < COMPARATOR_GATE 时 abstain。
 _C.DUET_CONTEXT.COMPARATOR_GATE = 0.20
-# 每轮用 synthetic validation 无监督校准 abstain gate：在 held-out
-# synthetic 上选 margin 门槛，使仲裁精度达到 COMPARATOR_GATE_TARGET_PRECISION，
-# 该校准后的 gate 用于同轮真实冲突（不需要 target GT）。
-_C.DUET_CONTEXT.COMPARATOR_GATE_CALIBRATE = False
-_C.DUET_CONTEXT.COMPARATOR_GATE_TARGET_PRECISION = 0.80
-# matched synthetic 的 validation 划分比例 / early-stop patience。
-_C.DUET_CONTEXT.COMPARATOR_VAL_FRACTION = 0.20
-_C.DUET_CONTEXT.COMPARATOR_EARLY_STOP_PATIENCE = 20
 # soft-only 消融：comparator 的 resolved 决策只用于 KL soft target
 # （refined_targets / kl_soft），不再执行 label_mask |= resolved_mask，
 # 即不产生新的 hard pseudo-label。用于验证 arbitration 信号本身有没有价值。
