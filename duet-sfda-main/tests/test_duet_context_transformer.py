@@ -411,6 +411,7 @@ class PipelineTest(unittest.TestCase):
         self.assertIn("resolved_subset_clip_acc=", joined)
         self.assertIn("resolved_comparator_acc=", joined)
         self.assertIn("resolved_candidate_oracle_acc=", joined)
+        self.assertIn("conditional_arbitration_acc=", joined)
         self.assertIn("ground_truth_affects_training=False", joined)
 
     def test_eval_only_resolved_metrics_use_the_same_subset(self):
@@ -442,6 +443,29 @@ class PipelineTest(unittest.TestCase):
         self.assertIn("resolved_subset_clip_acc=33.33%", eval_line)
         self.assertIn("resolved_comparator_acc=66.67%", eval_line)
         self.assertIn("resolved_candidate_oracle_acc=100.00%", eval_line)
+        self.assertIn("conditional_arbitration_acc=66.67%", eval_line)
+
+    def test_conditional_arbitration_is_nan_without_correct_candidate(self):
+        logs = []
+        _log_eval_only_metrics(
+            {},
+            resolved_mask=torch.tensor([True]),
+            weak_rejected_mask=torch.tensor([False]),
+            context_labels=torch.tensor([0]),
+            task_top1=torch.tensor([0]),
+            clip_top1=torch.tensor([1]),
+            all_label=torch.tensor([2]),
+            anchor_mask=torch.tensor([False]),
+            weak_agreement_mask=torch.tensor([False]),
+            strict_conflict_mask=torch.tensor([True]),
+            cycle=4,
+            log_fn=logs.append,
+        )
+        eval_line = next(
+            line for line in logs if line.startswith("DUET context eval-only:")
+        )
+        self.assertIn("resolved_candidate_oracle_acc=0.00%", eval_line)
+        self.assertIn("conditional_arbitration_acc=nan", eval_line)
 
 
 class ComparatorTest(unittest.TestCase):

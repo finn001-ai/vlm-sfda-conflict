@@ -2178,14 +2178,30 @@ def _log_eval_only_metrics(
     resolved_comparator_acc = acc(context_labels, resolved_mask)
     if int(resolved_mask.sum().item()) == 0:
         resolved_candidate_oracle_acc = "nan"
+        conditional_arbitration_acc = "nan"
     else:
         candidate_oracle_correct = (
             (task_top1[resolved_mask] == all_label[resolved_mask])
             | (clip_top1[resolved_mask] == all_label[resolved_mask])
         )
+        candidate_oracle_correct_count = int(
+            candidate_oracle_correct.sum().item()
+        )
         resolved_candidate_oracle_acc = _fmt_pct(
             float(candidate_oracle_correct.float().mean().item())
         )
+        if candidate_oracle_correct_count == 0:
+            conditional_arbitration_acc = "nan"
+        else:
+            resolved_correct_count = int(
+                (
+                    context_labels[resolved_mask]
+                    == all_label[resolved_mask]
+                ).sum().item()
+            )
+            conditional_arbitration_acc = _fmt_pct(
+                resolved_correct_count / candidate_oracle_correct_count
+            )
     # Backward-compatible alias retained for existing log parsers.
     resolved_acc = resolved_comparator_acc
 
@@ -2256,7 +2272,8 @@ def _log_eval_only_metrics(
         "strict_task_acc={}; strict_clip_acc={}; strict_mix_acc={}; "
         "resolved_acc={}; resolved_subset_task_acc={}; "
         "resolved_subset_clip_acc={}; resolved_comparator_acc={}; "
-        "resolved_candidate_oracle_acc={}; support_task_acc={}; "
+        "resolved_candidate_oracle_acc={}; conditional_arbitration_acc={}; "
+        "support_task_acc={}; "
         "support_clip_acc={}; "
         "third_acc={}; abstain_orig_acc={}; weak_orig_precision={}; "
         "weak_passed_precision={}; weak_deferred_precision={}; "
@@ -2271,6 +2288,7 @@ def _log_eval_only_metrics(
             resolved_subset_clip_acc,
             resolved_comparator_acc,
             resolved_candidate_oracle_acc,
+            conditional_arbitration_acc,
             support_task_acc,
             support_clip_acc,
             third_acc,
