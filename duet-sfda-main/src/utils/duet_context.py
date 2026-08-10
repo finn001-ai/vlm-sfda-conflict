@@ -404,6 +404,69 @@ def _log_pair_distribution(
     )
 
 
+def _log_real_comparator_margin_distribution(
+    margins: torch.Tensor,
+    cycle: int,
+    gate: float,
+    log_fn: Callable[[str], None],
+) -> None:
+    """Log GT-free margin diagnostics over all real strict conflicts."""
+    margins = margins.detach().float().flatten().cpu()
+    total = int(margins.numel())
+    if total == 0:
+        log_fn(
+            "DUET comparator real-margin distribution: cycle={}; total=0; "
+            "mean=nan; p50=nan; p75=nan; p90=nan; p95=nan; max=nan; "
+            "gate={:.2f}; ground_truth_affects_training=False".format(
+                cycle, gate
+            )
+        )
+        log_fn(
+            "DUET comparator real-margin thresholds: cycle={}; total=0; "
+            "margin_ge_0.10=0/0 (0.00%); margin_ge_0.15=0/0 (0.00%); "
+            "margin_ge_0.20=0/0 (0.00%); margin_ge_0.25=0/0 (0.00%); "
+            "margin_ge_0.30=0/0 (0.00%); "
+            "ground_truth_affects_training=False".format(cycle)
+        )
+        return
+
+    quantiles = torch.quantile(
+        margins, torch.tensor([0.50, 0.75, 0.90, 0.95])
+    )
+    log_fn(
+        "DUET comparator real-margin distribution: cycle={}; total={}; "
+        "mean={:.4f}; p50={:.4f}; p75={:.4f}; p90={:.4f}; p95={:.4f}; "
+        "max={:.4f}; gate={:.2f}; "
+        "ground_truth_affects_training=False".format(
+            cycle,
+            total,
+            margins.mean().item(),
+            quantiles[0].item(),
+            quantiles[1].item(),
+            quantiles[2].item(),
+            quantiles[3].item(),
+            margins.max().item(),
+            gate,
+        )
+    )
+
+    threshold_parts = []
+    for threshold in (0.10, 0.15, 0.20, 0.25, 0.30):
+        count = int((margins >= threshold).sum().item())
+        rate = 100.0 * count / total
+        threshold_parts.append(
+            "margin_ge_{:.2f}={}/{} ({:.2f}%)".format(
+                threshold, count, total, rate
+            )
+        )
+    log_fn(
+        "DUET comparator real-margin thresholds: cycle={}; total={}; {}; "
+        "ground_truth_affects_training=False".format(
+            cycle, total, "; ".join(threshold_parts)
+        )
+    )
+
+
 def _zscore_filter(
     features: torch.Tensor,
     reference: torch.Tensor,
@@ -1973,6 +2036,11 @@ def run_comparator_refinement(
                 task_top1[strict_positions],
                 clip_top1[strict_positions],
                 gate=gate,
+            )
+            # Diagnostic only: summarize every real strict conflict, including
+            # abstained rows.  No target labels or random operations are used.
+            _log_real_comparator_margin_distribution(
+                decision["margin"], cycle, gate, log_fn
             )
             resolved_rows = decision["resolved"]
             resolved_strict = strict_positions[resolved_rows]

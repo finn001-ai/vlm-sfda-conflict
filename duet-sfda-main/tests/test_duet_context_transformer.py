@@ -31,6 +31,7 @@ from src.utils.duet_context import (
     train_context_transformer,
     _exclude_query_anchors,
     _log_eval_only_metrics,
+    _log_real_comparator_margin_distribution,
     _zscore_filter,
 )
 
@@ -764,6 +765,32 @@ class ComparatorTest(unittest.TestCase):
         self.assertEqual(decision["chosen"][0].item(), 0)  # trust Task
         self.assertEqual(decision["chosen"][1].item(), 1)  # trust CLIP
 
+    def test_all_real_conflict_margin_diagnostics(self):
+        logs = []
+        _log_real_comparator_margin_distribution(
+            torch.tensor([0.05, 0.10, 0.15, 0.20, 0.30]),
+            cycle=3,
+            gate=0.20,
+            log_fn=logs.append,
+        )
+        self.assertEqual(len(logs), 2)
+        self.assertIn("cycle=3; total=5", logs[0])
+        self.assertIn("mean=0.1600", logs[0])
+        self.assertIn("p50=0.1500", logs[0])
+        self.assertIn("p75=0.2000", logs[0])
+        self.assertIn("p90=0.2600", logs[0])
+        self.assertIn("p95=0.2800", logs[0])
+        self.assertIn("max=0.3000", logs[0])
+        self.assertIn("gate=0.20", logs[0])
+        self.assertIn("margin_ge_0.10=4/5 (80.00%)", logs[1])
+        self.assertIn("margin_ge_0.15=3/5 (60.00%)", logs[1])
+        self.assertIn("margin_ge_0.20=2/5 (40.00%)", logs[1])
+        self.assertIn("margin_ge_0.25=1/5 (20.00%)", logs[1])
+        self.assertIn("margin_ge_0.30=1/5 (20.00%)", logs[1])
+        self.assertTrue(
+            all("ground_truth_affects_training=False" in line for line in logs)
+        )
+
     def test_comparator_pipeline_end_to_end(self):
         """整条 comparator 管线：resolved 标签只可能是 A 或 B，
         refined target 的 argmax == chosen，weak 全部保持原样。"""
@@ -815,6 +842,12 @@ class ComparatorTest(unittest.TestCase):
         )
         self.assertTrue(
             any("DUET comparator synthetic distribution" in line for line in logs)
+        )
+        self.assertTrue(
+            any("DUET comparator real-margin distribution" in line for line in logs)
+        )
+        self.assertTrue(
+            any("DUET comparator real-margin thresholds" in line for line in logs)
         )
 
     def test_dist_match_integration(self):
