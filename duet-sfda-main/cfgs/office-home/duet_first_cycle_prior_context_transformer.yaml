@@ -7,6 +7,8 @@ SETTING:
   T: 2
   SEED: 2020
   OUTPUT_SRC: source
+CUDNN:
+  BENCHMARK: false
 OPTIM:
   METHOD: SGD
   MOMENTUM: 0.9

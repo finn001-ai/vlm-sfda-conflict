@@ -47,7 +47,10 @@ if __name__ == "__main__":
     torch.cuda.manual_seed(cfg.SETTING.SEED)
     np.random.seed(cfg.SETTING.SEED)
     random.seed(cfg.SETTING.SEED)
-    torch.backends.cudnn.benchmark = cfg.CUDNN.BENCHMARK
+    # Context/comparator experiments need repeatable same-seed trajectories.
+    # Do not let cuDNN benchmark select potentially non-deterministic kernels.
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
 
     if cfg.SETTING.DATASET == 'office-home':
         if cfg.DA == 'pda':
