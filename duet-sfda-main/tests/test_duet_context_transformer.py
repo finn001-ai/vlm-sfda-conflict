@@ -30,6 +30,7 @@ from src.utils.duet_context import (
     train_pairwise_comparator_epochs,
     train_context_transformer,
     _exclude_query_anchors,
+    _log_eval_only_metrics,
     _zscore_filter,
 )
 
@@ -406,7 +407,41 @@ class PipelineTest(unittest.TestCase):
         self.assertIn("DUET context correction: cycle=2;", joined)
         self.assertIn("DUET context correction eval-only: cycle=2;", joined)
         self.assertIn("anchor_candidates=", joined)
+        self.assertIn("resolved_subset_task_acc=", joined)
+        self.assertIn("resolved_subset_clip_acc=", joined)
+        self.assertIn("resolved_comparator_acc=", joined)
+        self.assertIn("resolved_candidate_oracle_acc=", joined)
         self.assertIn("ground_truth_affects_training=False", joined)
+
+    def test_eval_only_resolved_metrics_use_the_same_subset(self):
+        """Task/CLIP/comparator/oracle must all use resolved_mask rows only."""
+        logs = []
+        resolved = torch.tensor([True, True, True, False, False])
+        task_top1 = torch.tensor([0, 0, 2, 1, 0])
+        clip_top1 = torch.tensor([1, 1, 1, 0, 1])
+        context_labels = torch.tensor([0, 1, 1, -1, -1])
+        labels = torch.tensor([0, 1, 2, 0, 0])
+        _log_eval_only_metrics(
+            {},
+            resolved_mask=resolved,
+            weak_rejected_mask=torch.zeros(5, dtype=torch.bool),
+            context_labels=context_labels,
+            task_top1=task_top1,
+            clip_top1=clip_top1,
+            all_label=labels,
+            anchor_mask=torch.zeros(5, dtype=torch.bool),
+            weak_agreement_mask=torch.zeros(5, dtype=torch.bool),
+            strict_conflict_mask=task_top1 != clip_top1,
+            cycle=4,
+            log_fn=logs.append,
+        )
+        eval_line = next(
+            line for line in logs if line.startswith("DUET context eval-only:")
+        )
+        self.assertIn("resolved_subset_task_acc=66.67%", eval_line)
+        self.assertIn("resolved_subset_clip_acc=33.33%", eval_line)
+        self.assertIn("resolved_comparator_acc=66.67%", eval_line)
+        self.assertIn("resolved_candidate_oracle_acc=100.00%", eval_line)
 
 
 class ComparatorTest(unittest.TestCase):

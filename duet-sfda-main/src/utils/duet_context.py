@@ -2169,7 +2169,25 @@ def _log_eval_only_metrics(
     # "Original mixed" on conflicts is ambiguous (task != clip); report the
     # task-side proxy, consistent with the unresolved DUET path.
     strict_mix_acc = acc(task_top1, strict_conflict_mask)
-    resolved_acc = acc(context_labels, resolved_mask)
+    # Same-subset diagnostic: all four accuracies below are evaluated on the
+    # exact same rows selected by the comparator (resolved_mask).  The older
+    # strict_task_acc / strict_clip_acc use the full strict-conflict set and
+    # therefore must not be compared directly with resolved_acc.
+    resolved_subset_task_acc = acc(task_top1, resolved_mask)
+    resolved_subset_clip_acc = acc(clip_top1, resolved_mask)
+    resolved_comparator_acc = acc(context_labels, resolved_mask)
+    if int(resolved_mask.sum().item()) == 0:
+        resolved_candidate_oracle_acc = "nan"
+    else:
+        candidate_oracle_correct = (
+            (task_top1[resolved_mask] == all_label[resolved_mask])
+            | (clip_top1[resolved_mask] == all_label[resolved_mask])
+        )
+        resolved_candidate_oracle_acc = _fmt_pct(
+            float(candidate_oracle_correct.float().mean().item())
+        )
+    # Backward-compatible alias retained for existing log parsers.
+    resolved_acc = resolved_comparator_acc
 
     support_task_sub = (resolved_mask & (context_labels == task_top1)).sum().item() > 0
     support_task_acc = (
@@ -2236,7 +2254,10 @@ def _log_eval_only_metrics(
     log_fn(
         "DUET context eval-only: cycle={}; anchor_precision={}; "
         "strict_task_acc={}; strict_clip_acc={}; strict_mix_acc={}; "
-        "resolved_acc={}; support_task_acc={}; support_clip_acc={}; "
+        "resolved_acc={}; resolved_subset_task_acc={}; "
+        "resolved_subset_clip_acc={}; resolved_comparator_acc={}; "
+        "resolved_candidate_oracle_acc={}; support_task_acc={}; "
+        "support_clip_acc={}; "
         "third_acc={}; abstain_orig_acc={}; weak_orig_precision={}; "
         "weak_passed_precision={}; weak_deferred_precision={}; "
         "ground_truth_affects_training=False".format(
@@ -2246,6 +2267,10 @@ def _log_eval_only_metrics(
             strict_clip_acc,
             strict_mix_acc,
             resolved_acc,
+            resolved_subset_task_acc,
+            resolved_subset_clip_acc,
+            resolved_comparator_acc,
+            resolved_candidate_oracle_acc,
             support_task_acc,
             support_clip_acc,
             third_acc,
