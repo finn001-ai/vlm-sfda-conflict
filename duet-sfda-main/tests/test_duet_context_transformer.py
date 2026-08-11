@@ -12,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import torch
+import torch.nn as nn
 
 from src.utils.duet_context import (
     ClassBalancedAnchorBank,
@@ -27,11 +28,13 @@ from src.utils.duet_context import (
     prototype_refine,
     run_context_refinement,
     train_pairwise_comparator,
+    train_pairwise_comparator_early_stopping,
     train_pairwise_comparator_epochs,
     train_context_transformer,
     _exclude_query_anchors,
     _log_eval_only_metrics,
     _log_real_comparator_margin_distribution,
+    _stratified_binary_train_val_split,
     _zscore_filter,
 )
 
@@ -84,6 +87,11 @@ def make_context_cfg(**overrides):
         COMPARATOR_GATE=0.15,
         REPLAY_PER_DIRECTION=64,
         REPLAY_MIX_FRACTION=0.25,
+        EARLY_STOP_ENABLED=False,
+        EARLY_STOP_VAL_FRACTION=0.20,
+        EARLY_STOP_MIN_VAL_PER_DIRECTION=6,
+        EARLY_STOP_CHECK_INTERVAL=10,
+        EARLY_STOP_PATIENCE=3,
         COMPARATOR_EPOCHS=0,
         SOFT_ONLY_ADMISSION=False,
         DIST_MATCH_SYNTHETIC=False,
@@ -759,6 +767,76 @@ class ComparatorTest(unittest.TestCase):
             )
             update_counts.append(optimizer_steps)
         self.assertEqual(update_counts, [5, 5])
+
+    def test_stratified_synthetic_validation_split_is_balanced(self):
+        targets = torch.tensor([0.0] * 31 + [1.0] * 31)
+        split1 = _stratified_binary_train_val_split(
+            targets,
+            val_fraction=0.20,
+            min_val_per_direction=6,
+            seed=7,
+        )
+        split2 = _stratified_binary_train_val_split(
+            targets,
+            val_fraction=0.20,
+            min_val_per_direction=6,
+            seed=7,
+        )
+        self.assertIsNotNone(split1)
+        self.assertEqual(split1["val_per_direction"], 6)
+        self.assertEqual(split1["val_indices"].numel(), 12)
+        self.assertEqual(split1["train_indices"].numel(), 50)
+        val_targets = targets[split1["val_indices"]]
+        self.assertEqual(int((val_targets == 0).sum()), 6)
+        self.assertEqual(int((val_targets == 1).sum()), 6)
+        self.assertTrue(
+            torch.equal(split1["train_indices"], split2["train_indices"])
+        )
+        self.assertTrue(
+            torch.equal(split1["val_indices"], split2["val_indices"])
+        )
+
+    def test_synthetic_validation_early_stop_restores_step_zero(self):
+        targets = torch.tensor([0.0] * 12 + [1.0] * 12)
+        split = _stratified_binary_train_val_split(
+            targets,
+            val_fraction=0.25,
+            min_val_per_direction=3,
+            seed=11,
+        )
+        features = torch.zeros(24, 2)
+        train_indices = split["train_indices"]
+        val_indices = split["val_indices"]
+        features[train_indices, targets[train_indices].long()] = 1.0
+        features[val_indices, 1 - targets[val_indices].long()] = 1.0
+        model = nn.Linear(2, 2, bias=False)
+        nn.init.zeros_(model.weight)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.1)
+        logs = []
+        result = train_pairwise_comparator_early_stopping(
+            model,
+            optimizer,
+            features,
+            targets,
+            max_steps=50,
+            batch_size=32,
+            seed=11,
+            val_fraction=0.25,
+            min_val_per_direction=3,
+            check_interval=5,
+            patience=2,
+            memory_fraction=0.0,
+            cycle=3,
+            log_fn=logs.append,
+        )
+        self.assertEqual(result["best_step"], 0)
+        self.assertEqual(result["optimizer_steps"], 10)
+        self.assertTrue(result["stopped_early"])
+        self.assertTrue(torch.equal(model.weight, torch.zeros_like(model.weight)))
+        self.assertEqual(len(optimizer.state), 0)
+        self.assertEqual(result["val_per_direction"], 3)
+        self.assertTrue(any("step=0" in line for line in logs))
+        self.assertTrue(any("step=10" in line for line in logs))
 
     def test_replay_memory_integration_log(self):
         """带 replay memory 的 comparator 管线：日志出现 replay 行。"""

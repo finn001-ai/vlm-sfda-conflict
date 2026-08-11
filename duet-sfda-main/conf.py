@@ -384,6 +384,13 @@ _C.DUET_CONTEXT.COMPARATOR_GATE = 0.20
 # 训练时每个 step 用 当前 matched : memory = (1-REPLAY_MIX_FRACTION) : REPLAY_MIX_FRACTION。
 _C.DUET_CONTEXT.REPLAY_PER_DIRECTION = 64
 _C.DUET_CONTEXT.REPLAY_MIX_FRACTION = 0.25
+# GT-free adaptive training budget for the pairwise comparator.  When enabled,
+# TRAIN_STEPS_PER_CYCLE is the maximum number of optimizer updates.
+_C.DUET_CONTEXT.EARLY_STOP_ENABLED = False
+_C.DUET_CONTEXT.EARLY_STOP_VAL_FRACTION = 0.20
+_C.DUET_CONTEXT.EARLY_STOP_MIN_VAL_PER_DIRECTION = 6
+_C.DUET_CONTEXT.EARLY_STOP_CHECK_INTERVAL = 10
+_C.DUET_CONTEXT.EARLY_STOP_PATIENCE = 3
 # epoch-based 训练（替代固定 TRAIN_STEPS_PER_CYCLE）：
 # 每个 epoch 把当前 matched synthetic 基本看一遍（配合 25% replay），
 # 避免几十个样本被 200 步反复背诵（loss 下降 / confidence 膨胀 /

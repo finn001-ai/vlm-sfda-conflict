@@ -22,6 +22,7 @@ evaluation-only logging (``ground_truth_affects_training=False``).
 
 from __future__ import annotations
 
+import copy
 import logging
 from typing import Callable, Optional
 
@@ -938,6 +939,359 @@ def train_pairwise_comparator(
     return total_loss / counted if counted else None
 
 
+def _stratified_binary_train_val_split(
+    targets: torch.Tensor,
+    *,
+    val_fraction: float,
+    min_val_per_direction: int,
+    seed: int,
+) -> Optional[dict]:
+    """Deterministically split both comparator directions into train/val.
+
+    The same number of validation rows is taken from trust-Task (0) and
+    trust-CLIP (1), so the validation CE cannot be dominated by one direction.
+    Returns ``None`` when either direction has fewer than two rows.
+    """
+    if not 0.0 < float(val_fraction) < 1.0:
+        raise ValueError("val_fraction must satisfy 0 < value < 1")
+    if int(min_val_per_direction) < 1:
+        raise ValueError("min_val_per_direction must be >= 1")
+    targets = targets.detach().long()
+    direction_indices = [
+        torch.nonzero(targets == direction, as_tuple=False).flatten()
+        for direction in (0, 1)
+    ]
+    if any(indices.numel() < 2 for indices in direction_indices):
+        return None
+    min_direction_count = min(indices.numel() for indices in direction_indices)
+    val_per_direction = min(
+        min_direction_count - 1,
+        max(
+            int(min_val_per_direction),
+            int(round(min_direction_count * float(val_fraction))),
+        ),
+    )
+    generator = torch.Generator(device=targets.device)
+    generator.manual_seed(int(seed))
+    train_parts = []
+    val_parts = []
+    for indices in direction_indices:
+        permutation = torch.randperm(
+            indices.numel(), generator=generator, device=targets.device
+        )
+        shuffled = indices[permutation]
+        val_parts.append(shuffled[:val_per_direction])
+        train_parts.append(shuffled[val_per_direction:])
+    train_indices = torch.cat(train_parts)
+    val_indices = torch.cat(val_parts)
+    train_indices = train_indices[
+        torch.randperm(
+            train_indices.numel(), generator=generator, device=targets.device
+        )
+    ]
+    val_indices = val_indices[
+        torch.randperm(
+            val_indices.numel(), generator=generator, device=targets.device
+        )
+    ]
+    return {
+        "train_indices": train_indices,
+        "val_indices": val_indices,
+        "val_per_direction": int(val_per_direction),
+    }
+
+
+@torch.no_grad()
+def _comparator_validation_loss(
+    comparator: PairwiseConflictComparator,
+    features: torch.Tensor,
+    targets: torch.Tensor,
+) -> float:
+    comparator.eval()
+    logits = comparator(features.detach())
+    return float(
+        F.cross_entropy(
+            logits, targets.detach().long().to(logits.device)
+        ).item()
+    )
+
+
+@torch.no_grad()
+def _real_margin_checkpoint_values(
+    comparator: PairwiseConflictComparator,
+    real_features: Optional[torch.Tensor],
+    gate: float,
+) -> tuple[float, float, float, float]:
+    if real_features is None or real_features.numel() == 0:
+        return float("nan"), float("nan"), float("nan"), float("nan")
+    comparator.eval()
+    probabilities = _softmax_probabilities(comparator(real_features.detach()))
+    margins = (probabilities[:, 0] - probabilities[:, 1]).abs().float().cpu()
+    quantiles = torch.quantile(margins, torch.tensor([0.50, 0.90]))
+    coverage = float((margins >= float(gate)).float().mean().item())
+    return (
+        float(margins.mean().item()),
+        float(quantiles[0].item()),
+        float(quantiles[1].item()),
+        coverage,
+    )
+
+
+def train_pairwise_comparator_early_stopping(
+    comparator: PairwiseConflictComparator,
+    optimizer: torch.optim.Optimizer,
+    features: torch.Tensor,
+    targets: torch.Tensor,
+    *,
+    max_steps: int,
+    batch_size: int,
+    seed: int,
+    val_fraction: float,
+    min_val_per_direction: int,
+    check_interval: int,
+    patience: int,
+    memory_features: Optional[torch.Tensor] = None,
+    memory_targets: Optional[torch.Tensor] = None,
+    memory_fraction: float = 0.25,
+    real_features: Optional[torch.Tensor] = None,
+    gate: float = 0.20,
+    cycle: int = 1,
+    log_fn: Callable[[str], None] = logging.info,
+) -> dict:
+    """GT-free max-update training with synthetic-validation early stopping.
+
+    Validation CE is the only stopping signal. Real-conflict margins are
+    logged at checkpoints for diagnostics and never affect model selection.
+    The best model, optimizer and RNG states are restored because the
+    comparator and Adam optimizer persist across cycles.
+    """
+    if int(max_steps) < 1:
+        raise ValueError("max_steps must be >= 1")
+    if int(check_interval) < 1:
+        raise ValueError("check_interval must be >= 1")
+    if int(patience) < 1:
+        raise ValueError("patience must be >= 1")
+    if not 0.0 <= float(memory_fraction) < 1.0:
+        raise ValueError("memory_fraction must satisfy 0 <= value < 1")
+    split = _stratified_binary_train_val_split(
+        targets,
+        val_fraction=val_fraction,
+        min_val_per_direction=min_val_per_direction,
+        seed=seed,
+    )
+    if split is None:
+        comparator.eval()
+        log_fn(
+            "DUET comparator early-stop skipped: cycle={}; reason="
+            "insufficient_samples_for_stratified_split; current_samples={}; "
+            "ground_truth_affects_training=False".format(
+                cycle, features.size(0)
+            )
+        )
+        return {
+            "train_loss": None,
+            "best_val_loss": None,
+            "best_step": 0,
+            "optimizer_steps": 0,
+            "stopped_early": False,
+            "train_samples": 0,
+            "val_samples": 0,
+            "val_per_direction": 0,
+            "memory_samples_per_step": 0,
+        }
+
+    train_indices = split["train_indices"]
+    val_indices = split["val_indices"]
+    train_features = features[train_indices].detach()
+    train_targets = targets[train_indices].detach()
+    val_features = features[val_indices].detach()
+    val_targets = targets[val_indices].detach()
+    generator = torch.Generator(device=features.device)
+    generator.manual_seed(int(seed) + 100003)
+    use_memory = (
+        memory_fraction > 0.0
+        and memory_features is not None
+        and memory_targets is not None
+        and memory_features.size(0) >= 1
+    )
+    if use_memory:
+        memory_features = memory_features.detach().to(features.device)
+        memory_targets = memory_targets.detach().to(features.device)
+        n_memory = max(1, int(round(batch_size * memory_fraction)))
+        n_current = max(1, int(batch_size) - n_memory)
+    else:
+        n_memory = 0
+        n_current = int(batch_size)
+
+    best_val_loss = _comparator_validation_loss(
+        comparator, val_features, val_targets
+    )
+    best_step = 0
+    best_model_state = {
+        name: value.detach().clone()
+        for name, value in comparator.state_dict().items()
+    }
+    best_optimizer_state = copy.deepcopy(optimizer.state_dict())
+    best_cpu_rng_state = torch.get_rng_state().clone()
+    best_cuda_rng_states = (
+        [state.clone() for state in torch.cuda.get_rng_state_all()]
+        if torch.cuda.is_available()
+        else None
+    )
+    stale_checks = 0
+    total_train_loss = 0.0
+    interval_train_loss = 0.0
+    interval_steps = 0
+    optimizer_steps = 0
+    stopped_early = False
+
+    def log_checkpoint(step: int, train_loss: Optional[float]) -> None:
+        real_mean, real_p50, real_p90, real_coverage = (
+            _real_margin_checkpoint_values(
+                comparator, real_features, gate
+            )
+        )
+        train_loss_str = (
+            "none" if train_loss is None else "{:.6f}".format(train_loss)
+        )
+        log_fn(
+            "DUET comparator early-stop checkpoint: cycle={}; step={}; "
+            "train_loss={}; val_loss={:.6f}; best_val_loss={:.6f}; "
+            "best_step={}; stale_checks={}; real_margin_mean={:.4f}; "
+            "real_margin_p50={:.4f}; real_margin_p90={:.4f}; "
+            "coverage_at_gate={:.2f}%; gate={:.2f}; "
+            "ground_truth_affects_training=False".format(
+                cycle,
+                step,
+                train_loss_str,
+                current_val_loss,
+                best_val_loss,
+                best_step,
+                stale_checks,
+                real_mean,
+                real_p50,
+                real_p90,
+                100.0 * real_coverage,
+                gate,
+            )
+        )
+
+    current_val_loss = best_val_loss
+    log_checkpoint(0, None)
+    comparator.train()
+    for step in range(1, int(max_steps) + 1):
+        if use_memory:
+            current_indices = torch.randint(
+                0,
+                train_features.size(0),
+                (n_current,),
+                generator=generator,
+                device=features.device,
+            )
+            memory_indices = torch.randint(
+                0,
+                memory_features.size(0),
+                (n_memory,),
+                generator=generator,
+                device=features.device,
+            )
+            batch_features = torch.cat(
+                [train_features[current_indices], memory_features[memory_indices]],
+                dim=0,
+            )
+            batch_targets = torch.cat(
+                [train_targets[current_indices], memory_targets[memory_indices]],
+                dim=0,
+            )
+            batch_permutation = torch.randperm(
+                batch_features.size(0),
+                generator=generator,
+                device=features.device,
+            )
+            batch_features = batch_features[batch_permutation]
+            batch_targets = batch_targets[batch_permutation]
+        else:
+            if train_features.size(0) <= batch_size:
+                current_indices = torch.arange(
+                    train_features.size(0), device=features.device
+                )
+            else:
+                current_indices = torch.randperm(
+                    train_features.size(0),
+                    generator=generator,
+                    device=features.device,
+                )[:batch_size]
+            batch_features = train_features[current_indices]
+            batch_targets = train_targets[current_indices]
+        comparator.train()
+        logits = comparator(batch_features.detach())
+        loss = F.cross_entropy(
+            logits, batch_targets.detach().long().to(logits.device)
+        )
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        loss_value = float(loss.detach().item())
+        total_train_loss += loss_value
+        interval_train_loss += loss_value
+        interval_steps += 1
+        optimizer_steps = step
+
+        should_check = (
+            step % int(check_interval) == 0 or step == int(max_steps)
+        )
+        if not should_check:
+            continue
+        current_val_loss = _comparator_validation_loss(
+            comparator, val_features, val_targets
+        )
+        if current_val_loss < best_val_loss:
+            best_val_loss = current_val_loss
+            best_step = step
+            best_model_state = {
+                name: value.detach().clone()
+                for name, value in comparator.state_dict().items()
+            }
+            best_optimizer_state = copy.deepcopy(optimizer.state_dict())
+            best_cpu_rng_state = torch.get_rng_state().clone()
+            best_cuda_rng_states = (
+                [state.clone() for state in torch.cuda.get_rng_state_all()]
+                if torch.cuda.is_available()
+                else None
+            )
+            stale_checks = 0
+        else:
+            stale_checks += 1
+        mean_interval_loss = interval_train_loss / max(interval_steps, 1)
+        log_checkpoint(step, mean_interval_loss)
+        interval_train_loss = 0.0
+        interval_steps = 0
+        if stale_checks >= int(patience):
+            stopped_early = step < int(max_steps)
+            break
+        comparator.train()
+
+    comparator.load_state_dict(best_model_state)
+    optimizer.load_state_dict(best_optimizer_state)
+    torch.set_rng_state(best_cpu_rng_state)
+    if best_cuda_rng_states is not None:
+        torch.cuda.set_rng_state_all(best_cuda_rng_states)
+    comparator.eval()
+    return {
+        "train_loss": (
+            total_train_loss / optimizer_steps if optimizer_steps else None
+        ),
+        "best_val_loss": best_val_loss,
+        "best_step": int(best_step),
+        "optimizer_steps": int(optimizer_steps),
+        "stopped_early": bool(stopped_early),
+        "train_samples": int(train_indices.numel()),
+        "val_samples": int(val_indices.numel()),
+        "val_per_direction": int(split["val_per_direction"]),
+        "memory_samples_per_step": int(n_memory),
+    }
+
+
 def train_pairwise_comparator_epochs(
     comparator: PairwiseConflictComparator,
     optimizer: torch.optim.Optimizer,
@@ -1673,6 +2027,25 @@ def run_comparator_refinement(
     if not 0.0 <= replay_mix_fraction < 1.0:
         raise ValueError("REPLAY_MIX_FRACTION must satisfy 0 <= value < 1")
     comparator_epochs = int(getattr(context_cfg, "COMPARATOR_EPOCHS", 0))
+    early_stop_enabled = bool(
+        getattr(context_cfg, "EARLY_STOP_ENABLED", False)
+    )
+    early_stop_val_fraction = float(
+        getattr(context_cfg, "EARLY_STOP_VAL_FRACTION", 0.20)
+    )
+    early_stop_min_val_per_direction = int(
+        getattr(context_cfg, "EARLY_STOP_MIN_VAL_PER_DIRECTION", 6)
+    )
+    early_stop_check_interval = int(
+        getattr(context_cfg, "EARLY_STOP_CHECK_INTERVAL", 10)
+    )
+    early_stop_patience = int(
+        getattr(context_cfg, "EARLY_STOP_PATIENCE", 3)
+    )
+    if early_stop_enabled and comparator_epochs > 0:
+        raise ValueError(
+            "EARLY_STOP_ENABLED and COMPARATOR_EPOCHS cannot both be active"
+        )
     seed = int(context_cfg.SEED) + int(cycle - 1)
     eval_only_logging = bool(context_cfg.EVAL_ONLY_LOGGING)
 
@@ -1732,6 +2105,9 @@ def run_comparator_refinement(
         "train_memory_samples": 0,
         "optimizer_steps_this_cycle": 0,
         "final_current_loss": None,
+        "early_stop_best_val_loss": None,
+        "early_stop_best_step": None,
+        "early_stop_stopped": False,
         "resolved_strict": 0,
         "support_task": 0,
         "support_clip": 0,
@@ -1983,7 +2359,85 @@ def run_comparator_refinement(
                         replay_mix_fraction,
                     )
                 )
-            if comparator_epochs > 0:
+            if early_stop_enabled:
+                current_samples = int(synthetic_features.size(0))
+                early_stop_result = train_pairwise_comparator_early_stopping(
+                    comparator,
+                    comparator_optimizer,
+                    synthetic_features,
+                    synthetic_targets,
+                    max_steps=train_steps_per_cycle,
+                    batch_size=train_batch_size,
+                    seed=seed,
+                    val_fraction=early_stop_val_fraction,
+                    min_val_per_direction=early_stop_min_val_per_direction,
+                    check_interval=early_stop_check_interval,
+                    patience=early_stop_patience,
+                    memory_features=memory_features,
+                    memory_targets=memory_targets,
+                    memory_fraction=replay_mix_fraction,
+                    real_features=real_features,
+                    gate=gate,
+                    cycle=cycle,
+                    log_fn=log_fn,
+                )
+                stats["train_loss"] = early_stop_result["train_loss"]
+                stats["train_current_samples"] = current_samples
+                stats["train_memory_samples"] = early_stop_result[
+                    "memory_samples_per_step"
+                ]
+                stats["optimizer_steps_this_cycle"] = early_stop_result[
+                    "optimizer_steps"
+                ]
+                stats["early_stop_best_val_loss"] = early_stop_result[
+                    "best_val_loss"
+                ]
+                stats["early_stop_best_step"] = early_stop_result["best_step"]
+                stats["early_stop_stopped"] = early_stop_result[
+                    "stopped_early"
+                ]
+                comparator.eval()
+                with torch.no_grad():
+                    final_logits = comparator(synthetic_features.detach())
+                    stats["final_current_loss"] = float(
+                        F.cross_entropy(
+                            final_logits,
+                            synthetic_targets.detach().long().to(final_logits.device),
+                        ).item()
+                    )
+                best_val_loss = stats["early_stop_best_val_loss"]
+                best_val_loss_str = (
+                    "none"
+                    if best_val_loss is None
+                    else "{:.6f}".format(best_val_loss)
+                )
+                log_fn(
+                    "DUET comparator training: cycle={}; "
+                    "mode=synthetic_val_early_stop; max_updates={}; "
+                    "optimizer_steps_this_cycle={}; best_step={}; "
+                    "stopped_early={}; current_samples={}; train_samples={}; "
+                    "val_samples={}; val_per_direction={}; "
+                    "memory_bank_samples={}; memory_samples_per_step={}; "
+                    "best_val_loss={}; final_current_loss={:.6f}; "
+                    "ground_truth_affects_training=False".format(
+                        cycle,
+                        train_steps_per_cycle,
+                        stats["optimizer_steps_this_cycle"],
+                        stats["early_stop_best_step"],
+                        stats["early_stop_stopped"],
+                        current_samples,
+                        early_stop_result["train_samples"],
+                        early_stop_result["val_samples"],
+                        early_stop_result["val_per_direction"],
+                        memory_features.size(0)
+                        if memory_features is not None
+                        else 0,
+                        stats["train_memory_samples"],
+                        best_val_loss_str,
+                        stats["final_current_loss"],
+                    )
+                )
+            elif comparator_epochs > 0:
                 current_samples = int(synthetic_features.size(0))
                 use_replay = (
                     memory_features is not None
@@ -2061,6 +2515,42 @@ def run_comparator_refinement(
                     memory_features=memory_features,
                     memory_targets=memory_targets,
                     memory_fraction=replay_mix_fraction,
+                )
+                stats["train_current_samples"] = int(
+                    synthetic_features.size(0)
+                )
+                stats["train_memory_samples"] = (
+                    max(1, int(round(train_batch_size * replay_mix_fraction)))
+                    if memory_features is not None and replay_mix_fraction > 0.0
+                    else 0
+                )
+                stats["optimizer_steps_this_cycle"] = max(
+                    1, train_steps_per_cycle
+                )
+                comparator.eval()
+                with torch.no_grad():
+                    final_logits = comparator(synthetic_features.detach())
+                    stats["final_current_loss"] = float(
+                        F.cross_entropy(
+                            final_logits,
+                            synthetic_targets.detach().long().to(final_logits.device),
+                        ).item()
+                    )
+                log_fn(
+                    "DUET comparator training: cycle={}; mode=fixed_steps; "
+                    "optimizer_steps_this_cycle={}; current_samples={}; "
+                    "memory_bank_samples={}; memory_samples_per_step={}; "
+                    "final_current_loss={:.6f}; "
+                    "ground_truth_affects_training=False".format(
+                        cycle,
+                        stats["optimizer_steps_this_cycle"],
+                        stats["train_current_samples"],
+                        memory_features.size(0)
+                        if memory_features is not None
+                        else 0,
+                        stats["train_memory_samples"],
+                        stats["final_current_loss"],
+                    )
                 )
             if replay_memory is not None:
                 # 训练后把当前 cycle 的 matched synthetic 写入历史 memory
