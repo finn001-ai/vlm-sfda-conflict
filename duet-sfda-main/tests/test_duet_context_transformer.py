@@ -692,7 +692,7 @@ class ComparatorTest(unittest.TestCase):
         self.assertGreater(acc, 0.7)
 
     def test_train_pairwise_comparator_epochs(self):
-        """epoch-based：每个 epoch 当前 synthetic 看一遍 + replay，loss 下降。"""
+        """Full-batch epoch training performs exactly one update per epoch."""
         torch.manual_seed(0)
         pos = torch.randn(24, 8) + 1.0
         neg = torch.randn(24, 8) - 1.0
@@ -702,6 +702,15 @@ class ComparatorTest(unittest.TestCase):
         mem_t = torch.tensor([0.0] * 4 + [1.0] * 4)
         model = PairwiseConflictComparator(input_dim=8, hidden=16, layers=2)
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
+        optimizer_steps = 0
+        original_step = optimizer.step
+
+        def counted_step(*args, **kwargs):
+            nonlocal optimizer_steps
+            optimizer_steps += 1
+            return original_step(*args, **kwargs)
+
+        optimizer.step = counted_step
         loss1 = train_pairwise_comparator_epochs(
             model, optimizer, current_f, current_t,
             epochs=5, batch_size=32, seed=1,
@@ -714,6 +723,42 @@ class ComparatorTest(unittest.TestCase):
         )
         self.assertIsNotNone(loss1)
         self.assertLess(loss2, loss1)
+        self.assertEqual(optimizer_steps, 10)
+
+    def test_train_pairwise_comparator_epochs_has_no_sample_count_step_cliff(self):
+        """96 and 102 current rows must produce the same number of updates."""
+        update_counts = []
+        for sample_count in (96, 102):
+            torch.manual_seed(0)
+            features = torch.randn(sample_count, 8)
+            targets = torch.arange(sample_count).remainder(2).float()
+            memory_features = torch.randn(16, 8)
+            memory_targets = torch.arange(16).remainder(2).float()
+            model = PairwiseConflictComparator(input_dim=8, hidden=16, layers=2)
+            optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+            optimizer_steps = 0
+            original_step = optimizer.step
+
+            def counted_step(*args, **kwargs):
+                nonlocal optimizer_steps
+                optimizer_steps += 1
+                return original_step(*args, **kwargs)
+
+            optimizer.step = counted_step
+            train_pairwise_comparator_epochs(
+                model,
+                optimizer,
+                features,
+                targets,
+                epochs=5,
+                batch_size=64,
+                seed=1,
+                memory_features=memory_features,
+                memory_targets=memory_targets,
+                memory_fraction=0.25,
+            )
+            update_counts.append(optimizer_steps)
+        self.assertEqual(update_counts, [5, 5])
 
     def test_replay_memory_integration_log(self):
         """带 replay memory 的 comparator 管线：日志出现 replay 行。"""
@@ -752,9 +797,15 @@ class ComparatorTest(unittest.TestCase):
         self.assertTrue(
             any("DUET comparator replay" in line for line in logs)
         )
-        self.assertTrue(
-            any("DUET comparator training: cycle=3; mode=epochs" in line for line in logs)
+        training_log = next(
+            line
+            for line in logs
+            if "DUET comparator training: cycle=3; mode=full_batch_epochs"
+            in line
         )
+        self.assertIn("current_samples=", training_log)
+        self.assertIn("memory_samples=", training_log)
+        self.assertIn("optimizer_steps_this_cycle=20", training_log)
 
     def test_decision_margin_gate(self):
         logits = torch.tensor([[1.0, -1.0], [-1.0, 1.0], [0.05, -0.05]])

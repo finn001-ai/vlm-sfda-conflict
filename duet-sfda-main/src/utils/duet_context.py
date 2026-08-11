@@ -951,13 +951,18 @@ def train_pairwise_comparator_epochs(
     memory_targets: Optional[torch.Tensor] = None,
     memory_fraction: float = 0.25,
 ) -> Optional[float]:
-    """Epoch-based comparator 训练（替代固定 200 步）。
+    """Full-batch epoch training for the pairwise comparator.
 
-    每个 epoch 把当前 matched synthetic 基本看一遍（不放回地遍历），
-    每一步再按 ``memory_fraction`` 从历史 replay memory 采样。这样当前
-    样本每个 epoch 只出现一次，总共 ``epochs`` 次，而不是被 200 步
-    反复背诵上百遍。
+    Each epoch contains every current matched-synthetic sample exactly once,
+    plus replay samples drawn to match ``memory_fraction``, and performs one
+    optimizer update.  Consequently ``epochs`` always means exactly
+    ``epochs`` optimizer updates, independent of the current sample count.
+
+    ``batch_size`` is retained for call-site compatibility but intentionally
+    does not split the current samples into mini-batches.
     """
+    if not 0.0 <= float(memory_fraction) < 1.0:
+        raise ValueError("memory_fraction must satisfy 0 <= value < 1")
     if features.numel() == 0 or features.size(0) < 2:
         return None
     comparator.train()
@@ -965,19 +970,24 @@ def train_pairwise_comparator_epochs(
     generator.manual_seed(int(seed))
     device = features.device
     use_memory = (
-        memory_features is not None
+        memory_fraction > 0.0
+        and memory_features is not None
         and memory_targets is not None
         and memory_features.size(0) >= 1
     )
-    if use_memory:
-        n_current_per_step = max(
-            1, int(round(batch_size * (1.0 - memory_fraction)))
+    n_memory_per_epoch = (
+        max(
+            1,
+            int(
+                round(
+                    features.size(0)
+                    * memory_fraction
+                    / (1.0 - memory_fraction)
+                )
+            ),
         )
-    else:
-        n_current_per_step = batch_size
-    steps_per_epoch = max(
-        1,
-        (int(features.size(0)) + n_current_per_step - 1) // n_current_per_step,
+        if use_memory
+        else 0
     )
     total_loss = 0.0
     counted = 0
@@ -985,53 +995,35 @@ def train_pairwise_comparator_epochs(
         permutation = torch.randperm(
             features.size(0), generator=generator, device=device
         )
-        for step in range(steps_per_epoch):
-            current_indices = permutation[
-                step * n_current_per_step : (step + 1) * n_current_per_step
-            ]
-            if current_indices.numel() == 0:
-                break
-            current_features = features[current_indices].detach()
-            current_targets = targets[current_indices].detach()
-            if use_memory:
-                # memory 数跟随当前 batch 大小，保证每个 batch 内都是
-                # current : memory = (1-fraction) : fraction
-                n_memory_this_step = max(
-                    1,
-                    int(
-                        round(
-                            current_indices.numel()
-                            * memory_fraction
-                            / (1.0 - memory_fraction)
-                        )
-                    ),
-                )
-                memory_indices = torch.randint(
-                    0,
-                    memory_features.size(0),
-                    (n_memory_this_step,),
-                    generator=generator,
-                    device=device,
-                )
-                batch_features = torch.cat(
-                    [current_features, memory_features[memory_indices].detach()],
-                    dim=0,
-                )
-                batch_targets = torch.cat(
-                    [current_targets, memory_targets[memory_indices].detach()],
-                    dim=0,
-                )
-            else:
-                batch_features = current_features
-                batch_targets = current_targets
-            logits = comparator(batch_features)
-            batch_targets = batch_targets.to(logits.device)
-            loss = F.cross_entropy(logits, batch_targets.long())
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            total_loss += float(loss.detach().item())
-            counted += 1
+        current_features = features[permutation].detach()
+        current_targets = targets[permutation].detach()
+        if use_memory:
+            memory_indices = torch.randint(
+                0,
+                memory_features.size(0),
+                (n_memory_per_epoch,),
+                generator=generator,
+                device=device,
+            )
+            batch_features = torch.cat(
+                [current_features, memory_features[memory_indices].detach()],
+                dim=0,
+            )
+            batch_targets = torch.cat(
+                [current_targets, memory_targets[memory_indices].detach()],
+                dim=0,
+            )
+        else:
+            batch_features = current_features
+            batch_targets = current_targets
+        logits = comparator(batch_features)
+        batch_targets = batch_targets.to(logits.device)
+        loss = F.cross_entropy(logits, batch_targets.long())
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        total_loss += float(loss.detach().item())
+        counted += 1
     comparator.eval()
     return total_loss / counted if counted else None
 
@@ -1678,6 +1670,8 @@ def run_comparator_refinement(
     replay_mix_fraction = float(
         getattr(context_cfg, "REPLAY_MIX_FRACTION", 0.25)
     )
+    if not 0.0 <= replay_mix_fraction < 1.0:
+        raise ValueError("REPLAY_MIX_FRACTION must satisfy 0 <= value < 1")
     comparator_epochs = int(getattr(context_cfg, "COMPARATOR_EPOCHS", 0))
     seed = int(context_cfg.SEED) + int(cycle - 1)
     eval_only_logging = bool(context_cfg.EVAL_ONLY_LOGGING)
@@ -1734,6 +1728,10 @@ def run_comparator_refinement(
         "anchor_mean_task_conf": float("nan"),
         "anchor_mean_clip_conf": float("nan"),
         "train_loss": None,
+        "train_current_samples": 0,
+        "train_memory_samples": 0,
+        "optimizer_steps_this_cycle": 0,
+        "final_current_loss": None,
         "resolved_strict": 0,
         "support_task": 0,
         "support_clip": 0,
@@ -1986,6 +1984,27 @@ def run_comparator_refinement(
                     )
                 )
             if comparator_epochs > 0:
+                current_samples = int(synthetic_features.size(0))
+                use_replay = (
+                    memory_features is not None
+                    and memory_targets is not None
+                    and memory_features.size(0) >= 1
+                    and replay_mix_fraction > 0.0
+                )
+                memory_samples = (
+                    max(
+                        1,
+                        int(
+                            round(
+                                current_samples
+                                * replay_mix_fraction
+                                / (1.0 - replay_mix_fraction)
+                            )
+                        ),
+                    )
+                    if use_replay
+                    else 0
+                )
                 stats["train_loss"] = train_pairwise_comparator_epochs(
                     comparator,
                     comparator_optimizer,
@@ -1998,16 +2017,36 @@ def run_comparator_refinement(
                     memory_targets=memory_targets,
                     memory_fraction=replay_mix_fraction,
                 )
+                stats["train_current_samples"] = current_samples
+                stats["train_memory_samples"] = memory_samples
+                stats["optimizer_steps_this_cycle"] = max(
+                    1, comparator_epochs
+                )
+                comparator.eval()
+                with torch.no_grad():
+                    final_logits = comparator(synthetic_features.detach())
+                    stats["final_current_loss"] = float(
+                        F.cross_entropy(
+                            final_logits,
+                            synthetic_targets.detach().long().to(final_logits.device),
+                        ).item()
+                    )
                 log_fn(
-                    "DUET comparator training: cycle={}; mode=epochs; "
-                    "epochs={}; current={}; memory={}; "
+                    "DUET comparator training: cycle={}; mode=full_batch_epochs; "
+                    "epochs={}; current_samples={}; memory_bank_samples={}; "
+                    "memory_samples={}; effective_batch_size={}; "
+                    "optimizer_steps_this_cycle={}; final_current_loss={:.6f}; "
                     "ground_truth_affects_training=False".format(
                         cycle,
                         comparator_epochs,
-                        synthetic_features.size(0),
+                        current_samples,
                         memory_features.size(0)
                         if memory_features is not None
                         else 0,
+                        memory_samples,
+                        current_samples + memory_samples,
+                        stats["optimizer_steps_this_cycle"],
+                        stats["final_current_loss"],
                     )
                 )
             else:
