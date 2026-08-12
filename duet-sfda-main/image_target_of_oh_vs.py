@@ -32,6 +32,13 @@ import src.methods.oh.plum as PLUM
 
 from conf import cfg, load_cfg_from_args
 
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    message="pkg_resources is deprecated as an API.*"
+)
+
 
 if __name__ == "__main__":
     load_cfg_from_args()
