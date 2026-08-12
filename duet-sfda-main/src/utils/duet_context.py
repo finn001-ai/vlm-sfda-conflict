@@ -922,6 +922,229 @@ def build_comparator_features(
     return features
 
 
+@torch.no_grad()
+def _log_agreement_candidate_probe_eval_only(
+    task_probs: torch.Tensor,
+    clip_probs: torch.Tensor,
+    task_features: torch.Tensor,
+    clip_features: torch.Tensor,
+    labels: torch.Tensor,
+    *,
+    comparator: PairwiseConflictComparator,
+    task_bank: ClassBalancedAnchorBank,
+    clip_bank: ClassBalancedAnchorBank,
+    sim_topk: int,
+    fractions: list[int],
+    cycle: int,
+    log_fn: Callable[[str], None],
+) -> dict:
+    """Probe the trained strict-conflict comparator on agreement A/B pairs.
+
+    A is the shared Top1 and B is the shared Top2.  Comparator output position
+    0 is interpreted as choose A and position 1 as choose B only inside this
+    diagnostic.  No gate, pseudo-label update, optimizer step or admission is
+    performed, and GT is used only after the GT-free pair ranking/prediction.
+    """
+    if not fractions or any(int(value) <= 0 or int(value) > 100 for value in fractions):
+        raise ValueError("agreement candidate probe fractions must be in [1, 100]")
+    task_probs_cpu = task_probs.detach().float().cpu()
+    clip_probs_cpu = clip_probs.detach().float().cpu()
+    task_features_cpu = task_features.detach().float().cpu()
+    clip_features_cpu = clip_features.detach().float().cpu()
+    labels_cpu = labels.detach().long().cpu()
+    if task_probs_cpu.dim() != 2 or clip_probs_cpu.shape != task_probs_cpu.shape:
+        raise ValueError("task_probs and clip_probs must have equal [N, C] shape")
+    if task_probs_cpu.size(1) < 2:
+        raise ValueError("agreement candidate probe requires >= 2 classes")
+    if task_features_cpu.size(0) != task_probs_cpu.size(0):
+        raise ValueError("task_features and probabilities must have equal N")
+    if clip_features_cpu.size(0) != task_probs_cpu.size(0):
+        raise ValueError("clip_features and probabilities must have equal N")
+    if labels_cpu.shape != (task_probs_cpu.size(0),):
+        raise ValueError("labels must have shape [N]")
+
+    _, task_indices = torch.topk(task_probs_cpu, k=2, dim=1)
+    _, clip_indices = torch.topk(clip_probs_cpu, k=2, dim=1)
+    shared_mask = (
+        (task_indices[:, 0] == clip_indices[:, 0])
+        & (task_indices[:, 1] == clip_indices[:, 1])
+    )
+    shared_positions = torch.nonzero(shared_mask, as_tuple=False).flatten()
+    shared_count = int(shared_positions.numel())
+    if shared_count == 0:
+        log_fn(
+            "DUET agreement candidate probe summary eval-only: cycle={}; "
+            "shared_top2_count=0; ambiguous_25_count=0; comparator_acc=nan; "
+            "comparator_gain_over_top1=nan; recovered_top1_errors=0; "
+            "overridden_correct_top1=0; net_corrections=0; "
+            "output_semantics=0_choose_A_1_choose_B; gate_used=False; "
+            "admission_changed=False; selection_uses_gt=False; "
+            "ground_truth_affects_training=False".format(cycle)
+        )
+        return {"shared_top2_count": 0, "fractions": []}
+
+    a = task_indices[shared_positions, 0]
+    b = task_indices[shared_positions, 1]
+    row_ids = torch.arange(shared_count)
+    task_a = task_probs_cpu[shared_positions][row_ids, a]
+    task_b = task_probs_cpu[shared_positions][row_ids, b]
+    clip_a = clip_probs_cpu[shared_positions][row_ids, a]
+    clip_b = clip_probs_cpu[shared_positions][row_ids, b]
+    task_gap = task_a - task_b
+    clip_gap = clip_a - clip_b
+    ambiguity_gap = torch.maximum(task_gap, clip_gap)
+    order = torch.argsort(ambiguity_gap, descending=False, stable=True)
+
+    pair_features = build_comparator_features(
+        task_probs_cpu[shared_positions],
+        clip_probs_cpu[shared_positions],
+        task_features_cpu[shared_positions],
+        clip_features_cpu[shared_positions],
+        task_bank,
+        clip_bank,
+        class_a=a,
+        class_b=b,
+        sim_topk=sim_topk,
+    )
+    _log_pair_distribution(
+        pair_features, "agreement-candidate-probe", cycle, log_fn
+    )
+    comparator_device = next(comparator.parameters()).device
+    comparator.eval()
+    logits = comparator(pair_features.to(comparator_device)).detach().float().cpu()
+    probabilities = _softmax_probabilities(logits)
+    choose_b = probabilities[:, 1] > probabilities[:, 0]
+    margins = (probabilities[:, 0] - probabilities[:, 1]).abs()
+    gt = labels_cpu[shared_positions]
+
+    rows: list[dict] = []
+    for fraction in fractions:
+        fraction = int(fraction)
+        selected_count = max(
+            1,
+            min(
+                shared_count,
+                int(round(shared_count * fraction / 100.0)),
+            ),
+        )
+        selected = order[:selected_count]
+        selected_a = a[selected]
+        selected_b = b[selected]
+        selected_gt = gt[selected]
+        selected_choose_b = choose_b[selected]
+        chosen = torch.where(
+            selected_choose_b, selected_b, selected_a
+        )
+        top1_correct = selected_gt == selected_a
+        top2_correct = selected_gt == selected_b
+        oracle_correct = top1_correct | top2_correct
+        comparator_correct = chosen == selected_gt
+        top1_count = int(top1_correct.sum().item())
+        top2_count = int(top2_correct.sum().item())
+        oracle_count = int(oracle_correct.sum().item())
+        comparator_count = int(comparator_correct.sum().item())
+        choose_b_count = int(selected_choose_b.sum().item())
+        recovered = int((selected_choose_b & top2_correct).sum().item())
+        overridden = int((selected_choose_b & top1_correct).sum().item())
+        neither_count = selected_count - oracle_count
+        row = {
+            "fraction": fraction,
+            "count": selected_count,
+            "top1_acc": 100.0 * top1_count / selected_count,
+            "top2_acc": 100.0 * top2_count / selected_count,
+            "comparator_acc": 100.0 * comparator_count / selected_count,
+            "candidate_oracle_acc": 100.0 * oracle_count / selected_count,
+            "conditional_arbitration_acc": (
+                100.0 * comparator_count / oracle_count
+                if oracle_count > 0
+                else float("nan")
+            ),
+            "neither_rate": 100.0 * neither_count / selected_count,
+            "choose_a_count": selected_count - choose_b_count,
+            "choose_b_count": choose_b_count,
+            "choose_b_precision": (
+                100.0 * recovered / choose_b_count
+                if choose_b_count > 0
+                else float("nan")
+            ),
+            "recovered_top1_errors": recovered,
+            "overridden_correct_top1": overridden,
+            "net_corrections": recovered - overridden,
+            "comparator_gain_over_top1": (
+                100.0 * (comparator_count - top1_count) / selected_count
+            ),
+            "margin_mean": float(margins[selected].mean().item()),
+        }
+        rows.append(row)
+        log_fn(
+            "DUET agreement candidate probe fraction eval-only: cycle={}; "
+            "fraction={}%; n={}; top1_acc={:.2f}%; top2_acc={:.2f}%; "
+            "comparator_acc={:.2f}%; comparator_gain_over_top1={:.2f}pp; "
+            "candidate_oracle_acc={:.2f}%; conditional_arbitration_acc={:.2f}%; "
+            "neither_rate={:.2f}%; choose_A_count={}; choose_B_count={}; "
+            "choose_B_precision={:.2f}%; recovered_top1_errors={}; "
+            "overridden_correct_top1={}; net_corrections={}; "
+            "comparator_margin_mean={:.6f}; "
+            "output_semantics=0_choose_A_1_choose_B; gate_used=False; "
+            "admission_changed=False; selection_uses_gt=False; "
+            "ground_truth_affects_training=False".format(
+                cycle,
+                fraction,
+                selected_count,
+                row["top1_acc"],
+                row["top2_acc"],
+                row["comparator_acc"],
+                row["comparator_gain_over_top1"],
+                row["candidate_oracle_acc"],
+                row["conditional_arbitration_acc"],
+                row["neither_rate"],
+                row["choose_a_count"],
+                row["choose_b_count"],
+                row["choose_b_precision"],
+                row["recovered_top1_errors"],
+                row["overridden_correct_top1"],
+                row["net_corrections"],
+                row["margin_mean"],
+            )
+        )
+
+    row_25 = next((row for row in rows if row["fraction"] == 25), None)
+    if row_25 is None:
+        summary = (
+            "ambiguous_25_count=0; comparator_acc=nan; "
+            "comparator_gain_over_top1=nan; recovered_top1_errors=0; "
+            "overridden_correct_top1=0; net_corrections=0"
+        )
+    else:
+        summary = (
+            "ambiguous_25_count={}; top1_acc={:.2f}%; top2_acc={:.2f}%; "
+            "comparator_acc={:.2f}%; comparator_gain_over_top1={:.2f}pp; "
+            "candidate_oracle_acc={:.2f}%; conditional_arbitration_acc={:.2f}%; "
+            "recovered_top1_errors={}; overridden_correct_top1={}; "
+            "net_corrections={}"
+        ).format(
+            row_25["count"],
+            row_25["top1_acc"],
+            row_25["top2_acc"],
+            row_25["comparator_acc"],
+            row_25["comparator_gain_over_top1"],
+            row_25["candidate_oracle_acc"],
+            row_25["conditional_arbitration_acc"],
+            row_25["recovered_top1_errors"],
+            row_25["overridden_correct_top1"],
+            row_25["net_corrections"],
+        )
+    log_fn(
+        "DUET agreement candidate probe summary eval-only: cycle={}; "
+        "shared_top2_count={}; {}; output_semantics=0_choose_A_1_choose_B; "
+        "gate_used=False; admission_changed=False; selection_uses_gt=False; "
+        "ground_truth_affects_training=False".format(
+            cycle, shared_count, summary
+        )
+    )
+    return {"shared_top2_count": shared_count, "fractions": rows}
+
+
 def build_synthetic_conflicts(
     pool_labels: torch.Tensor,
     pool_strong_task_probs: torch.Tensor,
@@ -2449,6 +2672,9 @@ def run_comparator_refinement(
     agreement_ambiguity_eval_enabled = bool(
         getattr(context_cfg, "AGREEMENT_AMBIGUITY_EVAL_ENABLED", False)
     )
+    agreement_candidate_probe_enabled = bool(
+        getattr(context_cfg, "AGREEMENT_COMPARATOR_PROBE_ENABLED", False)
+    )
     agreement_ambiguity_fractions = [
         int(value)
         for value in getattr(
@@ -2457,7 +2683,7 @@ def run_comparator_refinement(
             [10, 25, 50, 100],
         )
     ]
-    if agreement_ambiguity_eval_enabled and (
+    if (agreement_ambiguity_eval_enabled or agreement_candidate_probe_enabled) and (
         not agreement_ambiguity_fractions
         or any(
             value <= 0 or value > 100
@@ -3018,6 +3244,29 @@ def run_comparator_refinement(
             if replay_memory is not None:
                 # 训练后把当前 cycle 的 matched synthetic 写入历史 memory
                 replay_memory.update(synthetic_features, synthetic_targets)
+
+        # Zero-intervention probe: reuse the trained strict-conflict comparator
+        # on A=shared Top1 / B=shared Top2 pairs.  Results are logging-only.
+        if (
+            agreement_candidate_probe_enabled
+            and eval_only_logging
+            and labels is not None
+            and comparator is not None
+        ):
+            _log_agreement_candidate_probe_eval_only(
+                task_probs,
+                clip_probs,
+                task_features,
+                clip_features,
+                labels,
+                comparator=comparator,
+                task_bank=task_bank,
+                clip_bank=clip_bank,
+                sim_topk=sim_topk,
+                fractions=agreement_ambiguity_fractions,
+                cycle=cycle,
+                log_fn=log_fn,
+            )
 
         if strict_positions.numel() > 0:
             comparator.eval()

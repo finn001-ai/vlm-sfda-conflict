@@ -33,6 +33,7 @@ from src.utils.duet_context import (
     train_context_transformer,
     _exclude_query_anchors,
     _log_agreement_ambiguity_eval_only,
+    _log_agreement_candidate_probe_eval_only,
     _log_fixed_conflict_trajectory,
     _log_eval_only_metrics,
     _log_real_comparator_margin_distribution,
@@ -100,6 +101,7 @@ def make_context_cfg(**overrides):
         EVAL_TRAJECTORY_COVERAGES=[10, 20, 40, 60, 80],
         AGREEMENT_AMBIGUITY_EVAL_ENABLED=False,
         AGREEMENT_AMBIGUITY_FRACTIONS=[10, 25, 50, 100],
+        AGREEMENT_COMPARATOR_PROBE_ENABLED=False,
         COMPARATOR_EPOCHS=0,
         SOFT_ONLY_ADMISSION=False,
         DIST_MATCH_SYNTHETIC=False,
@@ -1137,6 +1139,75 @@ class ComparatorTest(unittest.TestCase):
         self.assertIn("ambiguous_25_count=0", logs[0])
         self.assertIn("candidate_oracle_acc=nan", logs[0])
 
+    def test_agreement_candidate_probe_uses_a_b_positions_only(self):
+        task_probs = torch.tensor(
+            [
+                [0.50, 0.40, 0.10],
+                [0.80, 0.15, 0.05],
+                [0.10, 0.55, 0.35],
+            ]
+        )
+        clip_probs = torch.tensor(
+            [
+                [0.45, 0.40, 0.15],
+                [0.75, 0.20, 0.05],
+                [0.10, 0.52, 0.38],
+            ]
+        )
+        task_features = torch.randn(3, 4)
+        clip_features = torch.randn(3, 4)
+        bank_features = torch.randn(6, 4)
+        bank_labels = torch.tensor([0, 0, 1, 1, 2, 2])
+        bank_scores = torch.arange(6, dtype=torch.float32)
+        task_bank = ClassBalancedAnchorBank(3, 2, 4).update(
+            bank_features, bank_labels, bank_scores
+        )
+        clip_bank = ClassBalancedAnchorBank(3, 2, 4).update(
+            bank_features, bank_labels, bank_scores
+        )
+        model = PairwiseConflictComparator(
+            input_dim=16, hidden=4, layers=1, dropout=0.0
+        )
+        for parameter in model.parameters():
+            nn.init.zeros_(parameter)
+        # Force output position 1, which the probe interprets as choose B.
+        model.mlp[-1].bias.data[1] = 1.0
+        logs = []
+        result = _log_agreement_candidate_probe_eval_only(
+            task_probs,
+            clip_probs,
+            task_features,
+            clip_features,
+            torch.tensor([1, 0, 0]),
+            comparator=model,
+            task_bank=task_bank,
+            clip_bank=clip_bank,
+            sim_topk=2,
+            fractions=[10, 25, 50, 100],
+            cycle=2,
+            log_fn=logs.append,
+        )
+        row_25 = next(
+            row for row in result["fractions"] if row["fraction"] == 25
+        )
+        self.assertEqual(row_25["count"], 1)
+        self.assertEqual(row_25["choose_b_count"], 1)
+        self.assertEqual(row_25["recovered_top1_errors"], 1)
+        self.assertEqual(row_25["overridden_correct_top1"], 0)
+        self.assertEqual(row_25["net_corrections"], 1)
+        self.assertEqual(row_25["comparator_acc"], 100.0)
+        fraction_25_log = next(
+            line for line in logs if "fraction=25%" in line
+        )
+        self.assertIn(
+            "output_semantics=0_choose_A_1_choose_B", fraction_25_log
+        )
+        self.assertIn("admission_changed=False", fraction_25_log)
+        self.assertIn("ambiguous_25_count=1", logs[-1])
+        self.assertTrue(
+            all("ground_truth_affects_training=False" in line for line in logs)
+        )
+
     def test_agreement_ambiguity_pipeline_is_eval_only(self):
         torch.manual_seed(21)
         n, c, d = 256, 6, 16
@@ -1206,6 +1277,7 @@ class ComparatorTest(unittest.TestCase):
                 TRAIN_STEPS_PER_CYCLE=20,
                 EVAL_ONLY_LOGGING=True,
                 AGREEMENT_AMBIGUITY_EVAL_ENABLED=True,
+                AGREEMENT_COMPARATOR_PROBE_ENABLED=True,
             ),
             comparator=diagnostic_model,
             comparator_optimizer=diagnostic_optimizer,
@@ -1226,6 +1298,9 @@ class ComparatorTest(unittest.TestCase):
             self.assertTrue(torch.equal(base_result[key], diagnostic_result[key]))
         self.assertTrue(
             any("DUET agreement ambiguity summary eval-only" in line for line in diagnostic_logs)
+        )
+        self.assertTrue(
+            any("DUET agreement candidate probe summary eval-only" in line for line in diagnostic_logs)
         )
 
     def test_comparator_pipeline_end_to_end(self):

@@ -5,7 +5,7 @@ shopt -s nullglob
 # Rank-20% hard-admission diagnostic on Office-Home.
 
 seed=2020
-method="duet_first_cycle_prior_context_transformer_office_home_rank20_hard_seed${seed}"
+method="duet_first_cycle_prior_context_transformer_office_home_rank20_hard_agreement_probe_seed${seed}"
 domain_keys=(A C P R)
 
 for path in data/office-home/classname.txt; do
@@ -32,7 +32,7 @@ for s in 0 1 2 3; do
     task="${domain_keys[$s]}${domain_keys[$t]}"
     task_dir="output/uda/office-home/${task}/${method}"
     case "$task_dir" in
-      output/uda/office-home/??/duet_first_cycle_prior_context_transformer_office_home_rank20_hard_seed2020) ;;
+      output/uda/office-home/??/duet_first_cycle_prior_context_transformer_office_home_rank20_hard_agreement_probe_seed2020) ;;
       *)
         echo "Refusing to clear unexpected Office-Home path: $task_dir" >&2
         exit 1
