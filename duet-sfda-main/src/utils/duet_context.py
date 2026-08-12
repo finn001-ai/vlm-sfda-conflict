@@ -597,6 +597,192 @@ def _log_fixed_conflict_trajectory(
         )
 
 
+@torch.no_grad()
+def _log_agreement_ambiguity_eval_only(
+    task_probs: torch.Tensor,
+    clip_probs: torch.Tensor,
+    labels: torch.Tensor,
+    *,
+    fractions: list[int],
+    cycle: int,
+    log_fn: Callable[[str], None],
+) -> dict:
+    """Evaluate shared-Top2 recovery in the ambiguous agreement tail.
+
+    This function is deliberately isolated from candidate construction,
+    comparator training and admission.  It reads GT only to emit diagnostics
+    after the Task/CLIP probabilities already exist, and its return value is
+    never consumed by the training path.
+    """
+    task_probs = task_probs.detach().float().cpu()
+    clip_probs = clip_probs.detach().float().cpu()
+    labels = labels.detach().long().cpu()
+    if task_probs.dim() != 2 or clip_probs.shape != task_probs.shape:
+        raise ValueError("task_probs and clip_probs must have equal [N, C] shape")
+    if labels.shape != (task_probs.size(0),):
+        raise ValueError("labels must have shape [N]")
+    if task_probs.size(1) < 2:
+        raise ValueError("agreement ambiguity diagnostic requires >= 2 classes")
+    if not fractions or any(int(value) <= 0 or int(value) > 100 for value in fractions):
+        raise ValueError("agreement ambiguity fractions must be in [1, 100]")
+
+    _, task_indices = torch.topk(task_probs, k=2, dim=1)
+    _, clip_indices = torch.topk(clip_probs, k=2, dim=1)
+    task_top1 = task_indices[:, 0]
+    clip_top1 = clip_indices[:, 0]
+    agreement_mask = task_top1 == clip_top1
+    agreement_total = int(agreement_mask.sum().item())
+    shared_top2_mask = agreement_mask & (
+        task_indices[:, 1] == clip_indices[:, 1]
+    )
+    shared_count = int(shared_top2_mask.sum().item())
+    different_top2_count = agreement_total - shared_count
+    shared_rate = (
+        100.0 * shared_count / agreement_total
+        if agreement_total > 0
+        else float("nan")
+    )
+
+    rows: list[dict] = []
+    if shared_count > 0:
+        a = task_top1[shared_top2_mask]
+        b = task_indices[shared_top2_mask, 1]
+        gt = labels[shared_top2_mask]
+        row_ids = torch.arange(shared_count)
+        task_a = task_probs[shared_top2_mask][row_ids, a]
+        task_b = task_probs[shared_top2_mask][row_ids, b]
+        clip_a = clip_probs[shared_top2_mask][row_ids, a]
+        clip_b = clip_probs[shared_top2_mask][row_ids, b]
+        task_gap = task_a - task_b
+        clip_gap = clip_a - clip_b
+        ambiguity_gap = torch.maximum(task_gap, clip_gap)
+        # Stable sorting makes equal-gap selection deterministic without GT.
+        order = torch.argsort(ambiguity_gap, descending=False, stable=True)
+
+        for fraction in fractions:
+            fraction = int(fraction)
+            selected_count = max(
+                1,
+                min(
+                    shared_count,
+                    int(round(shared_count * fraction / 100.0)),
+                ),
+            )
+            selected = order[:selected_count]
+            selected_gt = gt[selected]
+            selected_a = a[selected]
+            selected_b = b[selected]
+            gt_is_top1 = selected_gt == selected_a
+            gt_is_top2 = selected_gt == selected_b
+            gt_neither = ~(gt_is_top1 | gt_is_top2)
+            top1_count = int(gt_is_top1.sum().item())
+            top2_count = int(gt_is_top2.sum().item())
+            neither_count = int(gt_neither.sum().item())
+            row = {
+                "fraction": fraction,
+                "count": selected_count,
+                "gt_is_top1_count": top1_count,
+                "gt_is_top1_rate": 100.0 * top1_count / selected_count,
+                "gt_is_top2_count": top2_count,
+                "gt_is_top2_rate": 100.0 * top2_count / selected_count,
+                "gt_neither_count": neither_count,
+                "gt_neither_rate": 100.0 * neither_count / selected_count,
+                "candidate_oracle_acc": (
+                    100.0 * (top1_count + top2_count) / selected_count
+                ),
+                "task_gap_mean": float(task_gap[selected].mean().item()),
+                "clip_gap_mean": float(clip_gap[selected].mean().item()),
+                "ambiguity_gap_mean": float(
+                    ambiguity_gap[selected].mean().item()
+                ),
+                "task_a_prob_mean": float(task_a[selected].mean().item()),
+                "task_b_prob_mean": float(task_b[selected].mean().item()),
+                "clip_a_prob_mean": float(clip_a[selected].mean().item()),
+                "clip_b_prob_mean": float(clip_b[selected].mean().item()),
+            }
+            rows.append(row)
+            log_fn(
+                "DUET agreement ambiguity fraction eval-only: cycle={}; "
+                "fraction={}%; n={}; gt_is_top1_count={}; "
+                "gt_is_top1_rate={:.2f}%; top1_acc={:.2f}%; "
+                "gt_is_top2_count={}; gt_is_top2_rate={:.2f}%; "
+                "top2_recovery_rate={:.2f}%; gt_neither_count={}; "
+                "gt_neither_rate={:.2f}%; neither_rate={:.2f}%; "
+                "candidate_oracle_acc={:.2f}%; task_gap_mean={:.6f}; "
+                "clip_gap_mean={:.6f}; ambiguity_gap_mean={:.6f}; "
+                "Task_A_prob_mean={:.6f}; Task_B_prob_mean={:.6f}; "
+                "CLIP_A_prob_mean={:.6f}; CLIP_B_prob_mean={:.6f}; "
+                "selection_uses_gt=False; ground_truth_affects_training=False".format(
+                    cycle,
+                    fraction,
+                    selected_count,
+                    top1_count,
+                    row["gt_is_top1_rate"],
+                    row["gt_is_top1_rate"],
+                    top2_count,
+                    row["gt_is_top2_rate"],
+                    row["gt_is_top2_rate"],
+                    neither_count,
+                    row["gt_neither_rate"],
+                    row["gt_neither_rate"],
+                    row["candidate_oracle_acc"],
+                    row["task_gap_mean"],
+                    row["clip_gap_mean"],
+                    row["ambiguity_gap_mean"],
+                    row["task_a_prob_mean"],
+                    row["task_b_prob_mean"],
+                    row["clip_a_prob_mean"],
+                    row["clip_b_prob_mean"],
+                )
+            )
+
+    row_25 = next((row for row in rows if row["fraction"] == 25), None)
+    if row_25 is None:
+        summary_25 = (
+            "ambiguous_25_count=0; gt_is_top1_count=0; gt_is_top1_rate=nan; "
+            "gt_is_top2_count=0; gt_is_top2_rate=nan; gt_neither_count=0; "
+            "gt_neither_rate=nan; candidate_oracle_acc=nan"
+        )
+    else:
+        summary_25 = (
+            "ambiguous_25_count={}; gt_is_top1_count={}; "
+            "gt_is_top1_rate={:.2f}%; gt_is_top2_count={}; "
+            "gt_is_top2_rate={:.2f}%; gt_neither_count={}; "
+            "gt_neither_rate={:.2f}%; candidate_oracle_acc={:.2f}%"
+        ).format(
+            row_25["count"],
+            row_25["gt_is_top1_count"],
+            row_25["gt_is_top1_rate"],
+            row_25["gt_is_top2_count"],
+            row_25["gt_is_top2_rate"],
+            row_25["gt_neither_count"],
+            row_25["gt_neither_rate"],
+            row_25["candidate_oracle_acc"],
+        )
+    agreement_reference_rate = "100.00%" if agreement_total > 0 else "nan"
+    log_fn(
+        "DUET agreement ambiguity summary eval-only: cycle={}; "
+        "agreement_total={}; agreement_reference_rate={}; "
+        "shared_top2_agreement_count={}; shared_top2_agreement_rate={:.2f}%; "
+        "different_top2_count={}; {}; selection_uses_gt=False; "
+        "ground_truth_affects_training=False".format(
+            cycle,
+            agreement_total,
+            agreement_reference_rate,
+            shared_count,
+            shared_rate,
+            different_top2_count,
+            summary_25,
+        )
+    )
+    return {
+        "agreement_total": agreement_total,
+        "shared_top2_agreement_count": shared_count,
+        "different_top2_count": different_top2_count,
+        "fractions": rows,
+    }
+
+
 def _zscore_filter(
     features: torch.Tensor,
     reference: torch.Tensor,
@@ -2260,6 +2446,28 @@ def run_comparator_refinement(
         raise ValueError("EVAL_TRAJECTORY_INTERVAL must be >= 1")
     if any(value <= 0 or value > 100 for value in trajectory_coverages):
         raise ValueError("EVAL_TRAJECTORY_COVERAGES values must be in [1, 100]")
+    agreement_ambiguity_eval_enabled = bool(
+        getattr(context_cfg, "AGREEMENT_AMBIGUITY_EVAL_ENABLED", False)
+    )
+    agreement_ambiguity_fractions = [
+        int(value)
+        for value in getattr(
+            context_cfg,
+            "AGREEMENT_AMBIGUITY_FRACTIONS",
+            [10, 25, 50, 100],
+        )
+    ]
+    if agreement_ambiguity_eval_enabled and (
+        not agreement_ambiguity_fractions
+        or any(
+            value <= 0 or value > 100
+            for value in agreement_ambiguity_fractions
+        )
+        or 25 not in agreement_ambiguity_fractions
+    ):
+        raise ValueError(
+            "AGREEMENT_AMBIGUITY_FRACTIONS must contain 25 and use values in [1, 100]"
+        )
     if early_stop_enabled and comparator_epochs > 0:
         raise ValueError(
             "EARLY_STOP_ENABLED and COMPARATOR_EPOCHS cannot both be active"
@@ -2277,6 +2485,22 @@ def run_comparator_refinement(
     clip_conf, clip_top1 = clip_probs.max(dim=1)
     task_entropy = _entropy(task_probs)
     clip_entropy = _entropy(clip_probs)
+
+    # Evaluation-only branch.  It runs before strict-conflict construction,
+    # anchor banks, comparator updates and admission, and its output is ignored.
+    if (
+        agreement_ambiguity_eval_enabled
+        and eval_only_logging
+        and labels is not None
+    ):
+        _log_agreement_ambiguity_eval_only(
+            task_probs,
+            clip_probs,
+            labels,
+            fractions=agreement_ambiguity_fractions,
+            cycle=cycle,
+            log_fn=log_fn,
+        )
 
     strict_conflict_mask = task_top1 != clip_top1
     weak_agreement_mask = torch.zeros(num_samples, dtype=torch.bool)

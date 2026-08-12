@@ -32,6 +32,7 @@ from src.utils.duet_context import (
     train_pairwise_comparator_epochs,
     train_context_transformer,
     _exclude_query_anchors,
+    _log_agreement_ambiguity_eval_only,
     _log_fixed_conflict_trajectory,
     _log_eval_only_metrics,
     _log_real_comparator_margin_distribution,
@@ -97,6 +98,8 @@ def make_context_cfg(**overrides):
         EVAL_TRAJECTORY_ENABLED=False,
         EVAL_TRAJECTORY_INTERVAL=10,
         EVAL_TRAJECTORY_COVERAGES=[10, 20, 40, 60, 80],
+        AGREEMENT_AMBIGUITY_EVAL_ENABLED=False,
+        AGREEMENT_AMBIGUITY_FRACTIONS=[10, 25, 50, 100],
         COMPARATOR_EPOCHS=0,
         SOFT_ONLY_ADMISSION=False,
         DIST_MATCH_SYNTHETIC=False,
@@ -1055,6 +1058,174 @@ class ComparatorTest(unittest.TestCase):
         self.assertIn("margin_ge_0.30=1/5 (20.00%)", logs[1])
         self.assertTrue(
             all("ground_truth_affects_training=False" in line for line in logs)
+        )
+
+    def test_agreement_ambiguity_shared_top2_diagnostic(self):
+        task_probs = torch.tensor(
+            [
+                [0.50, 0.40, 0.10],  # shared A=0, B=1, most ambiguous
+                [0.80, 0.15, 0.05],  # shared A=0, B=1, least ambiguous
+                [0.60, 0.10, 0.30],  # agreement, but different Top2
+                [0.10, 0.55, 0.35],  # shared A=1, B=2
+                [0.55, 0.35, 0.10],  # strict conflict; excluded
+            ]
+        )
+        clip_probs = torch.tensor(
+            [
+                [0.45, 0.40, 0.15],
+                [0.75, 0.20, 0.05],
+                [0.58, 0.30, 0.12],
+                [0.10, 0.52, 0.38],
+                [0.35, 0.55, 0.10],
+            ]
+        )
+        labels = torch.tensor([1, 0, 0, 0, 1])
+        task_before = task_probs.clone()
+        clip_before = clip_probs.clone()
+        logs = []
+        result = _log_agreement_ambiguity_eval_only(
+            task_probs,
+            clip_probs,
+            labels,
+            fractions=[10, 25, 50, 100],
+            cycle=2,
+            log_fn=logs.append,
+        )
+
+        self.assertEqual(result["agreement_total"], 4)
+        self.assertEqual(result["shared_top2_agreement_count"], 3)
+        self.assertEqual(result["different_top2_count"], 1)
+        row_25 = next(
+            row for row in result["fractions"] if row["fraction"] == 25
+        )
+        self.assertEqual(row_25["count"], 1)
+        self.assertEqual(row_25["gt_is_top1_count"], 0)
+        self.assertEqual(row_25["gt_is_top2_count"], 1)
+        self.assertEqual(row_25["gt_neither_count"], 0)
+        self.assertEqual(row_25["candidate_oracle_acc"], 100.0)
+        self.assertEqual(len(logs), 5)
+        self.assertIn("fraction=25%; n=1", logs[1])
+        self.assertIn("top2_recovery_rate=100.00%", logs[1])
+        self.assertIn("agreement_total=4", logs[-1])
+        self.assertIn("shared_top2_agreement_count=3", logs[-1])
+        self.assertIn("different_top2_count=1", logs[-1])
+        self.assertIn("ambiguous_25_count=1", logs[-1])
+        self.assertTrue(torch.equal(task_probs, task_before))
+        self.assertTrue(torch.equal(clip_probs, clip_before))
+        self.assertTrue(
+            all("ground_truth_affects_training=False" in line for line in logs)
+        )
+        self.assertTrue(all("selection_uses_gt=False" in line for line in logs))
+
+    def test_agreement_ambiguity_handles_no_shared_top2(self):
+        task_probs = torch.tensor([[0.70, 0.10, 0.20]])
+        clip_probs = torch.tensor([[0.70, 0.20, 0.10]])
+        logs = []
+        result = _log_agreement_ambiguity_eval_only(
+            task_probs,
+            clip_probs,
+            torch.tensor([0]),
+            fractions=[10, 25, 50, 100],
+            cycle=3,
+            log_fn=logs.append,
+        )
+        self.assertEqual(result["agreement_total"], 1)
+        self.assertEqual(result["shared_top2_agreement_count"], 0)
+        self.assertEqual(result["different_top2_count"], 1)
+        self.assertEqual(result["fractions"], [])
+        self.assertEqual(len(logs), 1)
+        self.assertIn("ambiguous_25_count=0", logs[0])
+        self.assertIn("candidate_oracle_acc=nan", logs[0])
+
+    def test_agreement_ambiguity_pipeline_is_eval_only(self):
+        torch.manual_seed(21)
+        n, c, d = 256, 6, 16
+        feat = torch.randn(n, d)
+        proto = torch.randn(c, d)
+        sim = feat @ proto.t()
+        task_prob = torch.softmax(
+            sim * 2.5 + torch.randn(n, c) * 0.4, dim=1
+        )
+        clip_prob = torch.softmax(
+            sim * 2.2 + torch.randn(n, c) * 0.6, dim=1
+        )
+        clip_feat = torch.randn(n, d)
+        labels = sim.argmax(dim=1)
+        strong_task = torch.softmax(
+            sim * 1.2 + torch.randn(n, c) * 0.8, dim=1
+        )
+        strong_clip = torch.softmax(
+            sim * 1.0 + torch.randn(n, c) * 0.9, dim=1
+        )
+        base_model = PairwiseConflictComparator(
+            input_dim=16, hidden=16, layers=2, dropout=0.0
+        )
+        diagnostic_model = PairwiseConflictComparator(
+            input_dim=16, hidden=16, layers=2, dropout=0.0
+        )
+        diagnostic_model.load_state_dict(base_model.state_dict())
+        base_optimizer = torch.optim.Adam(base_model.parameters(), lr=1e-3)
+        diagnostic_optimizer = torch.optim.Adam(
+            diagnostic_model.parameters(), lr=1e-3
+        )
+        common = dict(
+            task_probs=task_prob,
+            clip_probs=clip_prob,
+            task_features=feat,
+            num_classes=c,
+            pre_prior_task_probs=task_prob,
+            pre_prior_clip_probs=clip_prob,
+            labels=labels,
+            sample_indices=torch.arange(n),
+            clip_features=clip_feat,
+            strong_task_probs=strong_task,
+            strong_clip_probs=strong_clip,
+            strong_task_features=feat,
+            strong_clip_features=clip_feat,
+            cycle=2,
+        )
+        torch.manual_seed(99)
+        base_result = run_context_refinement(
+            **common,
+            context_cfg=make_context_cfg(
+                REFINER_TYPE="comparator",
+                TRAIN_STEPS_PER_CYCLE=20,
+                EVAL_ONLY_LOGGING=True,
+                AGREEMENT_AMBIGUITY_EVAL_ENABLED=False,
+            ),
+            comparator=base_model,
+            comparator_optimizer=base_optimizer,
+            log_fn=lambda _: None,
+        )
+        diagnostic_logs = []
+        torch.manual_seed(99)
+        diagnostic_result = run_context_refinement(
+            **common,
+            context_cfg=make_context_cfg(
+                REFINER_TYPE="comparator",
+                TRAIN_STEPS_PER_CYCLE=20,
+                EVAL_ONLY_LOGGING=True,
+                AGREEMENT_AMBIGUITY_EVAL_ENABLED=True,
+            ),
+            comparator=diagnostic_model,
+            comparator_optimizer=diagnostic_optimizer,
+            log_fn=diagnostic_logs.append,
+        )
+        for base_value, diagnostic_value in zip(
+            base_model.state_dict().values(),
+            diagnostic_model.state_dict().values(),
+        ):
+            self.assertTrue(torch.equal(base_value, diagnostic_value))
+        for key in (
+            "resolved_mask",
+            "context_labels",
+            "refined_targets",
+            "anchor_mask",
+            "strict_conflict_mask",
+        ):
+            self.assertTrue(torch.equal(base_result[key], diagnostic_result[key]))
+        self.assertTrue(
+            any("DUET agreement ambiguity summary eval-only" in line for line in diagnostic_logs)
         )
 
     def test_comparator_pipeline_end_to_end(self):

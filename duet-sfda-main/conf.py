@@ -399,6 +399,10 @@ _C.DUET_CONTEXT.EARLY_STOP_PATIENCE = 3
 _C.DUET_CONTEXT.EVAL_TRAJECTORY_ENABLED = False
 _C.DUET_CONTEXT.EVAL_TRAJECTORY_INTERVAL = 10
 _C.DUET_CONTEXT.EVAL_TRAJECTORY_COVERAGES = [10, 20, 40, 60, 80]
+# Eval-only: Task/CLIP Top1 一致时，检查 shared Top2 在困难尾部
+# 是否能恢复真实错误。该分支不返回任何训练决策。
+_C.DUET_CONTEXT.AGREEMENT_AMBIGUITY_EVAL_ENABLED = False
+_C.DUET_CONTEXT.AGREEMENT_AMBIGUITY_FRACTIONS = [10, 25, 50, 100]
 # epoch-based 训练（替代固定 TRAIN_STEPS_PER_CYCLE）：
 # 每个 epoch 把当前 matched synthetic 基本看一遍（配合 25% replay），
 # 避免几十个样本被 200 步反复背诵（loss 下降 / confidence 膨胀 /
