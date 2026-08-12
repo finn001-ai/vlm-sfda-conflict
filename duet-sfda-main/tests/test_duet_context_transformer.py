@@ -34,6 +34,7 @@ from src.utils.duet_context import (
     _exclude_query_anchors,
     _log_agreement_ambiguity_eval_only,
     _log_agreement_candidate_probe_eval_only,
+    _log_agreement_synthetic_feasibility_eval_only,
     _log_fixed_conflict_trajectory,
     _log_eval_only_metrics,
     _log_real_comparator_margin_distribution,
@@ -102,6 +103,7 @@ def make_context_cfg(**overrides):
         AGREEMENT_AMBIGUITY_EVAL_ENABLED=False,
         AGREEMENT_AMBIGUITY_FRACTIONS=[10, 25, 50, 100],
         AGREEMENT_COMPARATOR_PROBE_ENABLED=False,
+        AGREEMENT_SYNTHETIC_FEASIBILITY_ENABLED=False,
         COMPARATOR_EPOCHS=0,
         SOFT_ONLY_ADMISSION=False,
         DIST_MATCH_SYNTHETIC=False,
@@ -1208,6 +1210,110 @@ class ComparatorTest(unittest.TestCase):
             all("ground_truth_affects_training=False" in line for line in logs)
         )
 
+    def test_agreement_synthetic_feasibility_builds_both_candidate_directions(self):
+        pool_labels = torch.tensor([0, 1, 2, 1])
+        strong_task_probs = torch.tensor(
+            [
+                [0.60, 0.30, 0.10],  # A=0, B=1, Y=A
+                [0.48, 0.46, 0.06],  # A=0, B=1, Y=B; most ambiguous
+                [0.55, 0.35, 0.10],  # A=0, B=1, Y neither
+                [0.35, 0.55, 0.10],  # A=1, Task B=0
+            ]
+        )
+        strong_clip_probs = torch.tensor(
+            [
+                [0.58, 0.32, 0.10],
+                [0.49, 0.45, 0.06],
+                [0.52, 0.38, 0.10],
+                [0.10, 0.56, 0.34],  # A=1, CLIP B=2; excluded
+            ]
+        )
+        task_features = torch.randn(4, 5)
+        clip_features = torch.randn(4, 5)
+        bank_features = torch.randn(6, 5)
+        bank_labels = torch.tensor([0, 0, 1, 1, 2, 2])
+        bank_scores = torch.arange(6, dtype=torch.float32)
+        task_bank = ClassBalancedAnchorBank(3, 2, 5).update(
+            bank_features, bank_labels, bank_scores
+        )
+        clip_bank = ClassBalancedAnchorBank(3, 2, 5).update(
+            bank_features, bank_labels, bank_scores
+        )
+        logs = []
+        result = _log_agreement_synthetic_feasibility_eval_only(
+            pool_labels,
+            strong_task_probs,
+            strong_clip_probs,
+            task_features,
+            clip_features,
+            task_bank=task_bank,
+            clip_bank=clip_bank,
+            sim_topk=2,
+            fractions=[10, 25, 50, 100],
+            cycle=2,
+            log_fn=logs.append,
+            pool_gt_labels=torch.tensor([0, 1, 2, 1]),
+        )
+        self.assertEqual(result["anchor_pool_total"], 4)
+        self.assertEqual(result["strong_shared_pair_count"], 3)
+        self.assertEqual(result["pseudo_y_is_a_count"], 1)
+        self.assertEqual(result["pseudo_y_is_b_count"], 1)
+        self.assertEqual(result["pseudo_y_neither_count"], 1)
+        self.assertEqual(result["usable_count"], 2)
+        row_25 = next(
+            row for row in result["fractions"] if row["fraction"] == 25
+        )
+        self.assertEqual(row_25["count"], 1)
+        self.assertEqual(row_25["choose_b_count"], 1)
+        self.assertEqual(row_25["choose_b_share"], 100.0)
+        self.assertEqual(row_25["pseudo_target_precision"], 100.0)
+        self.assertTrue(
+            any("agreement-synthetic-choose-A" in line for line in logs)
+        )
+        self.assertTrue(
+            any("agreement-synthetic-choose-B" in line for line in logs)
+        )
+        self.assertIn("strong_shared_pair_count=3", logs[-1])
+        self.assertIn("pseudo_Y_is_B_count=1", logs[-1])
+        self.assertIn("training_changed=False", logs[-1])
+        self.assertTrue(
+            all("ground_truth_affects_training=False" in line for line in logs)
+        )
+
+    def test_agreement_synthetic_feasibility_handles_no_shared_pair(self):
+        probs_task = torch.tensor([[0.60, 0.30, 0.10]])
+        probs_clip = torch.tensor([[0.60, 0.10, 0.30]])
+        features = torch.randn(1, 4)
+        bank_features = torch.randn(3, 4)
+        bank_labels = torch.tensor([0, 1, 2])
+        bank_scores = torch.ones(3)
+        task_bank = ClassBalancedAnchorBank(3, 1, 4).update(
+            bank_features, bank_labels, bank_scores
+        )
+        clip_bank = ClassBalancedAnchorBank(3, 1, 4).update(
+            bank_features, bank_labels, bank_scores
+        )
+        logs = []
+        result = _log_agreement_synthetic_feasibility_eval_only(
+            torch.tensor([0]),
+            probs_task,
+            probs_clip,
+            features,
+            features,
+            task_bank=task_bank,
+            clip_bank=clip_bank,
+            sim_topk=1,
+            fractions=[10, 25, 50, 100],
+            cycle=3,
+            log_fn=logs.append,
+        )
+        self.assertEqual(result["strong_shared_pair_count"], 0)
+        self.assertEqual(result["usable_count"], 0)
+        self.assertEqual(result["fractions"], [])
+        self.assertEqual(len(logs), 1)
+        self.assertIn("strong_shared_pair_count=0", logs[0])
+        self.assertIn("construction_uses_gt=False", logs[0])
+
     def test_agreement_ambiguity_pipeline_is_eval_only(self):
         torch.manual_seed(21)
         n, c, d = 256, 6, 16
@@ -1278,6 +1384,7 @@ class ComparatorTest(unittest.TestCase):
                 EVAL_ONLY_LOGGING=True,
                 AGREEMENT_AMBIGUITY_EVAL_ENABLED=True,
                 AGREEMENT_COMPARATOR_PROBE_ENABLED=True,
+                AGREEMENT_SYNTHETIC_FEASIBILITY_ENABLED=True,
             ),
             comparator=diagnostic_model,
             comparator_optimizer=diagnostic_optimizer,
@@ -1301,6 +1408,9 @@ class ComparatorTest(unittest.TestCase):
         )
         self.assertTrue(
             any("DUET agreement candidate probe summary eval-only" in line for line in diagnostic_logs)
+        )
+        self.assertTrue(
+            any("DUET agreement synthetic feasibility summary eval-only" in line for line in diagnostic_logs)
         )
 
     def test_comparator_pipeline_end_to_end(self):

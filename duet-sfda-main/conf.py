@@ -406,6 +406,9 @@ _C.DUET_CONTEXT.AGREEMENT_AMBIGUITY_FRACTIONS = [10, 25, 50, 100]
 # Eval-only：用当前 strict-conflict Comparator 对 agreement 的
 # A=shared Top1 / B=shared Top2 做零介入选边评估。
 _C.DUET_CONTEXT.AGREEMENT_COMPARATOR_PROBE_ENABLED = False
+# Eval-only：检查 weak consensus 伪标签 Y 与 strong shared A/B 能否
+# 构成新语义的 choose-A / choose-B synthetic supervision。
+_C.DUET_CONTEXT.AGREEMENT_SYNTHETIC_FEASIBILITY_ENABLED = False
 # epoch-based 训练（替代固定 TRAIN_STEPS_PER_CYCLE）：
 # 每个 epoch 把当前 matched synthetic 基本看一遍（配合 25% replay），
 # 避免几十个样本被 200 步反复背诵（loss 下降 / confidence 膨胀 /

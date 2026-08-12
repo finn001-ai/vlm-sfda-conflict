@@ -2,10 +2,10 @@
 set -euo pipefail
 shopt -s nullglob
 
-# Rank-20% hard-admission diagnostic on Office-Home.
+# Rank-20% hard-admission + agreement synthetic-feasibility diagnostic.
 
 seed=2020
-method="duet_first_cycle_prior_context_transformer_office_home_rank20_hard_agreement_probe_seed${seed}"
+method="duet_first_cycle_prior_context_transformer_office_home_rank20_hard_agreement_synth_feasibility_seed${seed}"
 domain_keys=(A C P R)
 
 for path in data/office-home/classname.txt; do
@@ -32,7 +32,7 @@ for s in 0 1 2 3; do
     task="${domain_keys[$s]}${domain_keys[$t]}"
     task_dir="output/uda/office-home/${task}/${method}"
     case "$task_dir" in
-      output/uda/office-home/??/duet_first_cycle_prior_context_transformer_office_home_rank20_hard_agreement_probe_seed2020) ;;
+      output/uda/office-home/??/duet_first_cycle_prior_context_transformer_office_home_rank20_hard_agreement_synth_feasibility_seed2020) ;;
       *)
         echo "Refusing to clear unexpected Office-Home path: $task_dir" >&2
         exit 1
@@ -63,6 +63,10 @@ for s in 0 1 2 3; do
     fi
     if [ "$(grep -c "DUET comparator selection: cycle=.*mode=rank_coverage.*requested_coverage=20.00%" "${logs[0]}")" -ne 3 ]; then
       echo "${task} did not use rank-20% selection in all active cycles" >&2
+      exit 1
+    fi
+    if [ "$(grep -c "DUET agreement synthetic feasibility summary eval-only" "${logs[0]}")" -ne 3 ]; then
+      echo "${task} did not emit agreement synthetic-feasibility diagnostics in all active cycles" >&2
       exit 1
     fi
     if [ "$(grep -c "Task: " "${logs[0]}")" -ne 16 ]; then

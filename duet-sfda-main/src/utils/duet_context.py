@@ -923,6 +923,303 @@ def build_comparator_features(
 
 
 @torch.no_grad()
+def _log_agreement_synthetic_feasibility_eval_only(
+    pool_labels: torch.Tensor,
+    pool_strong_task_probs: torch.Tensor,
+    pool_strong_clip_probs: torch.Tensor,
+    pool_strong_task_features: torch.Tensor,
+    pool_strong_clip_features: torch.Tensor,
+    *,
+    task_bank: ClassBalancedAnchorBank,
+    clip_bank: ClassBalancedAnchorBank,
+    sim_topk: int,
+    fractions: list[int],
+    cycle: int,
+    log_fn: Callable[[str], None],
+    pool_gt_labels: Optional[torch.Tensor] = None,
+) -> dict:
+    """Check whether strong views provide candidate-semantic A/B supervision.
+
+    ``pool_labels`` is the high-confidence weak-view consensus pseudo label Y.
+    For rows where both strong branches share Top1=A and Top2=B, Y=A gives a
+    choose-A target and Y=B gives a choose-B target.  Construction and ranking
+    never read GT; optional GT is consulted only after selection to report the
+    pseudo-target precision.  Nothing returned here is consumed by training.
+    """
+    if not fractions or any(int(value) <= 0 or int(value) > 100 for value in fractions):
+        raise ValueError(
+            "agreement synthetic feasibility fractions must be in [1, 100]"
+        )
+
+    labels_cpu = pool_labels.detach().long().cpu()
+    task_probs = pool_strong_task_probs.detach().float().cpu()
+    clip_probs = pool_strong_clip_probs.detach().float().cpu()
+    task_features = pool_strong_task_features.detach().float().cpu()
+    clip_features = pool_strong_clip_features.detach().float().cpu()
+    pool_size = int(labels_cpu.numel())
+    if task_probs.dim() != 2 or clip_probs.shape != task_probs.shape:
+        raise ValueError("strong Task/CLIP probabilities must have equal [N, C] shape")
+    if task_probs.size(0) != pool_size or task_probs.size(1) < 2:
+        raise ValueError("strong probabilities must match pool labels and have >= 2 classes")
+    if task_features.size(0) != pool_size or clip_features.size(0) != pool_size:
+        raise ValueError("strong features and pool labels must have equal N")
+    gt_cpu = None
+    if pool_gt_labels is not None:
+        gt_cpu = pool_gt_labels.detach().long().cpu()
+        if gt_cpu.shape != labels_cpu.shape:
+            raise ValueError("pool_gt_labels must have the same shape as pool_labels")
+
+    _, task_indices = torch.topk(task_probs, k=2, dim=1)
+    _, clip_indices = torch.topk(clip_probs, k=2, dim=1)
+    shared_mask = (
+        (task_indices[:, 0] == clip_indices[:, 0])
+        & (task_indices[:, 1] == clip_indices[:, 1])
+    )
+    shared_positions = torch.nonzero(shared_mask, as_tuple=False).flatten()
+    shared_count = int(shared_positions.numel())
+    shared_rate = 100.0 * shared_count / pool_size if pool_size > 0 else float("nan")
+    if shared_count == 0:
+        log_fn(
+            "DUET agreement synthetic feasibility summary eval-only: cycle={}; "
+            "anchor_pool_total={}; strong_shared_pair_count=0; "
+            "strong_shared_pair_rate={:.2f}%; pseudo_Y_is_A_count=0; "
+            "pseudo_Y_is_B_count=0; pseudo_Y_neither_count=0; usable_count=0; "
+            "choose_B_share=nan; pseudo_target_precision=nan; "
+            "ambiguous_25_count=0; construction_uses_gt=False; "
+            "training_changed=False; ground_truth_affects_training=False".format(
+                cycle, pool_size, shared_rate
+            )
+        )
+        return {
+            "anchor_pool_total": pool_size,
+            "strong_shared_pair_count": 0,
+            "pseudo_y_is_a_count": 0,
+            "pseudo_y_is_b_count": 0,
+            "pseudo_y_neither_count": 0,
+            "usable_count": 0,
+            "fractions": [],
+        }
+
+    a = task_indices[shared_positions, 0]
+    b = task_indices[shared_positions, 1]
+    pseudo_y = labels_cpu[shared_positions]
+    choose_a = pseudo_y == a
+    choose_b = pseudo_y == b
+    usable = choose_a | choose_b
+    choose_a_count = int(choose_a.sum().item())
+    choose_b_count = int(choose_b.sum().item())
+    neither_count = shared_count - choose_a_count - choose_b_count
+    usable_count = choose_a_count + choose_b_count
+
+    row_ids = torch.arange(shared_count)
+    task_a = task_probs[shared_positions][row_ids, a]
+    task_b = task_probs[shared_positions][row_ids, b]
+    clip_a = clip_probs[shared_positions][row_ids, a]
+    clip_b = clip_probs[shared_positions][row_ids, b]
+    task_gap = task_a - task_b
+    clip_gap = clip_a - clip_b
+    ambiguity_gap = torch.maximum(task_gap, clip_gap)
+    order = torch.argsort(ambiguity_gap, descending=False, stable=True)
+
+    usable_local = torch.nonzero(usable, as_tuple=False).flatten()
+    if usable_count > 0:
+        usable_features = build_comparator_features(
+            task_probs[shared_positions[usable_local]],
+            clip_probs[shared_positions[usable_local]],
+            task_features[shared_positions[usable_local]],
+            clip_features[shared_positions[usable_local]],
+            task_bank,
+            clip_bank,
+            class_a=a[usable_local],
+            class_b=b[usable_local],
+            sim_topk=sim_topk,
+        )
+        usable_choose_a = choose_a[usable_local]
+        usable_choose_b = choose_b[usable_local]
+        _log_pair_distribution(
+            usable_features[usable_choose_a],
+            "agreement-synthetic-choose-A",
+            cycle,
+            log_fn,
+        )
+        _log_pair_distribution(
+            usable_features[usable_choose_b],
+            "agreement-synthetic-choose-B",
+            cycle,
+            log_fn,
+        )
+
+    rows: list[dict] = []
+    selected_25_local = torch.zeros(0, dtype=torch.long)
+    for fraction in fractions:
+        fraction = int(fraction)
+        selected_count = max(
+            1,
+            min(shared_count, int(round(shared_count * fraction / 100.0))),
+        )
+        selected = order[:selected_count]
+        selected_choose_a = choose_a[selected]
+        selected_choose_b = choose_b[selected]
+        selected_usable = selected_choose_a | selected_choose_b
+        selected_a_count = int(selected_choose_a.sum().item())
+        selected_b_count = int(selected_choose_b.sum().item())
+        selected_usable_count = selected_a_count + selected_b_count
+        selected_neither = selected_count - selected_usable_count
+        if fraction == 25:
+            selected_25_local = selected[selected_usable]
+
+        target_precision = float("nan")
+        choose_a_precision = float("nan")
+        choose_b_precision = float("nan")
+        if gt_cpu is not None and selected_usable_count > 0:
+            selected_gt = gt_cpu[shared_positions[selected]]
+            selected_y = pseudo_y[selected]
+            pseudo_correct = selected_gt == selected_y
+            target_precision = 100.0 * float(
+                pseudo_correct[selected_usable].float().mean().item()
+            )
+            if selected_a_count > 0:
+                choose_a_precision = 100.0 * float(
+                    pseudo_correct[selected_choose_a].float().mean().item()
+                )
+            if selected_b_count > 0:
+                choose_b_precision = 100.0 * float(
+                    pseudo_correct[selected_choose_b].float().mean().item()
+                )
+
+        row = {
+            "fraction": fraction,
+            "count": selected_count,
+            "choose_a_count": selected_a_count,
+            "choose_b_count": selected_b_count,
+            "neither_count": selected_neither,
+            "usable_count": selected_usable_count,
+            "usable_rate": 100.0 * selected_usable_count / selected_count,
+            "choose_b_share": (
+                100.0 * selected_b_count / selected_usable_count
+                if selected_usable_count > 0
+                else float("nan")
+            ),
+            "pseudo_target_precision": target_precision,
+            "choose_a_pseudo_precision": choose_a_precision,
+            "choose_b_pseudo_precision": choose_b_precision,
+            "task_gap_mean": float(task_gap[selected].mean().item()),
+            "clip_gap_mean": float(clip_gap[selected].mean().item()),
+            "ambiguity_gap_mean": float(ambiguity_gap[selected].mean().item()),
+            "task_a_prob_mean": float(task_a[selected].mean().item()),
+            "task_b_prob_mean": float(task_b[selected].mean().item()),
+            "clip_a_prob_mean": float(clip_a[selected].mean().item()),
+            "clip_b_prob_mean": float(clip_b[selected].mean().item()),
+        }
+        rows.append(row)
+        log_fn(
+            "DUET agreement synthetic feasibility fraction eval-only: cycle={}; "
+            "fraction={}%; n={}; pseudo_Y_is_A_count={}; "
+            "pseudo_Y_is_B_count={}; pseudo_Y_neither_count={}; usable_count={}; "
+            "usable_rate={:.2f}%; choose_B_share={:.2f}%; "
+            "pseudo_target_precision={:.2f}%; choose_A_pseudo_precision={:.2f}%; "
+            "choose_B_pseudo_precision={:.2f}%; task_gap_mean={:.6f}; "
+            "clip_gap_mean={:.6f}; ambiguity_gap_mean={:.6f}; "
+            "Task_A_prob_mean={:.6f}; Task_B_prob_mean={:.6f}; "
+            "CLIP_A_prob_mean={:.6f}; CLIP_B_prob_mean={:.6f}; "
+            "construction_uses_gt=False; training_changed=False; "
+            "ground_truth_affects_training=False".format(
+                cycle,
+                fraction,
+                selected_count,
+                selected_a_count,
+                selected_b_count,
+                selected_neither,
+                selected_usable_count,
+                row["usable_rate"],
+                row["choose_b_share"],
+                row["pseudo_target_precision"],
+                row["choose_a_pseudo_precision"],
+                row["choose_b_pseudo_precision"],
+                row["task_gap_mean"],
+                row["clip_gap_mean"],
+                row["ambiguity_gap_mean"],
+                row["task_a_prob_mean"],
+                row["task_b_prob_mean"],
+                row["clip_a_prob_mean"],
+                row["clip_b_prob_mean"],
+            )
+        )
+
+    if selected_25_local.numel() > 0:
+        tail_features = build_comparator_features(
+            task_probs[shared_positions[selected_25_local]],
+            clip_probs[shared_positions[selected_25_local]],
+            task_features[shared_positions[selected_25_local]],
+            clip_features[shared_positions[selected_25_local]],
+            task_bank,
+            clip_bank,
+            class_a=a[selected_25_local],
+            class_b=b[selected_25_local],
+            sim_topk=sim_topk,
+        )
+        _log_pair_distribution(
+            tail_features,
+            "agreement-synthetic-ambiguous-25",
+            cycle,
+            log_fn,
+        )
+
+    row_25 = next((row for row in rows if row["fraction"] == 25), None)
+    summary_25 = (
+        "ambiguous_25_count=0; usable_25_count=0; choose_B_25_count=0; "
+        "choose_B_25_share=nan; pseudo_target_25_precision=nan"
+        if row_25 is None
+        else (
+            "ambiguous_25_count={}; usable_25_count={}; choose_B_25_count={}; "
+            "choose_B_25_share={:.2f}%; pseudo_target_25_precision={:.2f}%"
+        ).format(
+            row_25["count"],
+            row_25["usable_count"],
+            row_25["choose_b_count"],
+            row_25["choose_b_share"],
+            row_25["pseudo_target_precision"],
+        )
+    )
+    overall_precision = float("nan")
+    if gt_cpu is not None and usable_count > 0:
+        overall_precision = 100.0 * float(
+            (gt_cpu[shared_positions][usable] == pseudo_y[usable]).float().mean().item()
+        )
+    log_fn(
+        "DUET agreement synthetic feasibility summary eval-only: cycle={}; "
+        "anchor_pool_total={}; strong_shared_pair_count={}; "
+        "strong_shared_pair_rate={:.2f}%; pseudo_Y_is_A_count={}; "
+        "pseudo_Y_is_B_count={}; pseudo_Y_neither_count={}; usable_count={}; "
+        "usable_rate={:.2f}%; choose_B_share={:.2f}%; "
+        "pseudo_target_precision={:.2f}%; {}; construction_uses_gt=False; "
+        "training_changed=False; ground_truth_affects_training=False".format(
+            cycle,
+            pool_size,
+            shared_count,
+            shared_rate,
+            choose_a_count,
+            choose_b_count,
+            neither_count,
+            usable_count,
+            100.0 * usable_count / shared_count,
+            100.0 * choose_b_count / usable_count if usable_count > 0 else float("nan"),
+            overall_precision,
+            summary_25,
+        )
+    )
+    return {
+        "anchor_pool_total": pool_size,
+        "strong_shared_pair_count": shared_count,
+        "pseudo_y_is_a_count": choose_a_count,
+        "pseudo_y_is_b_count": choose_b_count,
+        "pseudo_y_neither_count": neither_count,
+        "usable_count": usable_count,
+        "fractions": rows,
+    }
+
+
+@torch.no_grad()
 def _log_agreement_candidate_probe_eval_only(
     task_probs: torch.Tensor,
     clip_probs: torch.Tensor,
@@ -1008,6 +1305,15 @@ def _log_agreement_candidate_probe_eval_only(
     )
     _log_pair_distribution(
         pair_features, "agreement-candidate-probe", cycle, log_fn
+    )
+    selected_25_count = max(
+        1, min(shared_count, int(round(shared_count * 25 / 100.0)))
+    )
+    _log_pair_distribution(
+        pair_features[order[:selected_25_count]],
+        "agreement-candidate-probe-ambiguous-25",
+        cycle,
+        log_fn,
     )
     comparator_device = next(comparator.parameters()).device
     comparator.eval()
@@ -2675,6 +2981,13 @@ def run_comparator_refinement(
     agreement_candidate_probe_enabled = bool(
         getattr(context_cfg, "AGREEMENT_COMPARATOR_PROBE_ENABLED", False)
     )
+    agreement_synthetic_feasibility_enabled = bool(
+        getattr(
+            context_cfg,
+            "AGREEMENT_SYNTHETIC_FEASIBILITY_ENABLED",
+            False,
+        )
+    )
     agreement_ambiguity_fractions = [
         int(value)
         for value in getattr(
@@ -2683,7 +2996,11 @@ def run_comparator_refinement(
             [10, 25, 50, 100],
         )
     ]
-    if (agreement_ambiguity_eval_enabled or agreement_candidate_probe_enabled) and (
+    if (
+        agreement_ambiguity_eval_enabled
+        or agreement_candidate_probe_enabled
+        or agreement_synthetic_feasibility_enabled
+    ) and (
         not agreement_ambiguity_fractions
         or any(
             value <= 0 or value > 100
@@ -2854,6 +3171,35 @@ def run_comparator_refinement(
         stats["anchor_per_class_counts"] = task_bank.per_class_counts().tolist()
         stats["anchor_mean_task_conf"] = float(task_conf[anchor_mask].mean().item())
         stats["anchor_mean_clip_conf"] = float(clip_conf[anchor_mask].mean().item())
+
+        # Eval-only feasibility test for a candidate-semantic comparator.
+        # Weak consensus supplies pseudo Y; strong shared Top1/Top2 supplies
+        # A/B.  Its output is deliberately ignored by all training decisions.
+        if (
+            agreement_synthetic_feasibility_enabled
+            and eval_only_logging
+            and pool_strong_task is not None
+            and pool_strong_clip is not None
+            and pool_strong_task_features is not None
+            and pool_strong_clip_features is not None
+        ):
+            pool_gt_labels = None
+            if labels is not None:
+                pool_gt_labels = labels.detach().long().cpu()[anchor_mask.cpu()]
+            _log_agreement_synthetic_feasibility_eval_only(
+                pool_labels,
+                pool_strong_task,
+                pool_strong_clip,
+                pool_strong_task_features,
+                pool_strong_clip_features,
+                task_bank=task_bank,
+                clip_bank=clip_bank,
+                sim_topk=sim_topk,
+                fractions=agreement_ambiguity_fractions,
+                cycle=cycle,
+                log_fn=log_fn,
+                pool_gt_labels=pool_gt_labels,
+            )
 
         synthetic_features, synthetic_targets, synthetic_counts = build_synthetic_conflicts(
             pool_labels,
