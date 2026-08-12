@@ -32,6 +32,7 @@ from src.utils.duet_context import (
     train_pairwise_comparator_epochs,
     train_context_transformer,
     _exclude_query_anchors,
+    _log_fixed_conflict_trajectory,
     _log_eval_only_metrics,
     _log_real_comparator_margin_distribution,
     _stratified_binary_train_val_split,
@@ -92,6 +93,9 @@ def make_context_cfg(**overrides):
         EARLY_STOP_MIN_VAL_PER_DIRECTION=6,
         EARLY_STOP_CHECK_INTERVAL=10,
         EARLY_STOP_PATIENCE=3,
+        EVAL_TRAJECTORY_ENABLED=False,
+        EVAL_TRAJECTORY_INTERVAL=10,
+        EVAL_TRAJECTORY_COVERAGES=[10, 20, 40, 60, 80],
         COMPARATOR_EPOCHS=0,
         SOFT_ONLY_ADMISSION=False,
         DIST_MATCH_SYNTHETIC=False,
@@ -650,6 +654,109 @@ class ComparatorTest(unittest.TestCase):
         )
         self.assertIsNotNone(loss1)
         self.assertLess(loss2, loss1)
+
+    def test_fixed_step_trajectory_captures_requested_checkpoints(self):
+        torch.manual_seed(7)
+        model = PairwiseConflictComparator(
+            input_dim=4, hidden=8, layers=1, dropout=0.0
+        )
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
+        features = torch.randn(12, 4)
+        targets = torch.tensor([0.0] * 6 + [1.0] * 6)
+        fixed_features = torch.randn(5, 4)
+        trajectory = []
+        train_pairwise_comparator(
+            model,
+            optimizer,
+            features,
+            targets,
+            steps=5,
+            batch_size=12,
+            seed=3,
+            trajectory_features=fixed_features,
+            trajectory_interval=2,
+            trajectory_sink=trajectory,
+        )
+        self.assertEqual([row["step"] for row in trajectory], [0, 2, 4, 5])
+        self.assertTrue(
+            all(row["fixed_logits"].shape == (5, 2) for row in trajectory)
+        )
+
+    def test_fixed_conflict_trajectory_is_same_subset_and_no_gate(self):
+        trajectory = [
+            {
+                "step": 0,
+                "synthetic_train_loss": 0.7,
+                "fixed_logits": torch.tensor(
+                    [[2.0, 0.0], [0.0, 2.0], [0.0, 2.0], [2.0, 0.0]]
+                ),
+            }
+        ]
+        logs = []
+        _log_fixed_conflict_trajectory(
+            trajectory,
+            task_candidates=torch.tensor([0, 0, 1, 1]),
+            clip_candidates=torch.tensor([1, 1, 0, 0]),
+            labels=torch.tensor([0, 1, 0, 1]),
+            coverages=[50, 100],
+            cycle=2,
+            log_fn=logs.append,
+        )
+        self.assertEqual(len(logs), 2)
+        self.assertIn("fixed_conflicts=4", logs[0])
+        self.assertIn("task_acc=50.00%", logs[0])
+        self.assertIn("clip_acc=50.00%", logs[0])
+        self.assertIn("comparator_acc=100.00%", logs[0])
+        self.assertIn("gate_used=False", logs[0])
+        self.assertIn("coverage_50_n=2", logs[1])
+        self.assertIn("coverage_100_n=4", logs[1])
+        self.assertIn("checkpoint_selected_by_gt=False", logs[1])
+
+    def test_trajectory_capture_does_not_change_training_result(self):
+        torch.manual_seed(17)
+        features = torch.randn(20, 4)
+        targets = torch.tensor([0.0] * 10 + [1.0] * 10)
+        fixed_features = torch.randn(7, 4)
+        plain = PairwiseConflictComparator(
+            input_dim=4, hidden=8, layers=1, dropout=0.2
+        )
+        diagnostic = PairwiseConflictComparator(
+            input_dim=4, hidden=8, layers=1, dropout=0.2
+        )
+        diagnostic.load_state_dict(plain.state_dict())
+        plain_optimizer = torch.optim.Adam(plain.parameters(), lr=1e-2)
+        diagnostic_optimizer = torch.optim.Adam(
+            diagnostic.parameters(), lr=1e-2
+        )
+
+        torch.manual_seed(123)
+        train_pairwise_comparator(
+            plain,
+            plain_optimizer,
+            features,
+            targets,
+            steps=8,
+            batch_size=12,
+            seed=5,
+        )
+        trajectory = []
+        torch.manual_seed(123)
+        train_pairwise_comparator(
+            diagnostic,
+            diagnostic_optimizer,
+            features,
+            targets,
+            steps=8,
+            batch_size=12,
+            seed=5,
+            trajectory_features=fixed_features,
+            trajectory_interval=2,
+            trajectory_sink=trajectory,
+        )
+        for plain_value, diagnostic_value in zip(
+            plain.state_dict().values(), diagnostic.state_dict().values()
+        ):
+            self.assertTrue(torch.equal(plain_value, diagnostic_value))
 
     def test_replay_memory_per_direction_cap_and_update(self):
         memory = ComparatorReplayMemory(per_direction_capacity=4, feature_dim=8)

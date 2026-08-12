@@ -468,6 +468,135 @@ def _log_real_comparator_margin_distribution(
     )
 
 
+@torch.no_grad()
+def _log_fixed_conflict_trajectory(
+    trajectory: list[dict],
+    *,
+    task_candidates: torch.Tensor,
+    clip_candidates: torch.Tensor,
+    labels: torch.Tensor,
+    coverages: list[int],
+    cycle: int,
+    log_fn: Callable[[str], None],
+) -> None:
+    """Eval-only trajectory on one fixed real-conflict cohort.
+
+    The cohort is fixed before comparator optimization.  Every checkpoint is
+    evaluated without the comparator gate, so changes in selection quality
+    cannot be confused with changes in coverage.  GT is read only here,
+    after training has completed; it never selects or restores a checkpoint.
+    """
+    task_candidates = task_candidates.detach().long().cpu()
+    clip_candidates = clip_candidates.detach().long().cpu()
+    labels = labels.detach().long().cpu()
+    total = int(labels.numel())
+    if total == 0:
+        return
+    if task_candidates.shape != labels.shape or clip_candidates.shape != labels.shape:
+        raise ValueError("fixed-conflict candidates and labels must have equal shape")
+
+    task_correct = task_candidates == labels
+    clip_correct = clip_candidates == labels
+    oracle_correct = task_correct | clip_correct
+    oracle_correct_count = int(oracle_correct.sum().item())
+
+    def pct(correct: torch.Tensor) -> float:
+        return 100.0 * float(correct.float().mean().item())
+
+    for checkpoint in trajectory:
+        logits = checkpoint["fixed_logits"].detach().float().cpu()
+        if logits.shape != (total, 2):
+            raise ValueError("fixed-conflict checkpoint logits must be [N, 2]")
+        probabilities = _softmax_probabilities(logits)
+        trust_task = probabilities[:, 0]
+        trust_clip = probabilities[:, 1]
+        margins = (trust_task - trust_clip).abs()
+        chosen = torch.where(
+            trust_task >= trust_clip, task_candidates, clip_candidates
+        )
+        comparator_correct = chosen == labels
+        comparator_correct_count = int(comparator_correct.sum().item())
+        conditional = (
+            100.0 * comparator_correct_count / oracle_correct_count
+            if oracle_correct_count > 0
+            else float("nan")
+        )
+        quantiles = torch.quantile(margins, torch.tensor([0.50, 0.90]))
+        log_fn(
+            "DUET comparator fixed-conflict trajectory eval-only: cycle={}; "
+            "step={}; fixed_conflicts={}; synthetic_train_loss={:.6f}; "
+            "task_acc={:.2f}%; clip_acc={:.2f}%; comparator_acc={:.2f}%; "
+            "candidate_oracle_acc={:.2f}%; conditional_arbitration_acc={:.2f}%; "
+            "trust_task={}; trust_clip={}; margin_mean={:.4f}; "
+            "margin_p50={:.4f}; margin_p90={:.4f}; gate_used=False; "
+            "checkpoint_selected_by_gt=False; ground_truth_affects_training=False".format(
+                cycle,
+                checkpoint["step"],
+                total,
+                checkpoint["synthetic_train_loss"],
+                pct(task_correct),
+                pct(clip_correct),
+                pct(comparator_correct),
+                pct(oracle_correct),
+                conditional,
+                int((trust_task >= trust_clip).sum().item()),
+                int((trust_task < trust_clip).sum().item()),
+                float(margins.mean().item()),
+                float(quantiles[0].item()),
+                float(quantiles[1].item()),
+            )
+        )
+
+        order = torch.argsort(margins, descending=True, stable=True)
+        coverage_parts = []
+        for requested_coverage in coverages:
+            selected_count = max(
+                1,
+                min(
+                    total,
+                    int(round(total * float(requested_coverage) / 100.0)),
+                ),
+            )
+            selected = order[:selected_count]
+            selected_oracle_count = int(oracle_correct[selected].sum().item())
+            selected_comparator_count = int(
+                comparator_correct[selected].sum().item()
+            )
+            selected_conditional = (
+                100.0 * selected_comparator_count / selected_oracle_count
+                if selected_oracle_count > 0
+                else float("nan")
+            )
+            prefix = "coverage_{}".format(int(requested_coverage))
+            coverage_parts.extend(
+                [
+                    "{}_n={}".format(prefix, selected_count),
+                    "{}_task_acc={:.2f}%".format(
+                        prefix, pct(task_correct[selected])
+                    ),
+                    "{}_clip_acc={:.2f}%".format(
+                        prefix, pct(clip_correct[selected])
+                    ),
+                    "{}_comparator_acc={:.2f}%".format(
+                        prefix, pct(comparator_correct[selected])
+                    ),
+                    "{}_candidate_oracle_acc={:.2f}%".format(
+                        prefix, pct(oracle_correct[selected])
+                    ),
+                    "{}_conditional_arbitration_acc={:.2f}%".format(
+                        prefix, selected_conditional
+                    ),
+                ]
+            )
+        log_fn(
+            "DUET comparator fixed-coverage trajectory eval-only: cycle={}; "
+            "step={}; {}; checkpoint_selected_by_gt=False; "
+            "ground_truth_affects_training=False".format(
+                cycle, checkpoint["step"], "; ".join(coverage_parts)
+            )
+        )
+
+
 def _zscore_filter(
     features: torch.Tensor,
     reference: torch.Tensor,
@@ -865,6 +994,9 @@ def train_pairwise_comparator(
     memory_features: Optional[torch.Tensor] = None,
     memory_targets: Optional[torch.Tensor] = None,
     memory_fraction: float = 0.25,
+    trajectory_features: Optional[torch.Tensor] = None,
+    trajectory_interval: int = 0,
+    trajectory_sink: Optional[list[dict]] = None,
 ) -> Optional[float]:
     """在 synthetic conflict 对上训练 comparator（2-way CE）。
 
@@ -876,6 +1008,37 @@ def train_pairwise_comparator(
     """
     if features.numel() == 0 or features.size(0) < 2:
         return None
+    if trajectory_sink is not None and int(trajectory_interval) < 1:
+        raise ValueError("trajectory_interval must be >= 1 when collecting trajectory")
+
+    def capture_trajectory(step: int) -> None:
+        """Capture predictions only; target GT is deliberately unavailable here."""
+        if trajectory_sink is None:
+            return
+        comparator.eval()
+        with torch.no_grad():
+            current_logits = comparator(features.detach())
+            current_loss = float(
+                F.cross_entropy(
+                    current_logits,
+                    targets.detach().long().to(current_logits.device),
+                ).item()
+            )
+            if trajectory_features is None:
+                fixed_logits = torch.zeros(0, 2, dtype=torch.float32)
+            else:
+                fixed_logits = comparator(
+                    trajectory_features.detach().to(current_logits.device)
+                ).detach().float().cpu()
+        trajectory_sink.append(
+            {
+                "step": int(step),
+                "synthetic_train_loss": current_loss,
+                "fixed_logits": fixed_logits,
+            }
+        )
+
+    capture_trajectory(0)
     comparator.train()
     generator = torch.Generator(device=features.device)
     generator.manual_seed(int(seed))
@@ -895,7 +1058,8 @@ def train_pairwise_comparator(
         n_current = max(1, batch_size - n_memory)
     total_loss = 0.0
     counted = 0
-    for _ in range(max(1, int(steps))):
+    total_steps = max(1, int(steps))
+    for step in range(1, total_steps + 1):
         if use_memory:
             current_indices = torch.randint(
                 0,
@@ -935,6 +1099,11 @@ def train_pairwise_comparator(
         optimizer.step()
         total_loss += float(loss.detach().item())
         counted += 1
+        if trajectory_sink is not None and (
+            step % int(trajectory_interval) == 0 or step == total_steps
+        ):
+            capture_trajectory(step)
+            comparator.train()
     comparator.eval()
     return total_loss / counted if counted else None
 
@@ -2042,6 +2211,22 @@ def run_comparator_refinement(
     early_stop_patience = int(
         getattr(context_cfg, "EARLY_STOP_PATIENCE", 3)
     )
+    trajectory_enabled = bool(
+        getattr(context_cfg, "EVAL_TRAJECTORY_ENABLED", False)
+    )
+    trajectory_interval = int(
+        getattr(context_cfg, "EVAL_TRAJECTORY_INTERVAL", 10)
+    )
+    trajectory_coverages = [
+        int(value)
+        for value in getattr(
+            context_cfg, "EVAL_TRAJECTORY_COVERAGES", [10, 20, 40, 60, 80]
+        )
+    ]
+    if trajectory_enabled and trajectory_interval < 1:
+        raise ValueError("EVAL_TRAJECTORY_INTERVAL must be >= 1")
+    if any(value <= 0 or value > 100 for value in trajectory_coverages):
+        raise ValueError("EVAL_TRAJECTORY_COVERAGES values must be in [1, 100]")
     if early_stop_enabled and comparator_epochs > 0:
         raise ValueError(
             "EARLY_STOP_ENABLED and COMPARATOR_EPOCHS cannot both be active"
@@ -2504,6 +2689,12 @@ def run_comparator_refinement(
                     )
                 )
             else:
+                trajectory = [] if (
+                    trajectory_enabled
+                    and eval_only_logging
+                    and labels is not None
+                    and strict_positions.numel() > 0
+                ) else None
                 stats["train_loss"] = train_pairwise_comparator(
                     comparator,
                     comparator_optimizer,
@@ -2515,6 +2706,11 @@ def run_comparator_refinement(
                     memory_features=memory_features,
                     memory_targets=memory_targets,
                     memory_fraction=replay_mix_fraction,
+                    trajectory_features=(
+                        real_features if trajectory is not None else None
+                    ),
+                    trajectory_interval=trajectory_interval,
+                    trajectory_sink=trajectory,
                 )
                 stats["train_current_samples"] = int(
                     synthetic_features.size(0)
@@ -2552,6 +2748,16 @@ def run_comparator_refinement(
                         stats["final_current_loss"],
                     )
                 )
+                if trajectory is not None:
+                    _log_fixed_conflict_trajectory(
+                        trajectory,
+                        task_candidates=task_top1[strict_positions],
+                        clip_candidates=clip_top1[strict_positions],
+                        labels=labels[strict_positions],
+                        coverages=trajectory_coverages,
+                        cycle=cycle,
+                        log_fn=log_fn,
+                    )
             if replay_memory is not None:
                 # 训练后把当前 cycle 的 matched synthetic 写入历史 memory
                 replay_memory.update(synthetic_features, synthetic_targets)

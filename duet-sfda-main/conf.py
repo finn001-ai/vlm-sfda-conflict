@@ -391,6 +391,11 @@ _C.DUET_CONTEXT.EARLY_STOP_VAL_FRACTION = 0.20
 _C.DUET_CONTEXT.EARLY_STOP_MIN_VAL_PER_DIRECTION = 6
 _C.DUET_CONTEXT.EARLY_STOP_CHECK_INTERVAL = 10
 _C.DUET_CONTEXT.EARLY_STOP_PATIENCE = 3
+# 仅用于论文诊断：固定训练预算内，每隔若干步保存同一批真实 conflict
+# 的 comparator 输出。GT 只在训练全部结束后计算日志，不用于停止、选步或恢复。
+_C.DUET_CONTEXT.EVAL_TRAJECTORY_ENABLED = False
+_C.DUET_CONTEXT.EVAL_TRAJECTORY_INTERVAL = 10
+_C.DUET_CONTEXT.EVAL_TRAJECTORY_COVERAGES = [10, 20, 40, 60, 80]
 # epoch-based 训练（替代固定 TRAIN_STEPS_PER_CYCLE）：
 # 每个 epoch 把当前 matched synthetic 基本看一遍（配合 25% replay），
 # 避免几十个样本被 200 步反复背诵（loss 下降 / confidence 膨胀 /
