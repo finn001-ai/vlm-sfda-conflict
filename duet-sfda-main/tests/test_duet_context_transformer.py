@@ -86,6 +86,7 @@ def make_context_cfg(**overrides):
         MIN_RUNNER_PROB=0.10,
         MAX_TOP1_MARGIN=0.60,
         COMPARATOR_GATE=0.15,
+        COMPARATOR_COVERAGE_FRACTION=0.0,
         REPLAY_PER_DIRECTION=64,
         REPLAY_MIX_FRACTION=0.25,
         EARLY_STOP_ENABLED=False,
@@ -1001,6 +1002,35 @@ class ComparatorTest(unittest.TestCase):
         self.assertEqual(decision["chosen"][0].item(), 0)  # trust Task
         self.assertEqual(decision["chosen"][1].item(), 1)  # trust CLIP
 
+    def test_decision_rank_coverage_ignores_absolute_gate(self):
+        logits = torch.tensor(
+            [[3.0, 0.0], [2.0, 0.0], [1.0, 0.0], [0.2, 0.0], [0.0, 0.0]]
+        )
+        task_top1 = torch.zeros(5, dtype=torch.long)
+        clip_top1 = torch.ones(5, dtype=torch.long)
+        decision = apply_pairwise_decision(
+            logits,
+            task_top1,
+            clip_top1,
+            gate=0.99,
+            coverage_fraction=0.40,
+        )
+        self.assertEqual(decision["selection_mode"], "rank_coverage")
+        self.assertEqual(decision["selected_count"], 2)
+        self.assertEqual(
+            decision["resolved"].tolist(), [True, True, False, False, False]
+        )
+
+    def test_decision_rank_coverage_rejects_invalid_fraction(self):
+        with self.assertRaises(ValueError):
+            apply_pairwise_decision(
+                torch.zeros(2, 2),
+                torch.zeros(2, dtype=torch.long),
+                torch.ones(2, dtype=torch.long),
+                gate=0.2,
+                coverage_fraction=1.1,
+            )
+
     def test_all_real_conflict_margin_diagnostics(self):
         logs = []
         _log_real_comparator_margin_distribution(
@@ -1290,6 +1320,11 @@ class MethodFileContractTest(unittest.TestCase):
             self.assertTrue(data["DUET_CONTEXT"]["ENABLED"])
             self.assertEqual(data["DUET_CONTEXT"]["USE_WEAK_AGREEMENT"], False)
             self.assertEqual(data["DUET_CONTEXT"]["REFINER_TYPE"], "comparator")
+            if dataset == "office-home":
+                self.assertEqual(
+                    data["DUET_CONTEXT"]["COMPARATOR_COVERAGE_FRACTION"],
+                    0.20,
+                )
             active_cycles = data["DUET_CONTEXT"]["ACTIVE_CYCLES"]
             self.assertIsInstance(active_cycles, list)
             self.assertTrue(all(isinstance(v, int) for v in active_cycles))

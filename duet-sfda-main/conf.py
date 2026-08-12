@@ -379,6 +379,9 @@ _C.DUET_CONTEXT.MIN_RUNNER_PROB = 0.10
 _C.DUET_CONTEXT.MAX_TOP1_MARGIN = 0.60
 # abstain 门槛：|trust_task - trust_clip| < COMPARATOR_GATE 时 abstain。
 _C.DUET_CONTEXT.COMPARATOR_GATE = 0.20
+# >0 时不再使用绝对 margin gate，改为按 margin 排名只 resolve
+# 当前 cycle 的固定比例。该选择不使用 target GT。
+_C.DUET_CONTEXT.COMPARATOR_COVERAGE_FRACTION = 0.0
 # comparator synthetic replay memory（persistent + replay 实验）：
 # 每个信任方向最多保留 REPLAY_PER_DIRECTION 个历史 matched synthetic；
 # 训练时每个 step 用 当前 matched : memory = (1-REPLAY_MIX_FRACTION) : REPLAY_MIX_FRACTION。

@@ -2,11 +2,10 @@
 set -euo pipefail
 shopt -s nullglob
 
-# Full candidate: duet_first_cycle_prior_context_transformer on Office-Home
-# (Task/CLIP-consistent class-balanced anchors + Context Transformer).
+# Rank-20% hard-admission diagnostic on Office-Home.
 
 seed=2020
-method="duet_first_cycle_prior_context_transformer_office_home_full_seed${seed}"
+method="duet_first_cycle_prior_context_transformer_office_home_rank20_hard_seed${seed}"
 domain_keys=(A C P R)
 
 for path in data/office-home/classname.txt; do
@@ -33,7 +32,7 @@ for s in 0 1 2 3; do
     task="${domain_keys[$s]}${domain_keys[$t]}"
     task_dir="output/uda/office-home/${task}/${method}"
     case "$task_dir" in
-      output/uda/office-home/??/duet_first_cycle_prior_context_transformer_office_home_full_seed2020) ;;
+      output/uda/office-home/??/duet_first_cycle_prior_context_transformer_office_home_rank20_hard_seed2020) ;;
       *)
         echo "Refusing to clear unexpected Office-Home path: $task_dir" >&2
         exit 1
@@ -60,6 +59,10 @@ for s in 0 1 2 3; do
     fi
     if [ "$(grep -c "DUET context refinement: cycle=2" "${logs[0]}")" -ne 1 ]; then
       echo "${task} did not run the cycle-2 context refinement" >&2
+      exit 1
+    fi
+    if [ "$(grep -c "DUET comparator selection: cycle=.*mode=rank_coverage.*requested_coverage=20.00%" "${logs[0]}")" -ne 3 ]; then
+      echo "${task} did not use rank-20% selection in all active cycles" >&2
       exit 1
     fi
     if [ "$(grep -c "Task: " "${logs[0]}")" -ne 16 ]; then

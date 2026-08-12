@@ -1557,13 +1557,37 @@ def apply_pairwise_decision(
     clip_top1: torch.Tensor,
     *,
     gate: float,
+    coverage_fraction: float = 0.0,
 ) -> dict:
-    """2-way 决策：|trust_task - trust_clip| >= gate 才 resolved。"""
+    """2-way decision with an absolute-margin or rank-coverage gate.
+
+    ``coverage_fraction > 0`` selects exactly the highest-margin fraction of
+    the current fixed conflict cohort and ignores the absolute gate.  This is
+    label-free and avoids coverage drift when comparator logits become more
+    confident across cycles.
+    """
+    if not 0.0 <= float(coverage_fraction) <= 1.0:
+        raise ValueError("coverage_fraction must satisfy 0 <= value <= 1")
     probabilities = _softmax_probabilities(logits)
     trust_task = probabilities[:, 0]
     trust_clip = probabilities[:, 1]
     margin = (trust_task - trust_clip).abs()
-    resolved = margin >= gate
+    if float(coverage_fraction) > 0.0 and margin.numel() > 0:
+        selected_count = max(
+            1,
+            min(
+                margin.numel(),
+                int(round(margin.numel() * float(coverage_fraction))),
+            ),
+        )
+        order = torch.argsort(margin, descending=True, stable=True)
+        resolved = torch.zeros_like(margin, dtype=torch.bool)
+        resolved[order[:selected_count]] = True
+        selection_mode = "rank_coverage"
+    else:
+        resolved = margin >= gate
+        selected_count = int(resolved.sum().item())
+        selection_mode = "absolute_margin"
     chosen = torch.where(trust_task >= trust_clip, task_top1, clip_top1)
     return {
         "resolved": resolved,
@@ -1573,6 +1597,8 @@ def apply_pairwise_decision(
         "confidence": torch.maximum(trust_task, trust_clip),
         "margin": margin,
         "probabilities": probabilities,
+        "selection_mode": selection_mode,
+        "selected_count": int(selected_count),
     }
 
 
@@ -2180,6 +2206,13 @@ def run_comparator_refinement(
     min_runner_prob = float(getattr(context_cfg, "MIN_RUNNER_PROB", 0.10))
     max_top1_margin = float(getattr(context_cfg, "MAX_TOP1_MARGIN", 0.60))
     gate = float(getattr(context_cfg, "COMPARATOR_GATE", 0.20))
+    coverage_fraction = float(
+        getattr(context_cfg, "COMPARATOR_COVERAGE_FRACTION", 0.0)
+    )
+    if not 0.0 <= coverage_fraction <= 1.0:
+        raise ValueError(
+            "COMPARATOR_COVERAGE_FRACTION must satisfy 0 <= value <= 1"
+        )
     dist_match_synthetic = bool(
         getattr(context_cfg, "DIST_MATCH_SYNTHETIC", False)
     )
@@ -2771,11 +2804,31 @@ def run_comparator_refinement(
                 task_top1[strict_positions],
                 clip_top1[strict_positions],
                 gate=gate,
+                coverage_fraction=coverage_fraction,
             )
             # Diagnostic only: summarize every real strict conflict, including
             # abstained rows.  No target labels or random operations are used.
             _log_real_comparator_margin_distribution(
                 decision["margin"], cycle, gate, log_fn
+            )
+            selected_count = int(decision["resolved"].sum().item())
+            achieved_coverage = (
+                100.0 * selected_count / int(strict_positions.numel())
+            )
+            log_fn(
+                "DUET comparator selection: cycle={}; mode={}; selected={}; "
+                "total={}; achieved_coverage={:.2f}%; "
+                "requested_coverage={:.2f}%; absolute_gate={:.2f}; "
+                "absolute_gate_ignored={}; ground_truth_affects_training=False".format(
+                    cycle,
+                    decision["selection_mode"],
+                    selected_count,
+                    int(strict_positions.numel()),
+                    achieved_coverage,
+                    100.0 * coverage_fraction,
+                    gate,
+                    decision["selection_mode"] == "rank_coverage",
+                )
             )
             resolved_rows = decision["resolved"]
             resolved_strict = strict_positions[resolved_rows]
