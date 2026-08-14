@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run PLMatch on all 12 directed DomainNet-126 transfer tasks.
+# Run one method on all 12 directed DomainNet-126 transfer tasks.
 #
 # Optional environment variables:
 #   GPU_ID=0
 #   PYTHON_BIN=python
+#   METHOD=plmatch
 #   SEED=2020
-#   OUTPUT_ROOT=output/domainnet126_plmatch_runs
+#   CKPT_DIR=.
+#   OUTPUT_SRC=source
+#   OUTPUT_ROOT=output/domainnet126_<method>_runs
 #   RUN_ID=20260814_120000
 #   DATA_DIR=/path/to/data
-#   CKPT_DIR=/path/to/checkpoints
 #
 # Additional arguments are appended as YACS config overrides, for example:
 #   bash tools/run_domainnet126_plmatch_all.sh TEST.BATCH_SIZE 32
@@ -21,12 +23,16 @@ cd "$repo_dir"
 
 gpu_id=${GPU_ID:-0}
 python_bin=${PYTHON_BIN:-python}
+method=${METHOD:-plmatch}
 seed=${SEED:-2020}
-output_root=${OUTPUT_ROOT:-output/domainnet126_plmatch_runs}
+ckpt_dir=${CKPT_DIR:-.}
+output_src=${OUTPUT_SRC:-source}
+cfg_file="cfgs/domainnet126/${method}.yaml"
+output_root=${OUTPUT_ROOT:-output/domainnet126_${method}_runs}
 run_id=${RUN_ID:-$(date '+%Y%m%d_%H%M%S')}
 run_dir="${output_root}/${run_id}"
-master_log="${run_dir}/domainnet126_plmatch_${run_id}.log"
-summary_csv="${run_dir}/domainnet126_plmatch_${run_id}_summary.csv"
+master_log="${run_dir}/domainnet126_${method}_${run_id}.log"
+summary_csv="${run_dir}/domainnet126_${method}_${run_id}_summary.csv"
 console_dir="${run_dir}/console"
 
 domain_names=(clipart painting real sketch)
@@ -37,7 +43,7 @@ if ! command -v "$python_bin" >/dev/null 2>&1; then
   exit 1
 fi
 
-for required_file in image_target_in_126.py cfgs/domainnet126/plmatch.yaml; do
+for required_file in image_target_in_126.py "$cfg_file"; do
   if [ ! -f "$required_file" ]; then
     echo "Missing required file: ${repo_dir}/${required_file}" >&2
     exit 1
@@ -77,19 +83,19 @@ extract_best_acc() {
 }
 
 run_started=$(date +%s)
-log "DomainNet-126 PLMatch 12-task run"
+log "DomainNet-126 ${method} 12-task run"
 log "run_id=${run_id}"
 log "started_at=$(date '+%Y-%m-%d %H:%M:%S %z')"
+log "gpu_id=${gpu_id}"
+log "method=${method}"
 log "seed=${seed}"
 log "python=${python_bin}"
+log "ckpt_dir=${ckpt_dir}"
+log "output_src=${output_src}"
 log "run_dir=${run_dir}"
 if [ -n "${DATA_DIR:-}" ]; then
   log "data_dir=${DATA_DIR}"
 fi
-if [ -n "${CKPT_DIR:-}" ]; then
-  log "ckpt_dir=${CKPT_DIR}"
-fi
-
 completed_tasks=0
 
 for s in 0 1 2 3; do
@@ -102,7 +108,7 @@ for s in 0 1 2 3; do
     source_domain=${domain_names[$s]}
     target_domain=${domain_names[$t]}
     task_console_log="${console_dir}/${task}.log"
-    task_output_dir="${run_dir}/uda/domainnet126/${task}/plmatch"
+    task_output_dir="${run_dir}/uda/domainnet126/${task}/${method}"
     task_started=$(date +%s)
 
     log ""
@@ -111,18 +117,16 @@ for s in 0 1 2 3; do
 
     command=(
       "$python_bin" image_target_in_126.py
-      --cfg cfgs/domainnet126/plmatch.yaml
+      --cfg "$cfg_file"
       SAVE_DIR "$run_dir"
-      CKPT_DIR . SETTING.OUTPUT_SRC source
-      SETTING.SEED 2020
+      CKPT_DIR "$ckpt_dir"
+      SETTING.OUTPUT_SRC "$output_src"
+      SETTING.SEED "$seed"
       SETTING.S "$s"
       SETTING.T "$t"
     )
     if [ -n "${DATA_DIR:-}" ]; then
       command+=(DATA_DIR "$DATA_DIR")
-    fi
-    if [ -n "${CKPT_DIR:-}" ]; then
-      command+=(CKPT_DIR "$CKPT_DIR")
     fi
     command+=("$@")
 
@@ -136,7 +140,7 @@ for s in 0 1 2 3; do
     task_finished=$(date +%s)
     task_seconds=$((task_finished - task_started))
     task_time=$(format_duration "$task_seconds")
-    framework_log=$(find "$task_output_dir" -maxdepth 1 -type f -name 'plmatch_*.txt' -print 2>/dev/null | sort | tail -n 1 || true)
+    framework_log=$(find "$task_output_dir" -maxdepth 1 -type f -name "${method}_*.txt" -print 2>/dev/null | sort | tail -n 1 || true)
 
     if [ "$task_status" -ne 0 ]; then
       printf '%s,%s,%s,NA,%d,%s,failed,%s,%s\n' \
