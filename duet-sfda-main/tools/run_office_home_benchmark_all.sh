@@ -7,14 +7,13 @@ set -euo pipefail
 #   source shot nrc gkd adacontrast cowa sclm tpds difo plmatch
 #
 # Usage:
-#   GPU_ID=0 bash tools/run_office_home_benchmark_all.sh
+#   bash tools/run_office_home_benchmark_all.sh
 #   METHODS="shot difo plmatch" CHECKPOINT_ROOT=/path/to/checkpoints \
 #     bash tools/run_office_home_benchmark_all.sh
 #   RUN_ID=20260814_120000 RESUME=1 \
 #     bash tools/run_office_home_benchmark_all.sh
 #
 # Optional environment variables:
-#   GPU_ID=0
 #   PYTHON_BIN=python
 #   SEED=2020
 #   METHODS="source shot nrc gkd adacontrast cowa sclm tpds difo plmatch"
@@ -24,7 +23,7 @@ set -euo pipefail
 #   CONTINUE_ON_ERROR=0
 #   CHECKPOINT_ROOT=<run directory>/checkpoints
 #   FOLDER_ROOT=<repository>/data/
-#   DATA_DIR=/path/to/image-data
+#   DATA_DIR=/path/to/image-data  # optional; Office-Home uses list-file paths
 #
 # Extra command-line arguments are appended as common YACS overrides to every
 # method. Only use keys that exist in every selected method configuration.
@@ -33,7 +32,6 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo_dir=$(cd "${script_dir}/.." && pwd)
 cd "$repo_dir"
 
-gpu_id=${GPU_ID:-0}
 python_bin=${PYTHON_BIN:-python}
 seed=${SEED:-2020}
 methods_text=${METHODS:-"source shot nrc gkd adacontrast cowa sclm tpds difo plmatch"}
@@ -373,7 +371,7 @@ log "run_id=${run_id}"
 log "session_started_at=$(date '+%Y-%m-%dT%H:%M:%S%z')"
 log "methods=${methods[*]}"
 log "seed=${seed}"
-log "physical_gpu=${gpu_id}; process_gpu=0"
+log "gpu=system default (cuda:0)"
 log "python=${python_bin}"
 log "checkpoint_root=${checkpoint_root}"
 log "folder_root=${folder_root}"
@@ -393,7 +391,7 @@ if command -v git >/dev/null 2>&1; then
 fi
 if command -v nvidia-smi >/dev/null 2>&1; then
   gpu_info=$(nvidia-smi --query-gpu=name,driver_version,memory.total \
-    --format=csv,noheader -i "$gpu_id" 2>/dev/null | head -n 1 || true)
+    --format=csv,noheader 2>/dev/null | head -n 1 || true)
   if [ -n "$gpu_info" ]; then
     log "gpu_info=${gpu_info}"
   fi
@@ -447,7 +445,6 @@ if method_selected source; then
     run_command=(
       "$python_bin" "${repo_dir}/image_target_of_oh_vs.py"
       --cfg "${config_snapshot_dir}/source.yaml"
-      GPU_ID 0
       SAVE_DIR "$framework_root"
       CKPT_DIR "$checkpoint_root"
       FOLDER "$folder_root"
@@ -462,10 +459,8 @@ if method_selected source; then
     run_command+=("$@")
     log_command "${run_command[@]}"
 
-    if (
-      cd "$stage_dir"
-      CUDA_VISIBLE_DEVICES="$gpu_id" PYTHONUNBUFFERED=1 "${run_command[@]}"
-    ) 2>&1 | tee -a "$master_log" "$task_console_log"; then
+    if SOURCE_OUTPUT_DIR="${stage_dir}/source" PYTHONUNBUFFERED=1 \
+      "${run_command[@]}" 2>&1 | tee -a "$master_log" "$task_console_log"; then
       run_status=0
     else
       run_status=$?
@@ -613,7 +608,6 @@ for method in "${methods[@]}"; do
       run_command=(
         "$python_bin" image_target_of_oh_vs.py
         --cfg "$cfg_file"
-        GPU_ID 0
         SAVE_DIR "$framework_root"
         CKPT_DIR "$checkpoint_root"
         FOLDER "$folder_root"
@@ -629,7 +623,7 @@ for method in "${methods[@]}"; do
       run_command+=("$@")
       log_command "${run_command[@]}"
 
-      if CUDA_VISIBLE_DEVICES="$gpu_id" PYTHONUNBUFFERED=1 \
+      if PYTHONUNBUFFERED=1 \
         "${run_command[@]}" 2>&1 | tee -a "$master_log" "$task_console_log"; then
         run_status=0
       else

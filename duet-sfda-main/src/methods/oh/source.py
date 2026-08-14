@@ -1,3 +1,4 @@
+import os
 import os.path as osp
 import numpy as np
 import torch
@@ -177,11 +178,10 @@ def cal_acc_oda(cfg,loader, netF, netB, netC):
     # return np.mean(acc), np.mean(acc[:-1])
 
 def train_source(cfg):
-    cfg.output_dir_src = './source'
-    if not osp.exists(cfg.output_dir_src):
-        os.system('mkdir -p ' + cfg.output_dir_src)
-    if not osp.exists(cfg.output_dir_src):
-        os.mkdir(cfg.output_dir_src)
+    # Benchmark runners can isolate newly trained source checkpoints without
+    # changing the working directory used to resolve image-list paths.
+    cfg.output_dir_src = os.environ.get("SOURCE_OUTPUT_DIR", "./source")
+    os.makedirs(cfg.output_dir_src, exist_ok=True)
 
     dset_loaders = data_load(cfg)
     ## set base network
