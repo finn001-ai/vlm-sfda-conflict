@@ -37,6 +37,7 @@ from src.utils.duet_context import (
     _log_agreement_synthetic_feasibility_eval_only,
     _log_fixed_conflict_trajectory,
     _log_eval_only_metrics,
+    _log_real_conflict_gt_feature_probe_eval_only,
     _log_real_comparator_margin_distribution,
     _stratified_binary_train_val_split,
     _zscore_filter,
@@ -100,6 +101,11 @@ def make_context_cfg(**overrides):
         EVAL_TRAJECTORY_ENABLED=False,
         EVAL_TRAJECTORY_INTERVAL=10,
         EVAL_TRAJECTORY_COVERAGES=[10, 20, 40, 60, 80],
+        REAL_CONFLICT_GT_PROBE_ENABLED=False,
+        REAL_CONFLICT_GT_PROBE_FOLDS=5,
+        REAL_CONFLICT_GT_PROBE_STEPS=30,
+        REAL_CONFLICT_GT_PROBE_HIDDEN=16,
+        REAL_CONFLICT_GT_PROBE_LR=0.02,
         AGREEMENT_AMBIGUITY_EVAL_ENABLED=False,
         AGREEMENT_AMBIGUITY_FRACTIONS=[10, 25, 50, 100],
         AGREEMENT_COMPARATOR_PROBE_ENABLED=False,
@@ -719,6 +725,85 @@ class ComparatorTest(unittest.TestCase):
         self.assertIn("coverage_50_n=2", logs[1])
         self.assertIn("coverage_100_n=4", logs[1])
         self.assertIn("checkpoint_selected_by_gt=False", logs[1])
+
+    def test_real_conflict_gt_feature_probe_recovers_separable_ceiling(self):
+        generator = torch.Generator().manual_seed(31)
+        per_group, dim = 50, 16
+        features = torch.randn(3 * per_group, dim, generator=generator) * 0.05
+        features[:per_group, 0] -= 2.0  # GT is Task candidate
+        features[per_group : 2 * per_group, 0] += 2.0  # GT is CLIP candidate
+        # Final group has neither candidate as GT and must count as incorrect.
+        task_candidates = torch.zeros(3 * per_group, dtype=torch.long)
+        clip_candidates = torch.ones(3 * per_group, dtype=torch.long)
+        labels = torch.cat(
+            [
+                torch.zeros(per_group, dtype=torch.long),
+                torch.ones(per_group, dtype=torch.long),
+                torch.full((per_group,), 2, dtype=torch.long),
+            ]
+        )
+        current_logits = torch.tensor([[0.0, 1.0]]).repeat(3 * per_group, 1)
+        features_before = features.clone()
+        rng_before = torch.random.get_rng_state().clone()
+        logs = []
+        result = _log_real_conflict_gt_feature_probe_eval_only(
+            features,
+            task_candidates,
+            clip_candidates,
+            labels,
+            current_logits,
+            folds=5,
+            steps=300,
+            hidden=16,
+            lr=0.01,
+            seed=2020,
+            cycle=2,
+            log_fn=logs.append,
+        )
+        rng_after = torch.random.get_rng_state()
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["total"], 150)
+        self.assertEqual(result["oracle_count"], 100)
+        self.assertEqual(result["neither_count"], 50)
+        self.assertAlmostEqual(result["candidate_oracle_acc"], 200.0 / 3.0)
+        self.assertAlmostEqual(
+            result["current_comparator_acc"], 100.0 / 3.0, places=5
+        )
+        self.assertGreater(result["logistic_probe_acc"], 65.0)
+        self.assertGreater(result["mlp_probe_acc"], 65.0)
+        self.assertGreater(
+            result["logistic_conditional_arbitration_acc"], 98.0
+        )
+        self.assertGreater(result["mlp_conditional_arbitration_acc"], 98.0)
+        self.assertEqual(len(result["folds"]), 5)
+        self.assertTrue(torch.equal(features, features_before))
+        self.assertTrue(torch.equal(rng_before, rng_after))
+        self.assertIn("synthetic_comparator_acc=33.33%", logs[-1])
+        self.assertIn("candidate_oracle_acc=66.67%", logs[-1])
+        self.assertIn("probe_uses_gt=True", logs[-1])
+        self.assertIn("formal_method_affected=False", logs[-1])
+
+    def test_real_conflict_gt_feature_probe_skips_one_direction(self):
+        logs = []
+        result = _log_real_conflict_gt_feature_probe_eval_only(
+            torch.randn(8, 16),
+            torch.zeros(8, dtype=torch.long),
+            torch.ones(8, dtype=torch.long),
+            torch.zeros(8, dtype=torch.long),
+            torch.zeros(8, 2),
+            folds=5,
+            steps=10,
+            hidden=8,
+            lr=0.01,
+            seed=1,
+            cycle=3,
+            log_fn=logs.append,
+        )
+        self.assertEqual(result["status"], "skipped_insufficient_binary_targets")
+        self.assertEqual(len(logs), 1)
+        self.assertIn("effective_folds=0", logs[0])
+        self.assertIn("formal_method_affected=False", logs[0])
 
     def test_trajectory_capture_does_not_change_training_result(self):
         torch.manual_seed(17)
@@ -1385,6 +1470,8 @@ class ComparatorTest(unittest.TestCase):
                 AGREEMENT_AMBIGUITY_EVAL_ENABLED=True,
                 AGREEMENT_COMPARATOR_PROBE_ENABLED=True,
                 AGREEMENT_SYNTHETIC_FEASIBILITY_ENABLED=True,
+                REAL_CONFLICT_GT_PROBE_ENABLED=True,
+                REAL_CONFLICT_GT_PROBE_STEPS=10,
             ),
             comparator=diagnostic_model,
             comparator_optimizer=diagnostic_optimizer,
@@ -1411,6 +1498,9 @@ class ComparatorTest(unittest.TestCase):
         )
         self.assertTrue(
             any("DUET agreement synthetic feasibility summary eval-only" in line for line in diagnostic_logs)
+        )
+        self.assertTrue(
+            any("DUET real-conflict GT feature probe" in line for line in diagnostic_logs)
         )
 
     def test_comparator_pipeline_end_to_end(self):

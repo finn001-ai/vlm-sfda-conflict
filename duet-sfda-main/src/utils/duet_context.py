@@ -15,9 +15,10 @@ This module implements the core of the candidate method
     DUET-FCP so the anchor bank is built after at least one round of
     Task/CLIP target adaptation.
 
-The module only depends on torch.  It never sees target ground-truth except
-through the optional ``labels`` argument, which is used exclusively for
-evaluation-only logging (``ground_truth_affects_training=False``).
+The module only depends on torch.  The formal DUET method never sees target
+ground-truth.  The optional ``labels`` argument is used for evaluation-only
+logging and, when explicitly enabled, isolated offline feature probes whose
+models and outputs never enter formal training or admission.
 """
 
 from __future__ import annotations
@@ -403,6 +404,303 @@ def _log_pair_distribution(
             means[11].item(),
         )
     )
+
+
+def _stratified_probe_fold_ids(
+    strata: torch.Tensor,
+    folds: int,
+    seed: int,
+) -> torch.Tensor:
+    """Assign deterministic round-robin folds within each diagnostic stratum."""
+    strata = strata.detach().long().cpu().flatten()
+    if folds < 2:
+        raise ValueError("GT feature probe requires at least 2 folds")
+    fold_ids = torch.full_like(strata, -1)
+    generator = torch.Generator(device="cpu")
+    generator.manual_seed(int(seed))
+    for value in torch.unique(strata, sorted=True).tolist():
+        positions = torch.nonzero(strata == int(value), as_tuple=False).flatten()
+        if positions.numel() == 0:
+            continue
+        order = torch.randperm(positions.numel(), generator=generator)
+        shuffled = positions[order]
+        fold_ids[shuffled] = torch.arange(shuffled.numel()) % int(folds)
+    if bool((fold_ids < 0).any().item()):
+        raise RuntimeError("failed to assign every GT feature-probe row to a fold")
+    return fold_ids
+
+
+class _RealConflictFeatureProbe(nn.Module):
+    """Small local model used only by the offline GT feature-capacity probe."""
+
+    def __init__(self, input_dim: int, kind: str, hidden: int) -> None:
+        super().__init__()
+        if kind == "logistic":
+            self.network = nn.Linear(int(input_dim), 2)
+        elif kind == "mlp":
+            self.network = nn.Sequential(
+                nn.Linear(int(input_dim), int(hidden)),
+                nn.GELU(),
+                nn.Linear(int(hidden), int(hidden)),
+                nn.GELU(),
+                nn.Linear(int(hidden), 2),
+            )
+        else:
+            raise ValueError("GT feature probe kind must be logistic or mlp")
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        return self.network(features.float())
+
+
+def _fit_real_conflict_feature_probe(
+    train_features: torch.Tensor,
+    train_targets: torch.Tensor,
+    test_features: torch.Tensor,
+    *,
+    kind: str,
+    hidden: int,
+    steps: int,
+    lr: float,
+    seed: int,
+) -> torch.Tensor:
+    """Fit one fixed-budget CPU probe and return test logits."""
+    if steps < 1:
+        raise ValueError("GT feature probe steps must be >= 1")
+    if lr <= 0.0:
+        raise ValueError("GT feature probe learning rate must be positive")
+    mean = train_features.mean(dim=0, keepdim=True)
+    std = train_features.std(dim=0, unbiased=False, keepdim=True).clamp_min(1e-6)
+    train_standardized = (train_features - mean) / std
+    test_standardized = (test_features - mean) / std
+    # Restore the caller's CPU RNG state after local model initialization and
+    # optimization so enabling this eval-only branch cannot alter later DUET
+    # dropout, sampling, or optimizer behavior.
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(int(seed))
+        model = _RealConflictFeatureProbe(
+            input_dim=train_features.size(1), kind=kind, hidden=hidden
+        )
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=float(lr), weight_decay=1e-4
+        )
+        model.train()
+        with torch.enable_grad():
+            for _ in range(int(steps)):
+                optimizer.zero_grad(set_to_none=True)
+                loss = F.cross_entropy(
+                    model(train_standardized), train_targets.long()
+                )
+                loss.backward()
+                optimizer.step()
+        model.eval()
+        with torch.no_grad():
+            return model(test_standardized).detach().cpu()
+
+
+def _log_real_conflict_gt_feature_probe_eval_only(
+    features: torch.Tensor,
+    task_candidates: torch.Tensor,
+    clip_candidates: torch.Tensor,
+    labels: torch.Tensor,
+    current_comparator_logits: torch.Tensor,
+    *,
+    folds: int,
+    steps: int,
+    hidden: int,
+    lr: float,
+    seed: int,
+    cycle: int,
+    log_fn: Callable[[str], None],
+) -> dict:
+    """Measure the GT-supervised ceiling of the current 16-D real features.
+
+    This is a deliberately non-methodological offline probe.  GT determines
+    its binary training targets, but only inside held-out cross-validation.
+    Formal Comparator weights, pseudo-labels, admission, and all returned
+    training state remain untouched.
+    """
+    x = features.detach().float().cpu()
+    task_candidates = task_candidates.detach().long().cpu().flatten()
+    clip_candidates = clip_candidates.detach().long().cpu().flatten()
+    labels = labels.detach().long().cpu().flatten()
+    current_logits = current_comparator_logits.detach().float().cpu()
+    total = int(x.size(0))
+    if x.dim() != 2:
+        raise ValueError("GT feature probe features must have shape [N, D]")
+    if any(tensor.shape != (total,) for tensor in (task_candidates, clip_candidates, labels)):
+        raise ValueError("GT feature probe candidates and labels must have shape [N]")
+    if current_logits.shape != (total, 2):
+        raise ValueError("current_comparator_logits must have shape [N, 2]")
+    if total == 0:
+        raise ValueError("GT feature probe requires at least one real conflict")
+    if bool((task_candidates == clip_candidates).any().item()):
+        raise ValueError("GT feature probe expects strict Task/CLIP conflicts")
+
+    task_correct = labels == task_candidates
+    clip_correct = labels == clip_candidates
+    oracle = task_correct | clip_correct
+    neither = ~oracle
+    task_target_count = int(task_correct.sum().item())
+    clip_target_count = int(clip_correct.sum().item())
+    oracle_count = int(oracle.sum().item())
+    neither_count = int(neither.sum().item())
+    max_folds = min(task_target_count, clip_target_count)
+    effective_folds = min(int(folds), max_folds)
+    if effective_folds < 2:
+        log_fn(
+            "DUET real-conflict GT feature probe eval-only: cycle={}; "
+            "status=skipped_insufficient_binary_targets; total={}; "
+            "task_correct_count={}; clip_correct_count={}; neither_count={}; "
+            "requested_folds={}; effective_folds={}; probe_uses_gt=True; "
+            "formal_method_affected=False".format(
+                cycle,
+                total,
+                task_target_count,
+                clip_target_count,
+                neither_count,
+                folds,
+                effective_folds,
+            )
+        )
+        return {
+            "status": "skipped_insufficient_binary_targets",
+            "total": total,
+            "oracle_count": oracle_count,
+            "neither_count": neither_count,
+        }
+
+    binary_targets = torch.full((total,), -1, dtype=torch.long)
+    binary_targets[task_correct] = 0
+    binary_targets[clip_correct] = 1
+    # Three strata keep Task-correct, CLIP-correct, and neither rows spread
+    # across held-out folds.  Neither rows are evaluated but never trained on.
+    strata = torch.full((total,), 2, dtype=torch.long)
+    strata[task_correct] = 0
+    strata[clip_correct] = 1
+    fold_ids = _stratified_probe_fold_ids(strata, effective_folds, seed)
+
+    predictions = {
+        "logistic": torch.full((total,), -1, dtype=torch.long),
+        "mlp": torch.full((total,), -1, dtype=torch.long),
+    }
+    fold_rows: list[dict] = []
+    for fold in range(effective_folds):
+        test_mask = fold_ids == fold
+        train_mask = (fold_ids != fold) & oracle
+        train_targets = binary_targets[train_mask]
+        if int(torch.unique(train_targets).numel()) != 2:
+            raise RuntimeError("each GT feature-probe training fold must contain both directions")
+        row = {
+            "fold": fold + 1,
+            "test_count": int(test_mask.sum().item()),
+            "train_count": int(train_mask.sum().item()),
+        }
+        for kind_offset, kind in enumerate(("logistic", "mlp")):
+            fold_logits = _fit_real_conflict_feature_probe(
+                x[train_mask],
+                train_targets,
+                x[test_mask],
+                kind=kind,
+                hidden=hidden,
+                steps=steps,
+                lr=lr,
+                seed=int(seed) + 1000 * fold + 100 * kind_offset,
+            )
+            fold_prediction = fold_logits.argmax(dim=1)
+            predictions[kind][test_mask] = fold_prediction
+            fold_correct = torch.where(
+                fold_prediction == 0,
+                task_correct[test_mask],
+                clip_correct[test_mask],
+            )
+            row["{}_acc".format(kind)] = 100.0 * float(
+                fold_correct.float().mean().item()
+            )
+        fold_rows.append(row)
+        log_fn(
+            "DUET real-conflict GT feature probe fold eval-only: cycle={}; "
+            "fold={}/{}; train_oracle_n={}; test_all_n={}; "
+            "logistic_acc={:.2f}%; mlp_acc={:.2f}%; probe_uses_gt=True; "
+            "formal_method_affected=False".format(
+                cycle,
+                fold + 1,
+                effective_folds,
+                row["train_count"],
+                row["test_count"],
+                row["logistic_acc"],
+                row["mlp_acc"],
+            )
+        )
+
+    if any(bool((prediction < 0).any().item()) for prediction in predictions.values()):
+        raise RuntimeError("GT feature probe did not produce out-of-fold predictions for all rows")
+
+    current_prediction = current_logits.argmax(dim=1)
+
+    def metrics_for_prediction(prediction: torch.Tensor) -> tuple[float, float]:
+        correct = torch.where(prediction == 0, task_correct, clip_correct)
+        all_acc = 100.0 * float(correct.float().mean().item())
+        conditional = 100.0 * float(correct[oracle].float().mean().item())
+        return all_acc, conditional
+
+    current_acc, current_conditional = metrics_for_prediction(current_prediction)
+    logistic_acc, logistic_conditional = metrics_for_prediction(predictions["logistic"])
+    mlp_acc, mlp_conditional = metrics_for_prediction(predictions["mlp"])
+    task_acc = 100.0 * task_target_count / total
+    clip_acc = 100.0 * clip_target_count / total
+    oracle_acc = 100.0 * oracle_count / total
+    result = {
+        "status": "ok",
+        "total": total,
+        "oracle_count": oracle_count,
+        "neither_count": neither_count,
+        "task_acc": task_acc,
+        "clip_acc": clip_acc,
+        "current_comparator_acc": current_acc,
+        "current_conditional_arbitration_acc": current_conditional,
+        "logistic_probe_acc": logistic_acc,
+        "logistic_conditional_arbitration_acc": logistic_conditional,
+        "mlp_probe_acc": mlp_acc,
+        "mlp_conditional_arbitration_acc": mlp_conditional,
+        "candidate_oracle_acc": oracle_acc,
+        "folds": fold_rows,
+    }
+    log_fn(
+        "DUET real-conflict GT feature probe summary eval-only: cycle={}; "
+        "features=16D_current_comparator_features; total={}; folds={}; "
+        "task_correct_count={}; clip_correct_count={}; neither_count={}; "
+        "task_acc={:.2f}%; clip_acc={:.2f}%; "
+        "synthetic_comparator_acc={:.2f}%; "
+        "logistic_probe_acc={:.2f}%; mlp_probe_acc={:.2f}%; "
+        "candidate_oracle_acc={:.2f}%; "
+        "synthetic_conditional_arbitration_acc={:.2f}%; "
+        "logistic_conditional_arbitration_acc={:.2f}%; "
+        "mlp_conditional_arbitration_acc={:.2f}%; "
+        "probe_steps={}; probe_hidden={}; probe_lr={:.6f}; "
+        "cv_preprocessing=train_fold_only; checkpoint_selection=none_fixed_steps; "
+        "probe_uses_gt=True; formal_comparator_uses_gt=False; "
+        "formal_method_affected=False".format(
+            cycle,
+            total,
+            effective_folds,
+            task_target_count,
+            clip_target_count,
+            neither_count,
+            task_acc,
+            clip_acc,
+            current_acc,
+            logistic_acc,
+            mlp_acc,
+            oracle_acc,
+            current_conditional,
+            logistic_conditional,
+            mlp_conditional,
+            steps,
+            hidden,
+            lr,
+        )
+    )
+    return result
 
 
 def _log_real_comparator_margin_distribution(
@@ -2975,6 +3273,29 @@ def run_comparator_refinement(
         raise ValueError("EVAL_TRAJECTORY_INTERVAL must be >= 1")
     if any(value <= 0 or value > 100 for value in trajectory_coverages):
         raise ValueError("EVAL_TRAJECTORY_COVERAGES values must be in [1, 100]")
+    real_conflict_gt_probe_enabled = bool(
+        getattr(context_cfg, "REAL_CONFLICT_GT_PROBE_ENABLED", False)
+    )
+    real_conflict_gt_probe_folds = int(
+        getattr(context_cfg, "REAL_CONFLICT_GT_PROBE_FOLDS", 5)
+    )
+    real_conflict_gt_probe_steps = int(
+        getattr(context_cfg, "REAL_CONFLICT_GT_PROBE_STEPS", 300)
+    )
+    real_conflict_gt_probe_hidden = int(
+        getattr(context_cfg, "REAL_CONFLICT_GT_PROBE_HIDDEN", 64)
+    )
+    real_conflict_gt_probe_lr = float(
+        getattr(context_cfg, "REAL_CONFLICT_GT_PROBE_LR", 0.01)
+    )
+    if real_conflict_gt_probe_enabled and real_conflict_gt_probe_folds < 2:
+        raise ValueError("REAL_CONFLICT_GT_PROBE_FOLDS must be >= 2")
+    if real_conflict_gt_probe_enabled and real_conflict_gt_probe_steps < 1:
+        raise ValueError("REAL_CONFLICT_GT_PROBE_STEPS must be >= 1")
+    if real_conflict_gt_probe_enabled and real_conflict_gt_probe_hidden < 1:
+        raise ValueError("REAL_CONFLICT_GT_PROBE_HIDDEN must be >= 1")
+    if real_conflict_gt_probe_enabled and real_conflict_gt_probe_lr <= 0.0:
+        raise ValueError("REAL_CONFLICT_GT_PROBE_LR must be positive")
     agreement_ambiguity_eval_enabled = bool(
         getattr(context_cfg, "AGREEMENT_AMBIGUITY_EVAL_ENABLED", False)
     )
@@ -3618,6 +3939,25 @@ def run_comparator_refinement(
             comparator.eval()
             with torch.no_grad():
                 logits = comparator(real_features).cpu()
+            if (
+                real_conflict_gt_probe_enabled
+                and eval_only_logging
+                and labels is not None
+            ):
+                _log_real_conflict_gt_feature_probe_eval_only(
+                    real_features,
+                    task_top1[strict_positions],
+                    clip_top1[strict_positions],
+                    labels[strict_positions],
+                    logits,
+                    folds=real_conflict_gt_probe_folds,
+                    steps=real_conflict_gt_probe_steps,
+                    hidden=real_conflict_gt_probe_hidden,
+                    lr=real_conflict_gt_probe_lr,
+                    seed=seed,
+                    cycle=cycle,
+                    log_fn=log_fn,
+                )
             decision = apply_pairwise_decision(
                 logits,
                 task_top1[strict_positions],
