@@ -44,18 +44,32 @@ class ProgressMeter(object):
         fmt = "{:" + str(num_digits) + "d}"
         return "[" + fmt + "/" + fmt.format(num_batches) + "]"
 
+def _scheduler_arg(args, name):
+    """Read scheduler fields from legacy args or the YACS ADACONTRAST node."""
+    scheduler_args = getattr(args, "ADACONTRAST", args)
+    if hasattr(scheduler_args, name):
+        return getattr(scheduler_args, name)
+    uppercase_name = name.upper()
+    if hasattr(scheduler_args, uppercase_name):
+        return getattr(scheduler_args, uppercase_name)
+    raise AttributeError(
+        f"Missing AdaContrast scheduler option: {name} / {uppercase_name}"
+    )
+
+
 def adjust_learning_rate(optimizer, progress, args):
     """
     Decay the learning rate based on epoch or iteration.
     """
-    if args.optim_cos:
-        decay = 0.5 * (1.0 + math.cos(math.pi * progress / args.full_progress))
-    elif args.optim_exp:
-        decay = (1 + 10 * progress / args.full_progress) ** -0.75
+    full_progress = _scheduler_arg(args, "full_progress")
+    if _scheduler_arg(args, "optim_cos"):
+        decay = 0.5 * (1.0 + math.cos(math.pi * progress / full_progress))
+    elif _scheduler_arg(args, "optim_exp"):
+        decay = (1 + 10 * progress / full_progress) ** -0.75
     else:
         decay = 1.0
-        for milestone in args.schedule:
-            decay *= args.gamma if progress >= milestone else 1.0
+        for milestone in _scheduler_arg(args, "schedule"):
+            decay *= _scheduler_arg(args, "gamma") if progress >= milestone else 1.0
     for param_group in optimizer.param_groups:
         param_group["lr"] = param_group["lr0"] * decay
 
