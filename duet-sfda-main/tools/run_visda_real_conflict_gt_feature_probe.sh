@@ -86,6 +86,14 @@ if [ "$(grep -c "DUET real-conflict GT feature probe summary eval-only: cycle=2"
   echo "VisDA-C run did not emit exactly one cycle-2 GT feature-probe summary" >&2
   exit 1
 fi
+if [ "$(grep -c "DUET real-conflict GT feature probe 20D summary eval-only: cycle=2" "${logs[0]}")" -ne 1 ]; then
+  echo "VisDA-C run did not emit exactly one cycle-2 20D GT feature-probe summary" >&2
+  exit 1
+fi
+if [ "$(grep -c "DUET real-conflict GT feature probe paired summary eval-only: cycle=2" "${logs[0]}")" -ne 1 ]; then
+  echo "VisDA-C run did not emit exactly one paired 16D/20D summary" >&2
+  exit 1
+fi
 if ! grep -q "DUET comparator selection: cycle=2; mode=rank_coverage;.*requested_coverage=20.00%" "${logs[0]}"; then
   echo "VisDA-C probe did not preserve fixed 20% formal admission" >&2
   exit 1
@@ -97,4 +105,6 @@ fi
 
 echo "==> Probe summary"
 grep "DUET real-conflict GT feature probe summary eval-only: cycle=2" "${logs[0]}"
+grep "DUET real-conflict GT feature probe 20D summary eval-only: cycle=2" "${logs[0]}"
+grep "DUET real-conflict GT feature probe paired summary eval-only: cycle=2" "${logs[0]}"
 echo "==> Full log: ${logs[0]}"

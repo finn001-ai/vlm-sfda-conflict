@@ -497,6 +497,110 @@ def _fit_real_conflict_feature_probe(
             return model(test_standardized).detach().cpu()
 
 
+def _build_extended_real_conflict_probe_features(
+    base_features: torch.Tensor,
+    task_probs: torch.Tensor,
+    clip_probs: torch.Tensor,
+    task_profile_reference: torch.Tensor,
+    clip_profile_reference: torch.Tensor,
+    *,
+    ranking_chunk_size: int = 512,
+) -> torch.Tensor:
+    """Append four GT-free distribution/reliability signals to the formal 16D.
+
+    The formal Comparator remains 16-dimensional.  These extra columns exist
+    only for the offline capacity probe:
+
+      16 task profile drift to the confident-agreement reference
+      17 CLIP profile drift to the confident-agreement reference
+      18 Task/CLIP Jensen-Shannon divergence
+      19 normalized all-class-pair ranking disagreement
+
+    Profile sorting follows the class-identity-free reliability proxy used by
+    MG-MTTA.  The reference is supplied by the caller so the diagnostic's
+    exact GT-free reference population is explicit and testable.
+    """
+    base = base_features.detach().float()
+    task = task_probs.detach().float().to(base.device)
+    clip = clip_probs.detach().float().to(base.device)
+    task_reference = task_profile_reference.detach().float().to(base.device).flatten()
+    clip_reference = clip_profile_reference.detach().float().to(base.device).flatten()
+    if base.dim() != 2 or base.size(1) != 16:
+        raise ValueError("extended GT probe expects base_features with shape [N, 16]")
+    if task.dim() != 2 or clip.shape != task.shape or task.size(0) != base.size(0):
+        raise ValueError("extended GT probe Task/CLIP probabilities must have shape [N, C]")
+    if task.size(1) < 2:
+        raise ValueError("extended GT probe requires at least two classes")
+    if task_reference.shape != (task.size(1),) or clip_reference.shape != (
+        task.size(1),
+    ):
+        raise ValueError("extended GT probe profile references must have shape [C]")
+    if ranking_chunk_size < 1:
+        raise ValueError("ranking_chunk_size must be >= 1")
+    tensors = (base, task, clip, task_reference, clip_reference)
+    if any(not bool(torch.isfinite(tensor).all().item()) for tensor in tensors):
+        raise ValueError("extended GT probe inputs must be finite")
+
+    task_sorted = task.sort(dim=1, descending=True).values
+    clip_sorted = clip.sort(dim=1, descending=True).values
+    task_reference_sorted = task_reference.sort(descending=True).values.unsqueeze(0)
+    clip_reference_sorted = clip_reference.sort(descending=True).values.unsqueeze(0)
+    task_profile_drift = (task_sorted - task_reference_sorted).abs().sum(dim=1)
+    clip_profile_drift = (clip_sorted - clip_reference_sorted).abs().sum(dim=1)
+
+    eps = 1e-12
+    midpoint = 0.5 * (task + clip)
+    task_safe = task.clamp_min(eps)
+    clip_safe = clip.clamp_min(eps)
+    midpoint_safe = midpoint.clamp_min(eps)
+    js_divergence = 0.5 * (
+        (task_safe * (task_safe.log() - midpoint_safe.log())).sum(dim=1)
+        + (clip_safe * (clip_safe.log() - midpoint_safe.log())).sum(dim=1)
+    )
+
+    num_samples, num_classes = task.shape
+    pair_mask = torch.triu(
+        torch.ones(
+            num_classes,
+            num_classes,
+            dtype=torch.bool,
+            device=base.device,
+        ),
+        diagonal=1,
+    )
+    pair_count = float(num_classes * (num_classes - 1) // 2)
+    ranking_disagreement = torch.empty(
+        num_samples, dtype=torch.float32, device=base.device
+    )
+    # Chunking avoids materializing [N, C, C] differences for all VisDA or
+    # Office-Home conflicts at once. Exact probability ties are not counted as
+    # discordant in either direction.
+    for start in range(0, num_samples, int(ranking_chunk_size)):
+        stop = min(start + int(ranking_chunk_size), num_samples)
+        task_chunk = task[start:stop]
+        clip_chunk = clip[start:stop]
+        task_diff = task_chunk.unsqueeze(2) - task_chunk.unsqueeze(1)
+        clip_diff = clip_chunk.unsqueeze(2) - clip_chunk.unsqueeze(1)
+        discordant = ((task_diff * clip_diff) < 0.0) & pair_mask.unsqueeze(0)
+        ranking_disagreement[start:stop] = (
+            discordant.sum(dim=(1, 2)).float() / pair_count
+        )
+
+    extended = torch.cat(
+        [
+            base,
+            task_profile_drift.unsqueeze(1),
+            clip_profile_drift.unsqueeze(1),
+            js_divergence.unsqueeze(1),
+            ranking_disagreement.unsqueeze(1),
+        ],
+        dim=1,
+    )
+    if extended.shape != (base.size(0), 20):
+        raise RuntimeError("extended GT probe failed to construct [N, 20] features")
+    return extended
+
+
 def _log_real_conflict_gt_feature_probe_eval_only(
     features: torch.Tensor,
     task_candidates: torch.Tensor,
@@ -511,14 +615,19 @@ def _log_real_conflict_gt_feature_probe_eval_only(
     seed: int,
     cycle: int,
     log_fn: Callable[[str], None],
+    feature_label: str = "16D_current_comparator_features",
+    log_variant: str = "",
 ) -> dict:
-    """Measure the GT-supervised ceiling of the current 16-D real features.
+    """Measure a GT-supervised ceiling of real-conflict feature evidence.
 
     This is a deliberately non-methodological offline probe.  GT determines
     its binary training targets, but only inside held-out cross-validation.
     Formal Comparator weights, pseudo-labels, admission, and all returned
     training state remain untouched.
     """
+    log_stem = "DUET real-conflict GT feature probe"
+    if log_variant:
+        log_stem = "{} {}".format(log_stem, log_variant)
     x = features.detach().float().cpu()
     task_candidates = task_candidates.detach().long().cpu().flatten()
     clip_candidates = clip_candidates.detach().long().cpu().flatten()
@@ -548,11 +657,12 @@ def _log_real_conflict_gt_feature_probe_eval_only(
     effective_folds = min(int(folds), max_folds)
     if effective_folds < 2:
         log_fn(
-            "DUET real-conflict GT feature probe eval-only: cycle={}; "
+            "{} eval-only: cycle={}; "
             "status=skipped_insufficient_binary_targets; total={}; "
             "task_correct_count={}; clip_correct_count={}; neither_count={}; "
             "requested_folds={}; effective_folds={}; probe_uses_gt=True; "
             "formal_method_affected=False".format(
+                log_stem,
                 cycle,
                 total,
                 task_target_count,
@@ -618,10 +728,11 @@ def _log_real_conflict_gt_feature_probe_eval_only(
             )
         fold_rows.append(row)
         log_fn(
-            "DUET real-conflict GT feature probe fold eval-only: cycle={}; "
+            "{} fold eval-only: cycle={}; "
             "fold={}/{}; train_oracle_n={}; test_all_n={}; "
             "logistic_acc={:.2f}%; mlp_acc={:.2f}%; probe_uses_gt=True; "
             "formal_method_affected=False".format(
+                log_stem,
                 cycle,
                 fold + 1,
                 effective_folds,
@@ -651,6 +762,7 @@ def _log_real_conflict_gt_feature_probe_eval_only(
     oracle_acc = 100.0 * oracle_count / total
     result = {
         "status": "ok",
+        "feature_label": feature_label,
         "total": total,
         "oracle_count": oracle_count,
         "neither_count": neither_count,
@@ -666,8 +778,8 @@ def _log_real_conflict_gt_feature_probe_eval_only(
         "folds": fold_rows,
     }
     log_fn(
-        "DUET real-conflict GT feature probe summary eval-only: cycle={}; "
-        "features=16D_current_comparator_features; total={}; folds={}; "
+        "{} summary eval-only: cycle={}; "
+        "features={}; total={}; folds={}; "
         "task_correct_count={}; clip_correct_count={}; neither_count={}; "
         "task_acc={:.2f}%; clip_acc={:.2f}%; "
         "synthetic_comparator_acc={:.2f}%; "
@@ -680,7 +792,9 @@ def _log_real_conflict_gt_feature_probe_eval_only(
         "cv_preprocessing=train_fold_only; checkpoint_selection=none_fixed_steps; "
         "probe_uses_gt=True; formal_comparator_uses_gt=False; "
         "formal_method_affected=False".format(
+            log_stem,
             cycle,
+            feature_label,
             total,
             effective_folds,
             task_target_count,
@@ -3288,6 +3402,13 @@ def run_comparator_refinement(
     real_conflict_gt_probe_lr = float(
         getattr(context_cfg, "REAL_CONFLICT_GT_PROBE_LR", 0.01)
     )
+    real_conflict_gt_probe_extended_20d_enabled = bool(
+        getattr(
+            context_cfg,
+            "REAL_CONFLICT_GT_PROBE_EXTENDED_20D_ENABLED",
+            False,
+        )
+    )
     if real_conflict_gt_probe_enabled and real_conflict_gt_probe_folds < 2:
         raise ValueError("REAL_CONFLICT_GT_PROBE_FOLDS must be >= 2")
     if real_conflict_gt_probe_enabled and real_conflict_gt_probe_steps < 1:
@@ -3944,7 +4065,7 @@ def run_comparator_refinement(
                 and eval_only_logging
                 and labels is not None
             ):
-                _log_real_conflict_gt_feature_probe_eval_only(
+                probe_16d = _log_real_conflict_gt_feature_probe_eval_only(
                     real_features,
                     task_top1[strict_positions],
                     clip_top1[strict_positions],
@@ -3958,6 +4079,99 @@ def run_comparator_refinement(
                     cycle=cycle,
                     log_fn=log_fn,
                 )
+                if real_conflict_gt_probe_extended_20d_enabled:
+                    extended_features = _build_extended_real_conflict_probe_features(
+                        real_features,
+                        task_probs[strict_positions],
+                        clip_probs[strict_positions],
+                        pool_task_probs.mean(dim=0),
+                        pool_clip_probs.mean(dim=0),
+                    )
+                    extra = extended_features[:, 16:20].detach().float().cpu()
+                    extra_std = extra.std(dim=0, unbiased=False)
+                    log_fn(
+                        "DUET real-conflict 20D extra-feature distribution "
+                        "eval-only: cycle={}; reference=cycle_high_confidence_"
+                        "agreement_mean_posterior; reference_n={}; "
+                        "task_profile_drift_mean={:.6f}; "
+                        "task_profile_drift_std={:.6f}; "
+                        "clip_profile_drift_mean={:.6f}; "
+                        "clip_profile_drift_std={:.6f}; "
+                        "task_clip_js_mean={:.6f}; task_clip_js_std={:.6f}; "
+                        "ranking_disagreement_mean={:.6f}; "
+                        "ranking_disagreement_std={:.6f}; "
+                        "construction_uses_gt=False; formal_method_affected=False".format(
+                            cycle,
+                            anchor_count,
+                            extra[:, 0].mean().item(),
+                            extra_std[0].item(),
+                            extra[:, 1].mean().item(),
+                            extra_std[1].item(),
+                            extra[:, 2].mean().item(),
+                            extra_std[2].item(),
+                            extra[:, 3].mean().item(),
+                            extra_std[3].item(),
+                        )
+                    )
+                    probe_20d = _log_real_conflict_gt_feature_probe_eval_only(
+                        extended_features,
+                        task_top1[strict_positions],
+                        clip_top1[strict_positions],
+                        labels[strict_positions],
+                        logits,
+                        folds=real_conflict_gt_probe_folds,
+                        steps=real_conflict_gt_probe_steps,
+                        hidden=real_conflict_gt_probe_hidden,
+                        lr=real_conflict_gt_probe_lr,
+                        seed=seed,
+                        cycle=cycle,
+                        log_fn=log_fn,
+                        feature_label=(
+                            "20D_16D_plus_task_profile_drift_"
+                            "clip_profile_drift_js_ranking_disagreement"
+                        ),
+                        log_variant="20D",
+                    )
+                    if (
+                        probe_16d.get("status") == "ok"
+                        and probe_20d.get("status") == "ok"
+                    ):
+                        log_fn(
+                            "DUET real-conflict GT feature probe paired summary "
+                            "eval-only: cycle={}; reference=cycle_high_confidence_"
+                            "agreement_mean_posterior; reference_n={}; "
+                            "fold_assignment_identical=True; "
+                            "logistic_16d_acc={:.2f}%; logistic_20d_acc={:.2f}%; "
+                            "logistic_delta={:+.2f}pp; "
+                            "mlp_16d_acc={:.2f}%; mlp_20d_acc={:.2f}%; "
+                            "mlp_delta={:+.2f}pp; "
+                            "logistic_16d_conditional={:.2f}%; "
+                            "logistic_20d_conditional={:.2f}%; "
+                            "candidate_oracle_acc={:.2f}%; "
+                            "extra_features=task_profile_drift,clip_profile_drift,"
+                            "task_clip_js,all_pair_ranking_disagreement; "
+                            "profile_sort_removes_class_identity=True; "
+                            "formal_comparator_dim=16; formal_method_affected=False; "
+                            "ground_truth_affects_training=False".format(
+                                cycle,
+                                anchor_count,
+                                probe_16d["logistic_probe_acc"],
+                                probe_20d["logistic_probe_acc"],
+                                probe_20d["logistic_probe_acc"]
+                                - probe_16d["logistic_probe_acc"],
+                                probe_16d["mlp_probe_acc"],
+                                probe_20d["mlp_probe_acc"],
+                                probe_20d["mlp_probe_acc"]
+                                - probe_16d["mlp_probe_acc"],
+                                probe_16d[
+                                    "logistic_conditional_arbitration_acc"
+                                ],
+                                probe_20d[
+                                    "logistic_conditional_arbitration_acc"
+                                ],
+                                probe_16d["candidate_oracle_acc"],
+                            )
+                        )
             decision = apply_pairwise_decision(
                 logits,
                 task_top1[strict_positions],

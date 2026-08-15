@@ -406,6 +406,9 @@ _C.DUET_CONTEXT.REAL_CONFLICT_GT_PROBE_FOLDS = 5
 _C.DUET_CONTEXT.REAL_CONFLICT_GT_PROBE_STEPS = 300
 _C.DUET_CONTEXT.REAL_CONFLICT_GT_PROBE_HIDDEN = 64
 _C.DUET_CONTEXT.REAL_CONFLICT_GT_PROBE_LR = 0.01
+# Paired eval-only ablation: append profile drift, JS divergence, and complete
+# ranking disagreement. The formal Comparator remains 16-dimensional.
+_C.DUET_CONTEXT.REAL_CONFLICT_GT_PROBE_EXTENDED_20D_ENABLED = False
 # Eval-only: Task/CLIP Top1 一致时，检查 shared Top2 在困难尾部
 # 是否能恢复真实错误。该分支不返回任何训练决策。
 _C.DUET_CONTEXT.AGREEMENT_AMBIGUITY_EVAL_ENABLED = False

@@ -32,6 +32,7 @@ from src.utils.duet_context import (
     train_pairwise_comparator_epochs,
     train_context_transformer,
     _exclude_query_anchors,
+    _build_extended_real_conflict_probe_features,
     _log_agreement_ambiguity_eval_only,
     _log_agreement_candidate_probe_eval_only,
     _log_agreement_synthetic_feasibility_eval_only,
@@ -106,6 +107,7 @@ def make_context_cfg(**overrides):
         REAL_CONFLICT_GT_PROBE_STEPS=30,
         REAL_CONFLICT_GT_PROBE_HIDDEN=16,
         REAL_CONFLICT_GT_PROBE_LR=0.02,
+        REAL_CONFLICT_GT_PROBE_EXTENDED_20D_ENABLED=False,
         AGREEMENT_AMBIGUITY_EVAL_ENABLED=False,
         AGREEMENT_AMBIGUITY_FRACTIONS=[10, 25, 50, 100],
         AGREEMENT_COMPARATOR_PROBE_ENABLED=False,
@@ -783,6 +785,44 @@ class ComparatorTest(unittest.TestCase):
         self.assertIn("candidate_oracle_acc=66.67%", logs[-1])
         self.assertIn("probe_uses_gt=True", logs[-1])
         self.assertIn("formal_method_affected=False", logs[-1])
+
+    def test_extended_real_conflict_probe_features_are_exact_and_gt_free(self):
+        base = torch.arange(32, dtype=torch.float32).reshape(2, 16)
+        task = torch.tensor(
+            [[0.60, 0.30, 0.10], [0.10, 0.30, 0.60]], dtype=torch.float32
+        )
+        clip = torch.tensor(
+            [[0.60, 0.30, 0.10], [0.60, 0.30, 0.10]], dtype=torch.float32
+        )
+        task_reference = torch.tensor([0.50, 0.30, 0.20])
+        clip_reference = torch.tensor([0.50, 0.30, 0.20])
+        base_before = base.clone()
+        task_before = task.clone()
+        clip_before = clip.clone()
+
+        extended = _build_extended_real_conflict_probe_features(
+            base,
+            task,
+            clip,
+            task_reference,
+            clip_reference,
+            ranking_chunk_size=1,
+        )
+
+        self.assertEqual(extended.shape, (2, 20))
+        self.assertTrue(torch.equal(extended[:, :16], base))
+        self.assertTrue(torch.equal(base, base_before))
+        self.assertTrue(torch.equal(task, task_before))
+        self.assertTrue(torch.equal(clip, clip_before))
+        # Sorting removes the class reversal, so both Task rows have the same
+        # concentration-profile drift from the supplied reference.
+        self.assertTrue(torch.allclose(extended[:, 16], torch.tensor([0.2, 0.2])))
+        self.assertTrue(torch.allclose(extended[:, 17], torch.tensor([0.2, 0.2])))
+        self.assertAlmostEqual(float(extended[0, 18]), 0.0, places=7)
+        self.assertGreater(float(extended[1, 18]), 0.0)
+        self.assertAlmostEqual(float(extended[0, 19]), 0.0, places=7)
+        self.assertAlmostEqual(float(extended[1, 19]), 1.0, places=7)
+        self.assertTrue(torch.isfinite(extended).all())
 
     def test_real_conflict_gt_feature_probe_skips_one_direction(self):
         logs = []
@@ -1472,6 +1512,7 @@ class ComparatorTest(unittest.TestCase):
                 AGREEMENT_SYNTHETIC_FEASIBILITY_ENABLED=True,
                 REAL_CONFLICT_GT_PROBE_ENABLED=True,
                 REAL_CONFLICT_GT_PROBE_STEPS=10,
+                REAL_CONFLICT_GT_PROBE_EXTENDED_20D_ENABLED=True,
             ),
             comparator=diagnostic_model,
             comparator_optimizer=diagnostic_optimizer,
@@ -1501,6 +1542,28 @@ class ComparatorTest(unittest.TestCase):
         )
         self.assertTrue(
             any("DUET real-conflict GT feature probe" in line for line in diagnostic_logs)
+        )
+        self.assertTrue(
+            any(
+                "DUET real-conflict GT feature probe 20D summary eval-only"
+                in line
+                for line in diagnostic_logs
+            )
+        )
+        self.assertTrue(
+            any(
+                "DUET real-conflict 20D extra-feature distribution eval-only"
+                in line
+                and "construction_uses_gt=False" in line
+                for line in diagnostic_logs
+            )
+        )
+        self.assertTrue(
+            any(
+                "DUET real-conflict GT feature probe paired summary eval-only"
+                in line
+                for line in diagnostic_logs
+            )
         )
 
     def test_comparator_pipeline_end_to_end(self):
