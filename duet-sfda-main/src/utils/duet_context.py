@@ -1358,6 +1358,308 @@ def build_comparator_features(
     return features
 
 
+def _align_historical_conflict_snapshot(
+    snapshot: dict,
+    current_sample_indices: torch.Tensor,
+) -> dict:
+    """Align a pre-adaptation snapshot to the current loader row order."""
+    if not snapshot or "sample_indices" not in snapshot:
+        raise ValueError("transition supervision requires a historical snapshot")
+    historical_indices = snapshot["sample_indices"].detach().long().cpu()
+    current_indices = current_sample_indices.detach().long().cpu()
+    if historical_indices.numel() != current_indices.numel():
+        raise ValueError("historical/current transition snapshots have different sizes")
+    if torch.unique(historical_indices).numel() != historical_indices.numel():
+        raise ValueError("historical transition sample indices must be unique")
+    order = torch.argsort(historical_indices, stable=True)
+    sorted_indices = historical_indices[order]
+    positions = torch.searchsorted(sorted_indices, current_indices)
+    if bool((positions >= sorted_indices.numel()).any().item()) or not torch.equal(
+        sorted_indices[positions], current_indices
+    ):
+        raise ValueError("historical/current transition sample identities differ")
+    aligned_rows = order[positions]
+    aligned = {"sample_indices": current_indices}
+    required = (
+        "task_probs",
+        "clip_probs",
+        "pre_prior_task_probs",
+        "pre_prior_clip_probs",
+        "task_features",
+        "clip_features",
+    )
+    for key in required:
+        if key not in snapshot:
+            raise ValueError("historical transition snapshot missing {}".format(key))
+        value = snapshot[key].detach().cpu()
+        if value.size(0) != historical_indices.numel():
+            raise ValueError("historical transition tensor {} has wrong N".format(key))
+        aligned[key] = value[aligned_rows]
+    return aligned
+
+
+@torch.no_grad()
+def build_delayed_transition_supervision(
+    historical_snapshot: dict,
+    current_task_probs: torch.Tensor,
+    current_clip_probs: torch.Tensor,
+    current_task_view_probs: torch.Tensor,
+    current_clip_view_probs: torch.Tensor,
+    *,
+    num_classes: int,
+    anchors_per_class: int,
+    anchor_task_conf: float,
+    anchor_clip_conf: float,
+    anchor_task_entropy: float,
+    anchor_clip_entropy: float,
+    entropy_weight: float,
+    require_pre_post_prior_agreement: bool,
+    sim_topk: int,
+    min_view_agreement: float,
+    min_per_direction: int,
+    seed: int,
+) -> dict:
+    """Turn pre-Cycle-1 real conflicts into delayed A/B supervision.
+
+    A historical conflict is labeled only when the post-Cycle-1 weak Task and
+    CLIP predictions agree on one of its original candidates and each branch's
+    stochastic views support that same candidate often enough.  No target GT
+    enters construction, ranking, balancing, or training.
+    """
+    if not 0.5 <= float(min_view_agreement) <= 1.0:
+        raise ValueError("min_view_agreement must be in [0.5, 1]")
+    if int(min_per_direction) < 1:
+        raise ValueError("min_per_direction must be >= 1")
+    historical_task = historical_snapshot["task_probs"].detach().float().cpu()
+    historical_clip = historical_snapshot["clip_probs"].detach().float().cpu()
+    historical_task_feature = (
+        historical_snapshot["task_features"].detach().float().cpu()
+    )
+    historical_clip_feature = (
+        historical_snapshot["clip_features"].detach().float().cpu()
+    )
+    current_task = current_task_probs.detach().float().cpu()
+    current_clip = current_clip_probs.detach().float().cpu()
+    task_views = current_task_view_probs.detach().float().cpu()
+    clip_views = current_clip_view_probs.detach().float().cpu()
+    if task_views.dim() == 2:
+        task_views = task_views.unsqueeze(0)
+        clip_views = clip_views.unsqueeze(0)
+    if historical_task.shape != historical_clip.shape:
+        raise ValueError("historical Task/CLIP probability shapes must match")
+    if current_task.shape != historical_task.shape or current_clip.shape != historical_task.shape:
+        raise ValueError("historical/current probability shapes must match")
+    if task_views.shape[1:] != current_task.shape or clip_views.shape != task_views.shape:
+        raise ValueError("transition view probabilities must be [V,N,C]")
+
+    historical_task_conf, candidate_a = historical_task.max(dim=1)
+    historical_clip_conf, candidate_b = historical_clip.max(dim=1)
+    historical_task_entropy = _entropy(historical_task)
+    historical_clip_entropy = _entropy(historical_clip)
+    historical_conflict = candidate_a != candidate_b
+
+    anchor_mask = (
+        (candidate_a == candidate_b)
+        & (historical_task_conf >= float(anchor_task_conf))
+        & (historical_clip_conf >= float(anchor_clip_conf))
+        & (historical_task_entropy <= float(anchor_task_entropy))
+        & (historical_clip_entropy <= float(anchor_clip_entropy))
+    )
+    if require_pre_post_prior_agreement:
+        pre_task = historical_snapshot["pre_prior_task_probs"].argmax(dim=1)
+        pre_clip = historical_snapshot["pre_prior_clip_probs"].argmax(dim=1)
+        anchor_mask &= (pre_task == pre_clip) & (pre_task == candidate_a)
+
+    anchor_count = int(anchor_mask.sum().item())
+    empty = torch.zeros(0, 16, dtype=torch.float32)
+    empty_target = torch.zeros(0, dtype=torch.long)
+    if anchor_count < 2 or int(historical_conflict.sum().item()) == 0:
+        return {
+            "features": empty,
+            "targets": empty_target,
+            "selected_mask": torch.zeros(historical_task.size(0), dtype=torch.bool),
+            "matured_label": torch.full((historical_task.size(0),), -1, dtype=torch.long),
+            "historical_conflicts": int(historical_conflict.sum().item()),
+            "matured": 0,
+            "raw_choose_a": 0,
+            "raw_choose_b": 0,
+            "balanced_per_direction": 0,
+            "anchor_count": anchor_count,
+            "ready": False,
+        }
+
+    reliability = (
+        historical_task_conf[anchor_mask]
+        + historical_clip_conf[anchor_mask]
+        - float(entropy_weight)
+        * (
+            historical_task_entropy[anchor_mask]
+            + historical_clip_entropy[anchor_mask]
+        )
+    )
+    anchor_labels = candidate_a[anchor_mask].long()
+    pool_ids = torch.arange(anchor_count)
+    task_bank = ClassBalancedAnchorBank(
+        num_classes=num_classes,
+        anchors_per_class=anchors_per_class,
+        feature_dim=historical_task_feature.size(1),
+        seed=seed,
+        device=torch.device("cpu"),
+    )
+    clip_bank = ClassBalancedAnchorBank(
+        num_classes=num_classes,
+        anchors_per_class=anchors_per_class,
+        feature_dim=historical_clip_feature.size(1),
+        seed=seed,
+        device=torch.device("cpu"),
+    )
+    task_bank.update(
+        historical_task_feature[anchor_mask], anchor_labels, reliability, pool_ids
+    )
+    clip_bank.update(
+        historical_clip_feature[anchor_mask], anchor_labels, reliability, pool_ids
+    )
+
+    current_task_top1 = current_task.argmax(dim=1)
+    current_clip_top1 = current_clip.argmax(dim=1)
+    matured_label = current_task_top1.clone()
+    weak_agreement = current_task_top1 == current_clip_top1
+    in_original_pair = (matured_label == candidate_a) | (matured_label == candidate_b)
+    task_view_support = (
+        task_views.argmax(dim=2) == matured_label.unsqueeze(0)
+    ).float().mean(dim=0)
+    clip_view_support = (
+        clip_views.argmax(dim=2) == matured_label.unsqueeze(0)
+    ).float().mean(dim=0)
+    selected_mask = (
+        historical_conflict
+        & weak_agreement
+        & in_original_pair
+        & (task_view_support >= float(min_view_agreement))
+        & (clip_view_support >= float(min_view_agreement))
+    )
+    selected_positions = torch.nonzero(selected_mask, as_tuple=False).flatten()
+    targets = (matured_label[selected_positions] == candidate_b[selected_positions]).long()
+    raw_choose_a = int((targets == 0).sum().item())
+    raw_choose_b = int((targets == 1).sum().item())
+    balance_n = min(raw_choose_a, raw_choose_b)
+    ready = balance_n >= int(min_per_direction)
+    if not ready:
+        balanced_positions = torch.zeros(0, dtype=torch.long)
+    else:
+        generator = torch.Generator(device="cpu")
+        generator.manual_seed(int(seed))
+        choose_a_rows = torch.nonzero(targets == 0, as_tuple=False).flatten()
+        choose_b_rows = torch.nonzero(targets == 1, as_tuple=False).flatten()
+        choose_a_rows = choose_a_rows[
+            torch.randperm(choose_a_rows.numel(), generator=generator)[:balance_n]
+        ]
+        choose_b_rows = choose_b_rows[
+            torch.randperm(choose_b_rows.numel(), generator=generator)[:balance_n]
+        ]
+        balanced_rows = torch.cat([choose_a_rows, choose_b_rows])
+        balanced_positions = selected_positions[balanced_rows]
+
+    if balanced_positions.numel() > 0:
+        features = build_comparator_features(
+            historical_task[balanced_positions],
+            historical_clip[balanced_positions],
+            historical_task_feature[balanced_positions],
+            historical_clip_feature[balanced_positions],
+            task_bank,
+            clip_bank,
+            class_a=candidate_a[balanced_positions],
+            class_b=candidate_b[balanced_positions],
+            sim_topk=sim_topk,
+        ).cpu()
+        balanced_targets = (
+            matured_label[balanced_positions] == candidate_b[balanced_positions]
+        ).long()
+    else:
+        features = empty
+        balanced_targets = empty_target
+    return {
+        "features": features,
+        "targets": balanced_targets,
+        "selected_mask": selected_mask,
+        "matured_label": matured_label,
+        "historical_candidate_a": candidate_a,
+        "historical_candidate_b": candidate_b,
+        "historical_conflicts": int(historical_conflict.sum().item()),
+        "matured": int(selected_mask.sum().item()),
+        "raw_choose_a": raw_choose_a,
+        "raw_choose_b": raw_choose_b,
+        "balanced_per_direction": int(balance_n if ready else 0),
+        "anchor_count": anchor_count,
+        "task_view_support": task_view_support,
+        "clip_view_support": clip_view_support,
+        "ready": bool(ready),
+    }
+
+
+@torch.no_grad()
+def fuse_transition_comparator_vote(
+    committee: dict,
+    comparator_prob_a: torch.Tensor,
+    weak_task_probs: torch.Tensor,
+    weak_clip_probs: torch.Tensor,
+    *,
+    comparator_weight: float,
+    coverage_fraction: float,
+) -> dict:
+    """Fuse historical real-conflict learning with the current committee."""
+    if not 0.0 <= float(comparator_weight) <= 1.0:
+        raise ValueError("comparator_weight must be in [0, 1]")
+    total = int(committee["q"].numel())
+    if comparator_prob_a.numel() != total:
+        raise ValueError("transition comparator vote must match committee rows")
+    committee_q = committee["q"].detach().float().cpu()
+    comparator_q = comparator_prob_a.detach().float().cpu()
+    q = (
+        (1.0 - float(comparator_weight)) * committee_q
+        + float(comparator_weight) * comparator_q
+    ).clamp(_EPS, 1.0 - _EPS)
+    direction_agreement = (
+        (committee_q - 0.5) * (comparator_q - 0.5) >= 0.0
+    ).float()
+    source_agreement = committee["source_agreement"].detach().float().cpu()
+    reliability = (
+        2.0 * (q - 0.5).abs()
+        * source_agreement
+        * (0.5 + 0.5 * direction_agreement)
+    ).clamp(0.0, 1.0)
+    selected_count = max(
+        1, min(total, int(round(total * float(coverage_fraction))))
+    )
+    order = torch.argsort(reliability, descending=True, stable=True)
+    active = torch.zeros(total, dtype=torch.bool)
+    active[order[:selected_count]] = True
+    weight = torch.zeros(total, dtype=torch.float32)
+    weight[active] = 0.25 + 0.75 * reliability[active]
+    task = weak_task_probs.detach().float().cpu()
+    clip = weak_clip_probs.detach().float().cpu()
+    candidate_a = committee["candidate_a"].detach().long().cpu()
+    candidate_b = committee["candidate_b"].detach().long().cpu()
+    rows = torch.arange(total)
+    target = 0.5 * (task + clip)
+    pair_mass = target[rows, candidate_a] + target[rows, candidate_b]
+    target[rows, candidate_a] = pair_mass * q
+    target[rows, candidate_b] = pair_mass * (1.0 - q)
+    fused = dict(committee)
+    fused.update(
+        {
+            "active": active,
+            "target": target,
+            "q": q,
+            "weight": weight,
+            "reliability": reliability,
+            "transition_q": comparator_q,
+            "transition_committee_agreement": direction_agreement,
+        }
+    )
+    return fused
+
+
 def _rowwise_js(first: torch.Tensor, second: torch.Tensor) -> torch.Tensor:
     first = first.float().clamp_min(_EPS)
     second = second.float().clamp_min(_EPS)
@@ -3526,6 +3828,7 @@ def run_context_refinement(
     comparator_optimizer: Optional[torch.optim.Optimizer] = None,
     replay_memory: Optional[ComparatorReplayMemory] = None,
     conflict_belief_memory: Optional[PersistentConflictBeliefMemory] = None,
+    historical_conflict_snapshot: Optional[dict] = None,
     reliability_task_view_probs: Optional[torch.Tensor] = None,
     reliability_clip_view_probs: Optional[torch.Tensor] = None,
     reliability_task_view_features: Optional[torch.Tensor] = None,
@@ -3563,6 +3866,7 @@ def run_context_refinement(
             comparator_optimizer=comparator_optimizer,
             replay_memory=replay_memory,
             conflict_belief_memory=conflict_belief_memory,
+            historical_conflict_snapshot=historical_conflict_snapshot,
             reliability_task_view_probs=reliability_task_view_probs,
             reliability_clip_view_probs=reliability_clip_view_probs,
             reliability_task_view_features=reliability_task_view_features,
@@ -3608,7 +3912,6 @@ def run_context_refinement(
     clip_conf, clip_top1 = clip_probs.max(dim=1)
     task_entropy = _entropy(task_probs)
     clip_entropy = _entropy(clip_probs)
-
     strict_conflict_mask = task_top1 != clip_top1
     # 弱一致性样本
     weak_agreement_mask = (
@@ -3932,6 +4235,7 @@ def run_comparator_refinement(
     comparator_optimizer: Optional[torch.optim.Optimizer] = None,
     replay_memory: Optional[ComparatorReplayMemory] = None,
     conflict_belief_memory: Optional[PersistentConflictBeliefMemory] = None,
+    historical_conflict_snapshot: Optional[dict] = None,
     reliability_task_view_probs: Optional[torch.Tensor] = None,
     reliability_clip_view_probs: Optional[torch.Tensor] = None,
     reliability_task_view_features: Optional[torch.Tensor] = None,
@@ -4088,6 +4392,28 @@ def run_comparator_refinement(
     reliability_gate_num_views = int(
         getattr(context_cfg, "RELIABILITY_GATE_NUM_VIEWS", 1)
     )
+    transition_supervision_enabled = bool(
+        getattr(context_cfg, "TRANSITION_SUPERVISION_ENABLED", False)
+    )
+    transition_min_view_agreement = float(
+        getattr(context_cfg, "TRANSITION_MIN_VIEW_AGREEMENT", 0.75)
+    )
+    transition_min_per_direction = int(
+        getattr(context_cfg, "TRANSITION_MIN_PER_DIRECTION", 16)
+    )
+    transition_train_steps = int(
+        getattr(context_cfg, "TRANSITION_TRAIN_STEPS", 400)
+    )
+    transition_synthetic_mix_fraction = float(
+        getattr(
+            context_cfg,
+            "TRANSITION_SYNTHETIC_MIX_FRACTION",
+            0.25,
+        )
+    )
+    transition_comparator_weight = float(
+        getattr(context_cfg, "TRANSITION_COMPARATOR_WEIGHT", 0.50)
+    )
     if reliability_gate_enabled and conflict_memory_enabled:
         raise ValueError(
             "RELIABILITY_GATE_ENABLED and CONFLICT_MEMORY_ENABLED are exclusive"
@@ -4102,6 +4428,40 @@ def run_comparator_refinement(
         raise ValueError("RELIABILITY_GATE_NEIGHBORS must be >= 1")
     if reliability_gate_enabled and reliability_gate_num_views < 1:
         raise ValueError("RELIABILITY_GATE_NUM_VIEWS must be >= 1")
+    if transition_supervision_enabled and not reliability_gate_enabled:
+        raise ValueError(
+            "TRANSITION_SUPERVISION_ENABLED requires RELIABILITY_GATE_ENABLED"
+        )
+    if transition_supervision_enabled and historical_conflict_snapshot is None:
+        raise ValueError(
+            "TRANSITION_SUPERVISION_ENABLED requires a historical snapshot"
+        )
+    if transition_supervision_enabled and int(cycle) != 2:
+        raise ValueError(
+            "transition supervision currently supports Cycle 2 only"
+        )
+    if transition_supervision_enabled and sample_indices is None:
+        raise ValueError(
+            "TRANSITION_SUPERVISION_ENABLED requires stable sample indices"
+        )
+    if transition_supervision_enabled and not (
+        0.5 <= transition_min_view_agreement <= 1.0
+    ):
+        raise ValueError("TRANSITION_MIN_VIEW_AGREEMENT must be in [0.5, 1]")
+    if transition_supervision_enabled and transition_min_per_direction < 1:
+        raise ValueError("TRANSITION_MIN_PER_DIRECTION must be >= 1")
+    if transition_supervision_enabled and transition_train_steps < 1:
+        raise ValueError("TRANSITION_TRAIN_STEPS must be >= 1")
+    if transition_supervision_enabled and not (
+        0.0 <= transition_synthetic_mix_fraction < 1.0
+    ):
+        raise ValueError(
+            "TRANSITION_SYNTHETIC_MIX_FRACTION must satisfy 0 <= value < 1"
+        )
+    if transition_supervision_enabled and not (
+        0.0 <= transition_comparator_weight <= 1.0
+    ):
+        raise ValueError("TRANSITION_COMPARATOR_WEIGHT must be in [0, 1]")
     if conflict_memory_enabled and not 0.0 < conflict_memory_coverage <= 1.0:
         raise ValueError(
             "CONFLICT_MEMORY_COVERAGE_FRACTION must satisfy 0 < value <= 1"
@@ -4197,6 +4557,12 @@ def run_comparator_refinement(
     clip_conf, clip_top1 = clip_probs.max(dim=1)
     task_entropy = _entropy(task_probs)
     clip_entropy = _entropy(clip_probs)
+    aligned_historical_snapshot = None
+    if transition_supervision_enabled:
+        aligned_historical_snapshot = _align_historical_conflict_snapshot(
+            historical_conflict_snapshot,
+            sample_indices,
+        )
 
     # Evaluation-only branch.  It runs before strict-conflict construction,
     # anchor banks, comparator updates and admission, and its output is ignored.
@@ -4435,6 +4801,8 @@ def run_comparator_refinement(
             0, 16, dtype=torch.float32
         )
         residual_router_logits = None
+        transition_result = None
+        transition_comparator_trained = False
         real_candidate_a = task_top1[strict_positions]
         real_candidate_b = clip_top1[strict_positions]
         if strict_positions.numel() > 0:
@@ -4506,6 +4874,148 @@ def run_comparator_refinement(
                         cycle
                     )
                 )
+            if transition_supervision_enabled:
+                if comparator is None or comparator_optimizer is None:
+                    raise ValueError(
+                        "transition supervision requires comparator and optimizer"
+                    )
+                task_transition_views = (
+                    reliability_task_view_probs
+                    if reliability_task_view_probs is not None
+                    else strong_task_probs.unsqueeze(0)
+                )
+                clip_transition_views = (
+                    reliability_clip_view_probs
+                    if reliability_clip_view_probs is not None
+                    else strong_clip_probs.unsqueeze(0)
+                )
+                transition_result = build_delayed_transition_supervision(
+                    aligned_historical_snapshot,
+                    task_probs,
+                    clip_probs,
+                    task_transition_views,
+                    clip_transition_views,
+                    num_classes=num_classes,
+                    anchors_per_class=anchors_per_class,
+                    anchor_task_conf=anchor_task_conf,
+                    anchor_clip_conf=anchor_clip_conf,
+                    anchor_task_entropy=anchor_task_entropy,
+                    anchor_clip_entropy=anchor_clip_entropy,
+                    entropy_weight=entropy_weight,
+                    require_pre_post_prior_agreement=(
+                        require_pre_post_prior_agreement
+                    ),
+                    sim_topk=sim_topk,
+                    min_view_agreement=transition_min_view_agreement,
+                    min_per_direction=transition_min_per_direction,
+                    seed=seed,
+                )
+                log_fn(
+                    "DUET delayed real-conflict supervision: cycle={}; "
+                    "historical_conflicts={}; matured={}; matured_rate={:.2f}%; "
+                    "raw_choose_a={}; raw_choose_b={}; "
+                    "balanced_per_direction={}; train_samples={}; "
+                    "historical_anchor_count={}; min_view_agreement={:.2f}; "
+                    "construction=pre_cycle1_conflict_to_post_cycle1_stable_agreement; "
+                    "uses_current_conflict_gt=False; ground_truth_affects_training=False".format(
+                        cycle,
+                        transition_result["historical_conflicts"],
+                        transition_result["matured"],
+                        100.0
+                        * transition_result["matured"]
+                        / max(transition_result["historical_conflicts"], 1),
+                        transition_result["raw_choose_a"],
+                        transition_result["raw_choose_b"],
+                        transition_result["balanced_per_direction"],
+                        transition_result["features"].size(0),
+                        transition_result["anchor_count"],
+                        transition_min_view_agreement,
+                    )
+                )
+                if eval_only_logging and labels is not None and transition_result["matured"] > 0:
+                    matured_mask = transition_result["selected_mask"]
+                    matured_label = transition_result["matured_label"][matured_mask]
+                    matured_gt = labels.detach().long().cpu()[matured_mask]
+                    pseudo_precision = float(
+                        (matured_label == matured_gt).float().mean().item()
+                    )
+                    log_fn(
+                        "DUET delayed real-conflict supervision eval-only: "
+                        "cycle={}; matured_n={}; pseudo_label_precision={:.2f}%; "
+                        "selection_uses_gt=False; ground_truth_affects_training=False".format(
+                            cycle,
+                            transition_result["matured"],
+                            100.0 * pseudo_precision,
+                        )
+                    )
+                if transition_result["ready"]:
+                    transition_features = transition_result["features"].to(device)
+                    transition_targets = transition_result["targets"].to(device)
+                    use_synthetic_regularizer = (
+                        transition_synthetic_mix_fraction > 0.0
+                        and synthetic_features.size(0) >= 2
+                    )
+                    transition_loss = train_pairwise_comparator(
+                        comparator,
+                        comparator_optimizer,
+                        transition_features,
+                        transition_targets,
+                        steps=transition_train_steps,
+                        batch_size=train_batch_size,
+                        seed=seed + 104729,
+                        memory_features=(
+                            synthetic_features.to(device)
+                            if use_synthetic_regularizer
+                            else None
+                        ),
+                        memory_targets=(
+                            synthetic_targets.to(device)
+                            if use_synthetic_regularizer
+                            else None
+                        ),
+                        memory_fraction=transition_synthetic_mix_fraction,
+                    )
+                    transition_comparator_trained = True
+                    stats["train_loss"] = transition_loss
+                    stats["train_current_samples"] = int(
+                        transition_features.size(0)
+                    )
+                    stats["train_memory_samples"] = (
+                        int(synthetic_features.size(0))
+                        if use_synthetic_regularizer
+                        else 0
+                    )
+                    stats["optimizer_steps_this_cycle"] = transition_train_steps
+                    log_fn(
+                        "DUET transition comparator training: cycle={}; "
+                        "optimizer_steps={}; real_transition_samples={}; "
+                        "synthetic_regularizer_samples={}; synthetic_mix_fraction={:.2f}; "
+                        "train_loss={}; supervision_distribution=historical_real_conflicts; "
+                        "ground_truth_affects_training=False".format(
+                            cycle,
+                            transition_train_steps,
+                            transition_features.size(0),
+                            synthetic_features.size(0)
+                            if use_synthetic_regularizer
+                            else 0,
+                            transition_synthetic_mix_fraction
+                            if use_synthetic_regularizer
+                            else 0.0,
+                            "none"
+                            if transition_loss is None
+                            else "{:.6f}".format(transition_loss),
+                        )
+                    )
+                else:
+                    log_fn(
+                        "DUET transition comparator training skipped: cycle={}; "
+                        "reason=insufficient_balanced_matured_conflicts; "
+                        "required_per_direction={}; committee_fallback=True; "
+                        "ground_truth_affects_training=False".format(
+                            cycle,
+                            transition_min_per_direction,
+                        )
+                    )
             if reliability_gate_enabled:
                 if (
                     strong_task_probs is None
@@ -4548,6 +5058,41 @@ def run_comparator_refinement(
                     temperature=reliability_gate_temperature,
                     coverage_fraction=reliability_gate_coverage,
                 )
+                gate_method = "candidate_evidence_committee"
+                if transition_comparator_trained:
+                    comparator.eval()
+                    with torch.no_grad():
+                        transition_prob_a = F.softmax(
+                            comparator(real_features.detach()), dim=1
+                        )[:, 0].cpu()
+                    gate_local = fuse_transition_comparator_vote(
+                        gate_local,
+                        transition_prob_a,
+                        task_probs[strict_positions],
+                        clip_probs[strict_positions],
+                        comparator_weight=transition_comparator_weight,
+                        coverage_fraction=reliability_gate_coverage,
+                    )
+                    gate_method = (
+                        "candidate_committee_plus_delayed_real_conflict_comparator"
+                    )
+                    transition_agreement = float(
+                        gate_local["transition_committee_agreement"].mean().item()
+                    )
+                    log_fn(
+                        "DUET transition-comparator fusion: cycle={}; "
+                        "current_conflicts={}; comparator_weight={:.2f}; "
+                        "committee_weight={:.2f}; direction_agreement={:.2f}%; "
+                        "coverage={:.2f}%; labels_used_for_fusion=False; "
+                        "ground_truth_affects_training=False".format(
+                            cycle,
+                            int(strict_positions.numel()),
+                            transition_comparator_weight,
+                            1.0 - transition_comparator_weight,
+                            100.0 * transition_agreement,
+                            100.0 * reliability_gate_coverage,
+                        )
+                    )
                 for key in (
                     "active", "target", "candidate_a", "candidate_b", "q",
                     "weight", "reliability", "source_agreement",
@@ -4570,7 +5115,7 @@ def run_comparator_refinement(
                     "reliability_mean={:.4f}; source_agreement_mean={:.4f}; "
                     "effective_sample_equivalent={:.2f}; "
                     "switches_from_duet_fallback={}; "
-                    "method=candidate_evidence_committee; "
+                    "method={}; "
                     "candidate_space=task_top1_vs_clip_top1; "
                     "hard_admission_changed=False; original_clip_kl_changed=False; "
                     "ground_truth_affects_training=False".format(
@@ -4590,6 +5135,7 @@ def run_comparator_refinement(
                         ),
                         float(gate_local["weight"][gate_active].sum().item()),
                         int(switches.sum().item()),
+                        gate_method,
                     )
                 )
                 if eval_only_logging and labels is not None and gate_count > 0:
@@ -4739,7 +5285,8 @@ def run_comparator_refinement(
         if comparator is None:
             raise ValueError("refiner_type=comparator requires a comparator module")
         if (
-            synthetic_features.size(0) >= 2
+            not transition_supervision_enabled
+            and synthetic_features.size(0) >= 2
             and comparator_optimizer is not None
             and (comparator_epochs > 0 or train_steps_per_cycle > 0)
         ):

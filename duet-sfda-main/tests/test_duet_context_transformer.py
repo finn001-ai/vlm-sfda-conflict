@@ -24,10 +24,12 @@ from src.utils.duet_context import (
     apply_decision_rules,
     apply_weak_verification,
     build_comparator_features,
+    build_delayed_transition_supervision,
     build_reliability_gated_fusion,
     build_real_conflict_multiview_supervision,
     build_synthetic_conflicts,
     cosine_knn_refine,
+    fuse_transition_comparator_vote,
     prototype_refine,
     run_context_refinement,
     train_pairwise_comparator,
@@ -128,6 +130,12 @@ def make_context_cfg(**overrides):
         RELIABILITY_GATE_NEIGHBORS=5,
         RELIABILITY_GATE_NUM_VIEWS=1,
         RELIABILITY_GATE_LOSS_WEIGHT=0.10,
+        TRANSITION_SUPERVISION_ENABLED=False,
+        TRANSITION_MIN_VIEW_AGREEMENT=0.75,
+        TRANSITION_MIN_PER_DIRECTION=2,
+        TRANSITION_TRAIN_STEPS=20,
+        TRANSITION_SYNTHETIC_MIX_FRACTION=0.25,
+        TRANSITION_COMPARATOR_WEIGHT=0.50,
         AGREEMENT_AMBIGUITY_EVAL_ENABLED=False,
         AGREEMENT_AMBIGUITY_FRACTIONS=[10, 25, 50, 100],
         AGREEMENT_COMPARATOR_PROBE_ENABLED=False,
@@ -144,6 +152,170 @@ def make_context_cfg(**overrides):
 
 
 class AnchorBankTest(unittest.TestCase):
+    def test_delayed_transition_supervision_uses_matured_real_conflicts(self):
+        n, c, d = 12, 3, 6
+        historical_task = torch.full((n, c), 0.01)
+        historical_clip = torch.full((n, c), 0.01)
+        historical_task[:8, 0] = 0.98
+        historical_clip[:8, 1] = 0.98
+        anchor_labels = torch.tensor([0, 1, 2, 0])
+        for row, label in enumerate(anchor_labels, start=8):
+            historical_task[row, label] = 0.98
+            historical_clip[row, label] = 0.98
+        historical_task /= historical_task.sum(dim=1, keepdim=True)
+        historical_clip /= historical_clip.sum(dim=1, keepdim=True)
+        current_task = historical_task.clone()
+        current_clip = historical_clip.clone()
+        for row in range(8):
+            matured = 0 if row < 4 else 1
+            current_task[row] = 0.01
+            current_clip[row] = 0.01
+            current_task[row, matured] = 0.98
+            current_clip[row, matured] = 0.98
+        current_task /= current_task.sum(dim=1, keepdim=True)
+        current_clip /= current_clip.sum(dim=1, keepdim=True)
+        views_task = current_task.unsqueeze(0).repeat(4, 1, 1)
+        views_clip = current_clip.unsqueeze(0).repeat(4, 1, 1)
+        snapshot = {
+            "task_probs": historical_task,
+            "clip_probs": historical_clip,
+            "pre_prior_task_probs": historical_task,
+            "pre_prior_clip_probs": historical_clip,
+            "task_features": torch.randn(n, d),
+            "clip_features": torch.randn(n, d),
+        }
+        result = build_delayed_transition_supervision(
+            snapshot,
+            current_task,
+            current_clip,
+            views_task,
+            views_clip,
+            num_classes=c,
+            anchors_per_class=2,
+            anchor_task_conf=0.90,
+            anchor_clip_conf=0.90,
+            anchor_task_entropy=0.40,
+            anchor_clip_entropy=0.40,
+            entropy_weight=1.0,
+            require_pre_post_prior_agreement=True,
+            sim_topk=2,
+            min_view_agreement=0.75,
+            min_per_direction=2,
+            seed=2020,
+        )
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["historical_conflicts"], 8)
+        self.assertEqual(result["matured"], 8)
+        self.assertEqual(result["features"].shape, (8, 16))
+        self.assertEqual(int((result["targets"] == 0).sum()), 4)
+        self.assertEqual(int((result["targets"] == 1).sum()), 4)
+
+    def test_transition_vote_fusion_preserves_fixed_coverage(self):
+        weak_task = torch.tensor(
+            [[0.70, 0.20, 0.10], [0.20, 0.70, 0.10], [0.60, 0.30, 0.10], [0.30, 0.60, 0.10]]
+        )
+        weak_clip = torch.tensor(
+            [[0.20, 0.70, 0.10], [0.70, 0.20, 0.10], [0.30, 0.60, 0.10], [0.60, 0.30, 0.10]]
+        )
+        committee = {
+            "q": torch.tensor([0.8, 0.2, 0.6, 0.4]),
+            "source_agreement": torch.tensor([0.9, 0.9, 0.7, 0.7]),
+            "candidate_a": weak_task.argmax(dim=1),
+            "candidate_b": weak_clip.argmax(dim=1),
+            "active": torch.ones(4, dtype=torch.bool),
+            "target": 0.5 * (weak_task + weak_clip),
+            "weight": torch.ones(4),
+            "reliability": torch.ones(4),
+        }
+        fused = fuse_transition_comparator_vote(
+            committee,
+            torch.tensor([0.9, 0.1, 0.2, 0.8]),
+            weak_task,
+            weak_clip,
+            comparator_weight=0.5,
+            coverage_fraction=0.5,
+        )
+        self.assertEqual(int(fused["active"].sum()), 2)
+        self.assertTrue(torch.allclose(fused["target"].sum(dim=1), torch.ones(4)))
+        self.assertEqual(fused["transition_committee_agreement"].tolist(), [1.0, 1.0, 0.0, 0.0])
+
+    def test_transition_supervision_runs_before_current_committee(self):
+        torch.manual_seed(44)
+        n, c, d = 40, 3, 8
+        historical_task = torch.full((n, c), 0.01)
+        historical_clip = torch.full((n, c), 0.01)
+        historical_task[:16, 0] = 0.98
+        historical_clip[:16, 1] = 0.98
+        for row in range(16, n):
+            label = row % c
+            historical_task[row, label] = 0.98
+            historical_clip[row, label] = 0.98
+        historical_task /= historical_task.sum(dim=1, keepdim=True)
+        historical_clip /= historical_clip.sum(dim=1, keepdim=True)
+        current_task = historical_task.clone()
+        current_clip = historical_clip.clone()
+        for row in range(8):
+            label = 0 if row < 4 else 1
+            current_task[row] = 0.01
+            current_clip[row] = 0.01
+            current_task[row, label] = 0.98
+            current_clip[row, label] = 0.98
+        current_task /= current_task.sum(dim=1, keepdim=True)
+        current_clip /= current_clip.sum(dim=1, keepdim=True)
+        task_feature = torch.randn(n, d)
+        clip_feature = torch.randn(n, d)
+        task_views = current_task.unsqueeze(0).repeat(4, 1, 1)
+        clip_views = current_clip.unsqueeze(0).repeat(4, 1, 1)
+        snapshot = {
+            "sample_indices": torch.arange(n),
+            "task_probs": historical_task,
+            "clip_probs": historical_clip,
+            "pre_prior_task_probs": historical_task,
+            "pre_prior_clip_probs": historical_clip,
+            "task_features": torch.randn(n, d),
+            "clip_features": torch.randn(n, d),
+        }
+        model = PairwiseConflictComparator(input_dim=16, hidden=16, layers=1)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        logs = []
+        result = run_context_refinement(
+            current_task,
+            current_clip,
+            task_feature,
+            num_classes=c,
+            context_cfg=make_context_cfg(
+                REFINER_TYPE="comparator",
+                RELIABILITY_GATE_ENABLED=True,
+                RELIABILITY_GATE_NUM_VIEWS=4,
+                RELIABILITY_GATE_COVERAGE_FRACTION=0.80,
+                TRANSITION_SUPERVISION_ENABLED=True,
+                TRANSITION_TRAIN_STEPS=3,
+                TRANSITION_MIN_PER_DIRECTION=2,
+                TRAIN_STEPS_PER_CYCLE=0,
+            ),
+            pre_prior_task_probs=current_task,
+            pre_prior_clip_probs=current_clip,
+            labels=torch.zeros(n, dtype=torch.long),
+            sample_indices=torch.arange(n),
+            clip_features=clip_feature,
+            strong_task_probs=current_task,
+            strong_clip_probs=current_clip,
+            strong_task_features=task_feature,
+            strong_clip_features=clip_feature,
+            comparator=model,
+            comparator_optimizer=optimizer,
+            historical_conflict_snapshot=snapshot,
+            reliability_task_view_probs=task_views,
+            reliability_clip_view_probs=clip_views,
+            reliability_task_view_features=task_feature.unsqueeze(0).repeat(4, 1, 1),
+            reliability_clip_view_features=clip_feature.unsqueeze(0).repeat(4, 1, 1),
+            cycle=2,
+            log_fn=logs.append,
+        )
+        self.assertEqual(int(result["reliability_gate"]["active"].sum()), 6)
+        self.assertTrue(any("DUET transition comparator training:" in line for line in logs))
+        self.assertTrue(any("DUET transition-comparator fusion:" in line for line in logs))
+
     def test_reliability_gate_preserves_full_distribution_and_fixed_coverage(self):
         torch.manual_seed(31)
         n, c, d = 20, 4, 8

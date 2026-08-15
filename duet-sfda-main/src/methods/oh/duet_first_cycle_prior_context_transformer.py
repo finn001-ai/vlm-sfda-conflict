@@ -304,6 +304,78 @@ def conflict_memory_pairwise_loss(
     return (weights * soft_ce).sum() / float(rows.numel())
 
 
+def _capture_pre_adaptation_conflict_snapshot(
+    loader,
+    netF,
+    netB,
+    netC,
+    clip_model,
+    text_inputs,
+    text_features,
+    *,
+    prior_power,
+    prior_epsilon,
+):
+    """Capture the exact pre-Cycle-1 Task/CLIP state without changing RNG.
+
+    Old Cycle-1 checkpoints do not contain conflict trajectories.  A resumed
+    run can nevertheless reconstruct the missing earlier state because source
+    Task and the initial CLIP visual branch are loaded before the checkpoint is
+    restored.  Target labels are deliberately not collected.
+    """
+    saved_rng = capture_process_rng_state()
+    modules = (netF, netB, netC, clip_model)
+    training_modes = [module.training for module in modules]
+    for module in modules:
+        module.eval()
+    task_logits = []
+    clip_logits = []
+    task_features = []
+    clip_features = []
+    sample_indices = []
+    try:
+        with torch.no_grad():
+            iterator = iter(loader)
+            for _ in range(len(loader)):
+                inputs, _, indices = next(iterator)
+                weak_x = inputs[1].cuda()
+                task_feature = netB(netF(weak_x))
+                task_logits.append(netC(task_feature).float().cpu())
+                if text_features is not None:
+                    clip_logit = clip_text(clip_model, text_features, weak_x)
+                else:
+                    clip_logit, _ = clip_model(weak_x, text_inputs)
+                clip_logits.append(clip_logit.float().cpu())
+                task_features.append(task_feature.float().cpu())
+                clip_features.append(
+                    clip_model.encode_image(weak_x).float().cpu()
+                )
+                sample_indices.append(indices.long().cpu())
+    finally:
+        for module, was_training in zip(modules, training_modes):
+            module.train(was_training)
+        restore_process_rng_state(saved_rng)
+
+    pre_prior_task = F.softmax(torch.cat(task_logits), dim=1)
+    pre_prior_clip = F.softmax(torch.cat(clip_logits), dim=1)
+    task_probs, clip_probs, _ = apply_first_cycle_prior(
+        pre_prior_task,
+        pre_prior_clip,
+        curr_cycle=0,
+        power=float(prior_power),
+        epsilon=float(prior_epsilon),
+    )
+    return {
+        "sample_indices": torch.cat(sample_indices),
+        "task_probs": task_probs.detach().cpu(),
+        "clip_probs": clip_probs.detach().cpu(),
+        "pre_prior_task_probs": pre_prior_task.detach().cpu(),
+        "pre_prior_clip_probs": pre_prior_clip.detach().cpu(),
+        "task_features": torch.cat(task_features),
+        "clip_features": torch.cat(clip_features),
+    }
+
+
 def cosine_scheduler(cfg, optimizer, iter_num, max_iter, lr_min=1e-6):
     for param_group in optimizer.param_groups:
         lr_max = param_group['lr0']  # Initial learning rate
@@ -590,6 +662,9 @@ def train_target(
     reliability_gate_enabled = bool(
         getattr(cfg.DUET_CONTEXT, "RELIABILITY_GATE_ENABLED", False)
     )
+    transition_supervision_enabled = bool(
+        getattr(cfg.DUET_CONTEXT, "TRANSITION_SUPERVISION_ENABLED", False)
+    )
     if conflict_memory_enabled and reliability_gate_enabled:
         raise ValueError(
             "CONFLICT_MEMORY_ENABLED and RELIABILITY_GATE_ENABLED are exclusive"
@@ -614,6 +689,51 @@ def train_target(
         cfg.DUET_CONTEXT.RELIABILITY_GATE_LOSS_WEIGHT
     ) <= 0.0:
         raise ValueError("RELIABILITY_GATE_LOSS_WEIGHT must be positive")
+    if transition_supervision_enabled and not reliability_gate_enabled:
+        raise ValueError(
+            "TRANSITION_SUPERVISION_ENABLED requires RELIABILITY_GATE_ENABLED"
+        )
+    transition_min_view_agreement = float(
+        getattr(cfg.DUET_CONTEXT, "TRANSITION_MIN_VIEW_AGREEMENT", 0.75)
+    )
+    transition_min_per_direction = int(
+        getattr(cfg.DUET_CONTEXT, "TRANSITION_MIN_PER_DIRECTION", 16)
+    )
+    transition_train_steps = int(
+        getattr(cfg.DUET_CONTEXT, "TRANSITION_TRAIN_STEPS", 400)
+    )
+    transition_synthetic_mix = float(
+        getattr(
+            cfg.DUET_CONTEXT,
+            "TRANSITION_SYNTHETIC_MIX_FRACTION",
+            0.25,
+        )
+    )
+    transition_comparator_weight = float(
+        getattr(cfg.DUET_CONTEXT, "TRANSITION_COMPARATOR_WEIGHT", 0.50)
+    )
+    if transition_supervision_enabled and not (
+        0.5 <= transition_min_view_agreement <= 1.0
+    ):
+        raise ValueError(
+            "TRANSITION_MIN_VIEW_AGREEMENT must satisfy 0.5 <= value <= 1"
+        )
+    if transition_supervision_enabled and transition_min_per_direction < 1:
+        raise ValueError("TRANSITION_MIN_PER_DIRECTION must be >= 1")
+    if transition_supervision_enabled and transition_train_steps < 1:
+        raise ValueError("TRANSITION_TRAIN_STEPS must be >= 1")
+    if transition_supervision_enabled and not (
+        0.0 <= transition_synthetic_mix < 1.0
+    ):
+        raise ValueError(
+            "TRANSITION_SYNTHETIC_MIX_FRACTION must satisfy 0 <= value < 1"
+        )
+    if transition_supervision_enabled and not (
+        0.0 <= transition_comparator_weight <= 1.0
+    ):
+        raise ValueError(
+            "TRANSITION_COMPARATOR_WEIGHT must satisfy 0 <= value <= 1"
+        )
     cycle_checkpoint_save_path = str(
         getattr(cfg.DUET_CONTEXT, "CYCLE_CHECKPOINT_SAVE_PATH", "")
     ).strip()
@@ -800,6 +920,31 @@ def train_target(
                 )
             )
 
+    historical_conflict_snapshot = None
+    if transition_supervision_enabled:
+        historical_conflict_snapshot = _capture_pre_adaptation_conflict_snapshot(
+            dset_loaders["test_aug"],
+            netF,
+            netB,
+            netC,
+            clip_model,
+            text_inputs,
+            text_features,
+            prior_power=float(cfg.DUET_FCP.POWER),
+            prior_epsilon=float(cfg.ACTIVE.EPSILON),
+        )
+        historical_task = historical_conflict_snapshot["task_probs"].argmax(dim=1)
+        historical_clip = historical_conflict_snapshot["clip_probs"].argmax(dim=1)
+        logging.info(
+            "DUET transition snapshot reconstructed: stage=pre_cycle1; "
+            "samples={}; strict_conflicts={}; checkpoint_rerun=False; "
+            "rng_restored=True; labels_collected=False; "
+            "ground_truth_affects_training=False".format(
+                historical_task.numel(),
+                int((historical_task != historical_clip).sum().item()),
+            )
+        )
+
     # office-home : 1.0 / VisDA-C : 1.05
     curr_cycle = 0
     q_value = cfg.ACTIVE.Q_VALUE
@@ -824,6 +969,10 @@ def train_target(
             context_replay_memory=context_replay_memory,
             conflict_belief_memory=conflict_belief_memory,
         )
+        if transition_supervision_enabled and curr_cycle != 1:
+            raise ValueError(
+                "transition supervision currently requires a Cycle-1 checkpoint"
+            )
         if curr_cycle < 1 or curr_cycle >= int(cfg.ACTIVE.CYCLE):
             raise ValueError(
                 "cycle checkpoint completed_cycles={} is incompatible with "
@@ -863,6 +1012,7 @@ def train_target(
                 else None
             ),
             conflict_belief_memory=conflict_belief_memory,
+            historical_conflict_snapshot=historical_conflict_snapshot,
             context_cfg=cfg.DUET_CONTEXT,
             context_active_cycles=context_active_cycles,
             context_num_classes=int(cfg.class_num),
@@ -1090,6 +1240,7 @@ def obtain_label(
     comparator_optimizer=None,
     replay_memory=None,
     conflict_belief_memory=None,
+    historical_conflict_snapshot=None,
     context_cfg=None,
     context_active_cycles=(0,),
     context_num_classes=None,
@@ -1344,6 +1495,9 @@ def obtain_label(
             replay_memory=(replay_memory if comparator_mode else None),
             conflict_belief_memory=(
                 conflict_belief_memory if comparator_mode else None
+            ),
+            historical_conflict_snapshot=(
+                historical_conflict_snapshot if comparator_mode else None
             ),
             reliability_task_view_probs=reliability_task_view_probs,
             reliability_clip_view_probs=reliability_clip_view_probs,

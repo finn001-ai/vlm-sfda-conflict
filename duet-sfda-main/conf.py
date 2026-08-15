@@ -438,6 +438,15 @@ _C.DUET_CONTEXT.RELIABILITY_GATE_TEMPERATURE = 0.25
 _C.DUET_CONTEXT.RELIABILITY_GATE_NEIGHBORS = 5
 _C.DUET_CONTEXT.RELIABILITY_GATE_NUM_VIEWS = 4
 _C.DUET_CONTEXT.RELIABILITY_GATE_LOSS_WEIGHT = 0.10
+# Delayed real-conflict supervision. Reconstruct the pre-adaptation state,
+# then use conflicts that mature into stable A/B agreement after Cycle 1 as
+# GT-free training examples for the Cycle-2 comparator.
+_C.DUET_CONTEXT.TRANSITION_SUPERVISION_ENABLED = False
+_C.DUET_CONTEXT.TRANSITION_MIN_VIEW_AGREEMENT = 0.75
+_C.DUET_CONTEXT.TRANSITION_MIN_PER_DIRECTION = 16
+_C.DUET_CONTEXT.TRANSITION_TRAIN_STEPS = 400
+_C.DUET_CONTEXT.TRANSITION_SYNTHETIC_MIX_FRACTION = 0.25
+_C.DUET_CONTEXT.TRANSITION_COMPARATOR_WEIGHT = 0.50
 # Exact cycle-boundary cache for repeated eval-only diagnostics. Saving and
 # resuming are opt-in and mutually exclusive; an existing cache is never
 # overwritten by the training code.
