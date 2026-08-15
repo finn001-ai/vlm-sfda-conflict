@@ -447,6 +447,9 @@ _C.DUET_CONTEXT.TRANSITION_MIN_PER_DIRECTION = 16
 _C.DUET_CONTEXT.TRANSITION_TRAIN_STEPS = 400
 _C.DUET_CONTEXT.TRANSITION_SYNTHETIC_MIX_FRACTION = 0.25
 _C.DUET_CONTEXT.TRANSITION_COMPARATOR_WEIGHT = 0.50
+# Use the same sample before/after Cycle 1 and learn the change in pairwise
+# evidence. A/B mirroring removes the extreme transition-direction prior.
+_C.DUET_CONTEXT.TRANSITION_TEMPORAL_DELTA_ENABLED = False
 # Exact cycle-boundary cache for repeated eval-only diagnostics. Saving and
 # resuming are opt-in and mutually exclusive; an existing cache is never
 # overwritten by the training code.

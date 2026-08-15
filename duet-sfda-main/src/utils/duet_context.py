@@ -1406,6 +1406,11 @@ def build_delayed_transition_supervision(
     current_task_view_probs: torch.Tensor,
     current_clip_view_probs: torch.Tensor,
     *,
+    current_task_features: Optional[torch.Tensor] = None,
+    current_clip_features: Optional[torch.Tensor] = None,
+    current_task_bank: Optional[ClassBalancedAnchorBank] = None,
+    current_clip_bank: Optional[ClassBalancedAnchorBank] = None,
+    temporal_delta: bool = False,
     num_classes: int,
     anchors_per_class: int,
     anchor_task_conf: float,
@@ -1430,6 +1435,15 @@ def build_delayed_transition_supervision(
         raise ValueError("min_view_agreement must be in [0.5, 1]")
     if int(min_per_direction) < 1:
         raise ValueError("min_per_direction must be >= 1")
+    if temporal_delta and (
+        current_task_features is None
+        or current_clip_features is None
+        or current_task_bank is None
+        or current_clip_bank is None
+    ):
+        raise ValueError(
+            "temporal transition supervision requires current features and banks"
+        )
     historical_task = historical_snapshot["task_probs"].detach().float().cpu()
     historical_clip = historical_snapshot["clip_probs"].detach().float().cpu()
     historical_task_feature = (
@@ -1485,6 +1499,10 @@ def build_delayed_transition_supervision(
             "raw_choose_b": 0,
             "balanced_per_direction": 0,
             "anchor_count": anchor_count,
+            "historical_task_bank": None,
+            "historical_clip_bank": None,
+            "temporal_delta": bool(temporal_delta),
+            "base_training_samples": 0,
             "ready": False,
         }
 
@@ -1551,7 +1569,7 @@ def build_delayed_transition_supervision(
         selected_positions if ready else torch.zeros(0, dtype=torch.long)
     )
     if training_positions.numel() > 0:
-        features = build_comparator_features(
+        historical_features = build_comparator_features(
             historical_task[training_positions],
             historical_clip[training_positions],
             historical_task_feature[training_positions],
@@ -1562,9 +1580,62 @@ def build_delayed_transition_supervision(
             class_b=candidate_b[training_positions],
             sim_topk=sim_topk,
         ).cpu()
-        balanced_targets = (
+        base_targets = (
             matured_label[training_positions] == candidate_b[training_positions]
         ).long()
+        if temporal_delta:
+            current_task_feature = (
+                current_task_features.detach().float().cpu()
+            )
+            current_clip_feature = (
+                current_clip_features.detach().float().cpu()
+            )
+            current_features = build_comparator_features(
+                current_task[training_positions],
+                current_clip[training_positions],
+                current_task_feature[training_positions],
+                current_clip_feature[training_positions],
+                current_task_bank,
+                current_clip_bank,
+                class_a=candidate_a[training_positions],
+                class_b=candidate_b[training_positions],
+                sim_topk=sim_topk,
+            ).cpu()
+            swapped_historical = build_comparator_features(
+                historical_task[training_positions],
+                historical_clip[training_positions],
+                historical_task_feature[training_positions],
+                historical_clip_feature[training_positions],
+                task_bank,
+                clip_bank,
+                class_a=candidate_b[training_positions],
+                class_b=candidate_a[training_positions],
+                sim_topk=sim_topk,
+            ).cpu()
+            swapped_current = build_comparator_features(
+                current_task[training_positions],
+                current_clip[training_positions],
+                current_task_feature[training_positions],
+                current_clip_feature[training_positions],
+                current_task_bank,
+                current_clip_bank,
+                class_a=candidate_b[training_positions],
+                class_b=candidate_a[training_positions],
+                sim_topk=sim_topk,
+            ).cpu()
+            features = torch.cat(
+                [
+                    current_features - historical_features,
+                    swapped_current - swapped_historical,
+                ],
+                dim=0,
+            )
+            balanced_targets = torch.cat(
+                [base_targets, 1 - base_targets], dim=0
+            )
+        else:
+            features = historical_features
+            balanced_targets = base_targets
     else:
         features = empty
         balanced_targets = empty_target
@@ -1583,6 +1654,10 @@ def build_delayed_transition_supervision(
         "anchor_count": anchor_count,
         "task_view_support": task_view_support,
         "clip_view_support": clip_view_support,
+        "historical_task_bank": task_bank,
+        "historical_clip_bank": clip_bank,
+        "temporal_delta": bool(temporal_delta),
+        "base_training_samples": int(training_positions.numel()),
         "ready": bool(ready),
     }
 
@@ -1596,6 +1671,7 @@ def fuse_transition_comparator_vote(
     *,
     comparator_weight: float,
     coverage_fraction: float,
+    comparator_valid_mask: Optional[torch.Tensor] = None,
 ) -> dict:
     """Fuse historical real-conflict learning with the current committee."""
     if not 0.0 <= float(comparator_weight) <= 1.0:
@@ -1605,6 +1681,17 @@ def fuse_transition_comparator_vote(
         raise ValueError("transition comparator vote must match committee rows")
     committee_q = committee["q"].detach().float().cpu()
     comparator_q = comparator_prob_a.detach().float().cpu()
+    if comparator_valid_mask is None:
+        comparator_valid = torch.ones(total, dtype=torch.bool)
+    else:
+        comparator_valid = comparator_valid_mask.detach().bool().cpu()
+        if comparator_valid.numel() != total:
+            raise ValueError(
+                "transition comparator validity mask must match committee rows"
+            )
+    # Out-of-domain rows (changed historical candidate pair) remain on the
+    # current multi-view committee instead of receiving temporal extrapolation.
+    comparator_q = torch.where(comparator_valid, comparator_q, committee_q)
     q = (
         (1.0 - float(comparator_weight)) * committee_q
         + float(comparator_weight) * comparator_q
@@ -1618,6 +1705,11 @@ def fuse_transition_comparator_vote(
         * source_agreement
         * (0.5 + 0.5 * direction_agreement)
     ).clamp(0.0, 1.0)
+    reliability = torch.where(
+        comparator_valid,
+        reliability,
+        committee["reliability"].detach().float().cpu(),
+    )
     selected_count = max(
         1, min(total, int(round(total * float(coverage_fraction))))
     )
@@ -1645,6 +1737,7 @@ def fuse_transition_comparator_vote(
             "reliability": reliability,
             "transition_q": comparator_q,
             "transition_committee_agreement": direction_agreement,
+            "transition_valid": comparator_valid,
         }
     )
     return fused
@@ -4491,6 +4584,13 @@ def run_comparator_refinement(
     transition_comparator_weight = float(
         getattr(context_cfg, "TRANSITION_COMPARATOR_WEIGHT", 0.50)
     )
+    transition_temporal_delta_enabled = bool(
+        getattr(
+            context_cfg,
+            "TRANSITION_TEMPORAL_DELTA_ENABLED",
+            False,
+        )
+    )
     if reliability_gate_enabled and conflict_memory_enabled:
         raise ValueError(
             "RELIABILITY_GATE_ENABLED and CONFLICT_MEMORY_ENABLED are exclusive"
@@ -4539,6 +4639,11 @@ def run_comparator_refinement(
         0.0 <= transition_comparator_weight <= 1.0
     ):
         raise ValueError("TRANSITION_COMPARATOR_WEIGHT must be in [0, 1]")
+    if transition_temporal_delta_enabled and not transition_supervision_enabled:
+        raise ValueError(
+            "TRANSITION_TEMPORAL_DELTA_ENABLED requires "
+            "TRANSITION_SUPERVISION_ENABLED"
+        )
     if conflict_memory_enabled and not 0.0 < conflict_memory_coverage <= 1.0:
         raise ValueError(
             "CONFLICT_MEMORY_COVERAGE_FRACTION must satisfy 0 < value <= 1"
@@ -4694,6 +4799,7 @@ def run_comparator_refinement(
     }
     reliability_gate_payload = {
         "active": torch.zeros(num_samples, dtype=torch.bool),
+        "loss_active": torch.zeros(num_samples, dtype=torch.bool),
         "switch": torch.zeros(num_samples, dtype=torch.bool),
         "target": clip_probs.detach().clone(),
         "candidate_a": torch.full((num_samples,), -1, dtype=torch.long),
@@ -4885,6 +4991,8 @@ def run_comparator_refinement(
         residual_router_logits = None
         transition_result = None
         transition_comparator_trained = False
+        transition_real_features = None
+        transition_valid_mask = None
         real_candidate_a = task_top1[strict_positions]
         real_candidate_b = clip_top1[strict_positions]
         if strict_positions.numel() > 0:
@@ -4977,6 +5085,11 @@ def run_comparator_refinement(
                     clip_probs,
                     task_transition_views,
                     clip_transition_views,
+                    current_task_features=task_features,
+                    current_clip_features=clip_features,
+                    current_task_bank=task_bank,
+                    current_clip_bank=clip_bank,
+                    temporal_delta=transition_temporal_delta_enabled,
                     num_classes=num_classes,
                     anchors_per_class=anchors_per_class,
                     anchor_task_conf=anchor_task_conf,
@@ -4992,12 +5105,79 @@ def run_comparator_refinement(
                     min_per_direction=transition_min_per_direction,
                     seed=seed,
                 )
+                transition_real_features = real_features
+                transition_valid_mask = torch.ones(
+                    strict_positions.numel(), dtype=torch.bool
+                )
+                if (
+                    transition_temporal_delta_enabled
+                    and transition_result["ready"]
+                ):
+                    historical_task = aligned_historical_snapshot[
+                        "task_probs"
+                    ].detach().float().cpu()
+                    historical_clip = aligned_historical_snapshot[
+                        "clip_probs"
+                    ].detach().float().cpu()
+                    historical_task_top1 = historical_task.argmax(dim=1)
+                    historical_clip_top1 = historical_clip.argmax(dim=1)
+                    current_a = real_candidate_a.detach().long().cpu()
+                    current_b = real_candidate_b.detach().long().cpu()
+                    historical_a = historical_task_top1[strict_positions]
+                    historical_b = historical_clip_top1[strict_positions]
+                    historical_conflict = historical_a != historical_b
+                    stable_pair = historical_conflict & (
+                        (
+                            (historical_a == current_a)
+                            & (historical_b == current_b)
+                        )
+                        | (
+                            (historical_a == current_b)
+                            & (historical_b == current_a)
+                        )
+                    )
+                    historical_real_features = build_comparator_features(
+                        historical_task[strict_positions],
+                        historical_clip[strict_positions],
+                        aligned_historical_snapshot["task_features"][
+                            strict_positions
+                        ],
+                        aligned_historical_snapshot["clip_features"][
+                            strict_positions
+                        ],
+                        transition_result["historical_task_bank"],
+                        transition_result["historical_clip_bank"],
+                        class_a=current_a,
+                        class_b=current_b,
+                        sim_topk=sim_topk,
+                    ).cpu()
+                    transition_real_features = (
+                        real_features.detach().float().cpu()
+                        - historical_real_features
+                    ).to(device)
+                    transition_valid_mask = stable_pair
+                    log_fn(
+                        "DUET temporal transition eligibility: cycle={}; "
+                        "current_conflicts={}; historical_conflicts={}; "
+                        "stable_candidate_pairs={}; stable_pair_coverage={:.2f}%; "
+                        "feature=post_cycle1_minus_pre_cycle1_16D; "
+                        "selection_uses_gt=False; ground_truth_affects_training=False".format(
+                            cycle,
+                            int(strict_positions.numel()),
+                            int(historical_conflict.sum().item()),
+                            int(stable_pair.sum().item()),
+                            100.0
+                            * int(stable_pair.sum().item())
+                            / max(int(strict_positions.numel()), 1),
+                        )
+                    )
                 log_fn(
                     "DUET delayed real-conflict supervision: cycle={}; "
                     "historical_conflicts={}; matured={}; matured_rate={:.2f}%; "
                     "raw_choose_a={}; raw_choose_b={}; "
                     "minority_direction_samples={}; train_samples={}; "
                     "historical_anchor_count={}; min_view_agreement={:.2f}; "
+                    "feature_mode={}; base_training_samples={}; "
                     "construction=pre_cycle1_conflict_to_post_cycle1_stable_agreement; "
                     "uses_current_conflict_gt=False; ground_truth_affects_training=False".format(
                         cycle,
@@ -5012,6 +5192,12 @@ def run_comparator_refinement(
                         transition_result["features"].size(0),
                         transition_result["anchor_count"],
                         transition_min_view_agreement,
+                        (
+                            "temporal_delta_16D_with_A_B_mirroring"
+                            if transition_result["temporal_delta"]
+                            else "historical_static_16D"
+                        ),
+                        transition_result["base_training_samples"],
                     )
                 )
                 if eval_only_logging and labels is not None and transition_result["matured"] > 0:
@@ -5034,6 +5220,8 @@ def run_comparator_refinement(
                     transition_features = transition_result["features"].to(device)
                     transition_targets = transition_result["targets"].to(device)
                     use_synthetic_regularizer = (
+                        not transition_temporal_delta_enabled
+                        and
                         transition_synthetic_mix_fraction > 0.0
                         and synthetic_features.size(0) >= 2
                     )
@@ -5074,7 +5262,7 @@ def run_comparator_refinement(
                         "optimizer_steps={}; real_transition_samples={}; "
                         "synthetic_regularizer_samples={}; synthetic_mix_fraction={:.2f}; "
                         "train_loss={}; supervision_distribution=historical_real_conflicts; "
-                        "sampling=direction_balanced_without_downsampling; "
+                        "sampling=direction_balanced_without_downsampling; feature_mode={}; "
                         "ground_truth_affects_training=False".format(
                             cycle,
                             transition_train_steps,
@@ -5088,6 +5276,11 @@ def run_comparator_refinement(
                             "none"
                             if transition_loss is None
                             else "{:.6f}".format(transition_loss),
+                            (
+                                "temporal_delta_16D_with_A_B_mirroring"
+                                if transition_temporal_delta_enabled
+                                else "historical_static_16D"
+                            ),
                         )
                     )
                 else:
@@ -5147,7 +5340,7 @@ def run_comparator_refinement(
                     comparator.eval()
                     with torch.no_grad():
                         transition_prob_a = F.softmax(
-                            comparator(real_features.detach()), dim=1
+                            comparator(transition_real_features.detach()), dim=1
                         )[:, 0].cpu()
                     gate_local = fuse_transition_comparator_vote(
                         gate_local,
@@ -5156,6 +5349,7 @@ def run_comparator_refinement(
                         clip_probs[strict_positions],
                         comparator_weight=transition_comparator_weight,
                         coverage_fraction=reliability_gate_coverage,
+                        comparator_valid_mask=transition_valid_mask,
                     )
                     gate_method = (
                         "candidate_committee_plus_delayed_real_conflict_comparator"
@@ -5167,6 +5361,7 @@ def run_comparator_refinement(
                         "DUET transition-comparator fusion: cycle={}; "
                         "current_conflicts={}; comparator_weight={:.2f}; "
                         "committee_weight={:.2f}; direction_agreement={:.2f}%; "
+                        "temporal_valid={}; temporal_valid_rate={:.2f}%; "
                         "coverage={:.2f}%; labels_used_for_fusion=False; "
                         "ground_truth_affects_training=False".format(
                             cycle,
@@ -5174,6 +5369,10 @@ def run_comparator_refinement(
                             transition_comparator_weight,
                             1.0 - transition_comparator_weight,
                             100.0 * transition_agreement,
+                            int(transition_valid_mask.sum().item()),
+                            100.0
+                            * int(transition_valid_mask.sum().item())
+                            / max(int(transition_valid_mask.numel()), 1),
                             100.0 * reliability_gate_coverage,
                         )
                     )
@@ -5184,6 +5383,16 @@ def run_comparator_refinement(
                 ):
                     reliability_gate_payload[key][strict_positions] = gate_local[key]
                 gate_active = gate_local["active"]
+                loss_active = gate_active.clone()
+                if bool(reliability_gate_payload["residual_pairwise"]):
+                    # CLIP already teaches candidate B. Only A-winning rows
+                    # contain a genuinely new direction for the Task model.
+                    loss_active &= gate_local["q"] >= 0.5
+                    if "transition_valid" in gate_local:
+                        loss_active &= gate_local["transition_valid"]
+                reliability_gate_payload["loss_active"][
+                    strict_positions
+                ] = loss_active
                 gate_count = int(gate_active.sum().item())
                 baseline_local = 0.5 * (
                     task_probs[strict_positions] + clip_probs[strict_positions]
@@ -5200,6 +5409,7 @@ def run_comparator_refinement(
                     "reliability_mean={:.4f}; source_agreement_mean={:.4f}; "
                     "effective_sample_equivalent={:.2f}; "
                     "switches_from_duet_fallback={}; "
+                    "novel_teacher_corrections={}; "
                     "method={}; "
                     "candidate_space=task_top1_vs_clip_top1; "
                     "hard_admission_changed=False; original_clip_kl_changed=False; "
@@ -5220,6 +5430,7 @@ def run_comparator_refinement(
                         ),
                         float(gate_local["weight"][gate_active].sum().item()),
                         int(switches.sum().item()),
+                        int(loss_active.sum().item()),
                         gate_method,
                     )
                 )

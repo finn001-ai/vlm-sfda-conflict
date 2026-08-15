@@ -289,7 +289,8 @@ def conflict_memory_pairwise_loss(
     if payload is None:
         return logits.sum() * 0.0
     indices = batch_indices.detach().long().to(logits.device)
-    active = payload["active"][indices].bool()
+    active_source = payload.get("loss_active", payload["active"])
+    active = active_source[indices].bool()
     if int(active.sum().item()) == 0:
         return logits.sum() * 0.0
     rows = torch.nonzero(active, as_tuple=False).flatten()
@@ -1063,7 +1064,9 @@ def train_target(
             )
         )
         if conflict_training_payload is not None:
-            conflict_active_cpu = conflict_training_payload["active"].bool().cpu()
+            conflict_active_cpu = conflict_training_payload.get(
+                "loss_active", conflict_training_payload["active"]
+            ).bool().cpu()
             conflict_weight_cpu = conflict_training_payload["weight"].float().cpu()
             conflict_unique_seen = torch.zeros_like(conflict_active_cpu)
             conflict_training_payload = {
@@ -1562,6 +1565,9 @@ def obtain_label(
     )
     if reliability_gate_enabled:
         gate_active = reliability_gate_training_payload["active"].bool()
+        gate_loss_active = reliability_gate_training_payload.get(
+            "loss_active", gate_active
+        ).bool()
         gate_switch = reliability_gate_training_payload["switch"].bool()
         residual_pairwise = bool(
             reliability_gate_training_payload.get("residual_pairwise", False)
@@ -1571,12 +1577,12 @@ def obtain_label(
                 reliability_gate_training_payload["q"]
                 - reliability_gate_training_payload["baseline_q"]
             ).abs()
-            residual_changed = gate_active & (residual_delta > 1e-6)
+            residual_changed = gate_loss_active & (residual_delta > 1e-6)
             mean_abs_residual = float(
-                residual_delta[gate_active].mean().item()
+                residual_delta[gate_loss_active].mean().item()
             )
         else:
-            residual_changed = gate_active
+            residual_changed = gate_loss_active
             mean_abs_residual = float("nan")
         logging.info(
             "DUET candidate-committee auxiliary target: cycle={}; evaluated_pool={}; "
@@ -1588,7 +1594,7 @@ def obtain_label(
                 curr_cycle + 1,
                 int(gate_active.sum().item()),
                 int(gate_switch.sum().item()),
-                int(gate_active.sum().item()),
+                int(gate_loss_active.sum().item()),
                 float(context_cfg.RELIABILITY_GATE_LOSS_WEIGHT),
                 "clip_kl_residual" if residual_pairwise else "full_soft_ce",
                 int(residual_changed.sum().item()),

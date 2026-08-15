@@ -136,6 +136,7 @@ def make_context_cfg(**overrides):
         TRANSITION_TRAIN_STEPS=20,
         TRANSITION_SYNTHETIC_MIX_FRACTION=0.25,
         TRANSITION_COMPARATOR_WEIGHT=0.50,
+        TRANSITION_TEMPORAL_DELTA_ENABLED=False,
         AGREEMENT_AMBIGUITY_EVAL_ENABLED=False,
         AGREEMENT_AMBIGUITY_FRACTIONS=[10, 25, 50, 100],
         AGREEMENT_COMPARATOR_PROBE_ENABLED=False,
@@ -176,13 +177,15 @@ class AnchorBankTest(unittest.TestCase):
         current_clip /= current_clip.sum(dim=1, keepdim=True)
         views_task = current_task.unsqueeze(0).repeat(4, 1, 1)
         views_clip = current_clip.unsqueeze(0).repeat(4, 1, 1)
+        historical_task_features = torch.randn(n, d)
+        historical_clip_features = torch.randn(n, d)
         snapshot = {
             "task_probs": historical_task,
             "clip_probs": historical_clip,
             "pre_prior_task_probs": historical_task,
             "pre_prior_clip_probs": historical_clip,
-            "task_features": torch.randn(n, d),
-            "clip_features": torch.randn(n, d),
+            "task_features": historical_task_features,
+            "clip_features": historical_clip_features,
         }
         result = build_delayed_transition_supervision(
             snapshot,
@@ -209,6 +212,53 @@ class AnchorBankTest(unittest.TestCase):
         self.assertEqual(result["features"].shape, (8, 16))
         self.assertEqual(int((result["targets"] == 0).sum()), 4)
         self.assertEqual(int((result["targets"] == 1).sum()), 4)
+
+        current_task_features = historical_task_features + 0.2 * torch.randn(n, d)
+        current_clip_features = historical_clip_features + 0.2 * torch.randn(n, d)
+        task_bank = ClassBalancedAnchorBank(c, 2, d)
+        clip_bank = ClassBalancedAnchorBank(c, 2, d)
+        current_anchor_rows = torch.arange(8, 12)
+        current_anchor_labels = current_task.argmax(dim=1)[current_anchor_rows]
+        task_bank.update(
+            current_task_features[current_anchor_rows],
+            current_anchor_labels,
+            torch.ones(4),
+        )
+        clip_bank.update(
+            current_clip_features[current_anchor_rows],
+            current_anchor_labels,
+            torch.ones(4),
+        )
+        temporal = build_delayed_transition_supervision(
+            snapshot,
+            current_task,
+            current_clip,
+            views_task,
+            views_clip,
+            current_task_features=current_task_features,
+            current_clip_features=current_clip_features,
+            current_task_bank=task_bank,
+            current_clip_bank=clip_bank,
+            temporal_delta=True,
+            num_classes=c,
+            anchors_per_class=2,
+            anchor_task_conf=0.90,
+            anchor_clip_conf=0.90,
+            anchor_task_entropy=0.40,
+            anchor_clip_entropy=0.40,
+            entropy_weight=1.0,
+            require_pre_post_prior_agreement=True,
+            sim_topk=2,
+            min_view_agreement=0.75,
+            min_per_direction=2,
+            seed=2020,
+        )
+        self.assertEqual(temporal["base_training_samples"], 8)
+        self.assertEqual(temporal["features"].shape, (16, 16))
+        self.assertEqual(int((temporal["targets"] == 0).sum()), 8)
+        self.assertEqual(int((temporal["targets"] == 1).sum()), 8)
+        self.assertTrue(temporal["temporal_delta"])
+        self.assertIsNotNone(temporal["historical_task_bank"])
 
     def test_delayed_transition_supervision_keeps_imbalanced_majority(self):
         n, c, d = 14, 3, 5
@@ -297,6 +347,23 @@ class AnchorBankTest(unittest.TestCase):
         self.assertTrue(torch.allclose(fused["target"].sum(dim=1), torch.ones(4)))
         self.assertEqual(fused["transition_committee_agreement"].tolist(), [1.0, 1.0, 0.0, 0.0])
 
+        masked = fuse_transition_comparator_vote(
+            committee,
+            torch.tensor([0.9, 0.1, 0.2, 0.8]),
+            weak_task,
+            weak_clip,
+            comparator_weight=0.5,
+            coverage_fraction=0.5,
+            comparator_valid_mask=torch.tensor([True, True, False, False]),
+        )
+        self.assertEqual(
+            masked["transition_valid"].tolist(),
+            [True, True, False, False],
+        )
+        self.assertTrue(
+            torch.allclose(masked["q"][2:], committee["q"][2:])
+        )
+
     def test_transition_supervision_runs_before_current_committee(self):
         torch.manual_seed(44)
         n, c, d = 40, 3, 8
@@ -347,6 +414,7 @@ class AnchorBankTest(unittest.TestCase):
                 RELIABILITY_GATE_NUM_VIEWS=4,
                 RELIABILITY_GATE_COVERAGE_FRACTION=0.80,
                 TRANSITION_SUPERVISION_ENABLED=True,
+                TRANSITION_TEMPORAL_DELTA_ENABLED=True,
                 TRANSITION_TRAIN_STEPS=3,
                 TRANSITION_MIN_PER_DIRECTION=2,
                 TRAIN_STEPS_PER_CYCLE=0,
@@ -371,8 +439,24 @@ class AnchorBankTest(unittest.TestCase):
             log_fn=logs.append,
         )
         self.assertEqual(int(result["reliability_gate"]["active"].sum()), 6)
+        loss_active = result["reliability_gate"]["loss_active"]
+        self.assertTrue(
+            bool((~loss_active | result["reliability_gate"]["active"]).all())
+        )
+        self.assertTrue(
+            bool(
+                (
+                    ~loss_active
+                    | (result["reliability_gate"]["q"] >= 0.5)
+                ).all()
+            )
+        )
         self.assertTrue(any("DUET transition comparator training:" in line for line in logs))
         self.assertTrue(any("DUET transition-comparator fusion:" in line for line in logs))
+        self.assertTrue(any("DUET temporal transition eligibility:" in line for line in logs))
+        self.assertTrue(
+            any("temporal_delta_16D_with_A_B_mirroring" in line for line in logs)
+        )
 
     def test_reliability_gate_preserves_full_distribution_and_fixed_coverage(self):
         torch.manual_seed(31)
