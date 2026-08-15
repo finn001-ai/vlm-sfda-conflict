@@ -10,6 +10,7 @@ seed=2020
 proxy_list="data/VISDA-C/validation_proxy25_seed2020_list.txt"
 method="duet_first_cycle_prior_context_transformer_gt_feature_probe_visda_proxy25_seed${seed}"
 run_dir="output/uda/VISDA-C/TV/${method}"
+cycle1_checkpoint="output/checkpoints/duet_fcp_context_visda_proxy25_seed2020_cycle1.pt"
 
 for path in \
   data/VISDA-C/train_list.txt \
@@ -64,14 +65,33 @@ case "$run_dir" in
 esac
 rm -rf -- "$run_dir"
 
-echo "==> VisDA-C proxy25 real-conflict 16D GT feature probe, 2 cycles, seed=${seed}"
+checkpoint_args=()
+if [ -f "$cycle1_checkpoint" ]; then
+  echo "==> Reusing exact Cycle-1 checkpoint: ${cycle1_checkpoint}"
+  checkpoint_args=(
+    DUET_CONTEXT.CYCLE_CHECKPOINT_RESUME_PATH "$cycle1_checkpoint"
+  )
+  expected_task_checkpoints=4
+  expected_checkpoint_log="DUET cycle checkpoint resumed:"
+else
+  echo "==> Cycle-1 checkpoint absent; this run will create it once"
+  checkpoint_args=(
+    DUET_CONTEXT.CYCLE_CHECKPOINT_SAVE_PATH "$cycle1_checkpoint"
+    DUET_CONTEXT.CYCLE_CHECKPOINT_SAVE_AFTER 1
+  )
+  expected_task_checkpoints=8
+  expected_checkpoint_log="DUET cycle checkpoint saved:"
+fi
+
+echo "==> VisDA-C proxy25 real-conflict 16D/20D GT feature probe, target cycle=2, seed=${seed}"
 python image_target_of_oh_vs.py \
   --cfg cfgs/visda/duet_first_cycle_prior_context_transformer.yaml \
   CKPT_DIR . SETTING.OUTPUT_SRC source \
   MODEL.METHOD "$method" \
   SETTING.SEED "$seed" SETTING.S 0 SETTING.T 1 \
   ACTIVE.CYCLE 2 \
-  ACTIVE.ADAPTATION_LIST "$proxy_list"
+  ACTIVE.ADAPTATION_LIST "$proxy_list" \
+  "${checkpoint_args[@]}"
 
 logs=("$run_dir"/*.txt)
 if [ "${#logs[@]}" -ne 1 ]; then
@@ -80,6 +100,14 @@ if [ "${#logs[@]}" -ne 1 ]; then
 fi
 if ! grep -q "PLMatch adaptation proxy list: ${proxy_list}; adaptation_samples=${proxy_samples}; full_evaluation_samples=${full_samples}" "${logs[0]}"; then
   echo "VisDA-C run did not use the locked proxy25 adaptation list" >&2
+  exit 1
+fi
+if ! grep -q "$expected_checkpoint_log.*completed_cycles=1; next_cycle=2" "${logs[0]}"; then
+  echo "VisDA-C run did not satisfy the expected Cycle-1 checkpoint contract" >&2
+  exit 1
+fi
+if [ ! -s "$cycle1_checkpoint" ]; then
+  echo "Cycle-1 checkpoint is missing or empty after the run" >&2
   exit 1
 fi
 if [ "$(grep -c "DUET real-conflict GT feature probe summary eval-only: cycle=2" "${logs[0]}")" -ne 1 ]; then
@@ -98,8 +126,8 @@ if ! grep -q "DUET comparator selection: cycle=2; mode=rank_coverage;.*requested
   echo "VisDA-C probe did not preserve fixed 20% formal admission" >&2
   exit 1
 fi
-if [ "$(grep -c "Task: TV" "${logs[0]}")" -ne 8 ]; then
-  echo "VisDA-C probe did not finish 2 cycles / 8 checkpoints" >&2
+if [ "$(grep -c "Task: TV" "${logs[0]}")" -ne "$expected_task_checkpoints" ]; then
+  echo "VisDA-C probe emitted an unexpected number of task checkpoints" >&2
   exit 1
 fi
 

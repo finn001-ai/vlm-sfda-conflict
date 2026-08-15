@@ -21,6 +21,9 @@ Builds upon: https://github.com/tim-learn/SHOT
 Corresponding paper: http://proceedings.mlr.press/v119/liang20a/liang20a.pdf
 """
 
+import hashlib
+from pathlib import Path
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -46,8 +49,207 @@ from src.utils.duet_context import (
     PairwiseConflictComparator,
     run_context_refinement,
 )
+from src.utils.duet_cycle_checkpoint import (
+    capture_process_rng_state,
+    load_cycle_checkpoint,
+    restore_process_rng_state,
+    save_cycle_checkpoint,
+    validate_cycle_checkpoint_contract,
+)
 
 logger = logging.getLogger(__name__)
+
+
+_CYCLE_CHECKPOINT_ALGORITHM = "duet_fcp_context_cycle_boundary_v1"
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        while True:
+            chunk = stream.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _cycle_checkpoint_contract(cfg):
+    """Settings that can change the state produced at the end of Cycle 1."""
+    adaptation_override = str(cfg.ACTIVE.ADAPTATION_LIST).strip()
+    adaptation_path = adaptation_override or str(cfg.t_dset_path)
+    return {
+        "algorithm": _CYCLE_CHECKPOINT_ALGORITHM,
+        "dataset": str(cfg.SETTING.DATASET),
+        "source_domain": int(cfg.SETTING.S),
+        "target_domain": int(cfg.SETTING.T),
+        "seed": int(cfg.SETTING.SEED),
+        "adaptation_list_sha256": _sha256_file(adaptation_path),
+        "model_arch": str(cfg.MODEL.ARCH),
+        "clip_arch": str(cfg.ACTIVE.ARCH),
+        "class_num": int(cfg.class_num),
+        "bottleneck": int(cfg.bottleneck),
+        "batch_size": int(cfg.TEST.BATCH_SIZE),
+        "max_epoch": int(cfg.TEST.MAX_EPOCH),
+        "optim_lr": float(cfg.OPTIM.LR),
+        "optim_lr_decay1": float(cfg.OPTIM.LR_DECAY1),
+        "optim_lr_decay2": float(cfg.OPTIM.LR_DECAY2),
+        "optim_weight_decay": float(cfg.OPTIM.WD),
+        "optim_momentum": float(cfg.OPTIM.MOMENTUM),
+        "optim_nesterov": bool(cfg.OPTIM.NESTEROV),
+        "clip_fine_lr": float(cfg.ACTIVE.FINE_LR),
+        "initial_q_value": float(cfg.ACTIVE.Q_VALUE),
+        "beta": float(cfg.ACTIVE.BETA),
+        "cls_weight": float(cfg.ACTIVE.CLS_PAR),
+        "consistency_weight": float(cfg.ACTIVE.CON_PAR),
+        "kl_weight": float(cfg.ACTIVE.KL_PAR),
+        "first_cycle_prior_power": float(cfg.DUET_FCP.POWER),
+        "first_cycle_prior_epsilon": float(cfg.ACTIVE.EPSILON),
+        "context_enabled": bool(cfg.DUET_CONTEXT.ENABLED),
+        "context_active_cycles": [
+            int(value) for value in cfg.DUET_CONTEXT.ACTIVE_CYCLES
+        ],
+        "context_refiner": str(cfg.DUET_CONTEXT.REFINER_TYPE),
+        "comparator_hidden": int(cfg.DUET_CONTEXT.COMPARATOR_HIDDEN),
+        "comparator_layers": int(cfg.DUET_CONTEXT.COMPARATOR_LAYERS),
+        "context_dropout": float(cfg.DUET_CONTEXT.DROPOUT),
+        "context_lr": float(cfg.DUET_CONTEXT.LR),
+        "context_weight_decay": float(cfg.DUET_CONTEXT.WEIGHT_DECAY),
+        "replay_per_direction": int(cfg.DUET_CONTEXT.REPLAY_PER_DIRECTION),
+    }
+
+
+def _cycle_checkpoint_payload(
+    *,
+    contract,
+    completed_cycles,
+    netF,
+    netB,
+    netC,
+    optimizer,
+    clip_model,
+    clip_optimizer,
+    prev_label_mask,
+    q_value,
+    context_transformer,
+    context_optimizer,
+    context_comparator,
+    context_comparator_optimizer,
+    context_replay_memory,
+):
+    replay_state = None
+    if context_replay_memory is not None:
+        replay_state = {
+            "task_features": context_replay_memory.task_features.detach().cpu(),
+            "clip_features": context_replay_memory.clip_features.detach().cpu(),
+        }
+    return {
+        "contract": contract,
+        "completed_cycles": int(completed_cycles),
+        "netF": netF.state_dict(),
+        "netB": netB.state_dict(),
+        "netC": netC.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        # Text parameters are frozen and deterministically reloaded from CLIP;
+        # only the adapted visual branch and its Adam state need caching.
+        "clip_visual": clip_model.visual.state_dict(),
+        "clip_optimizer": clip_optimizer.state_dict(),
+        "prev_label_mask": (
+            prev_label_mask.detach().bool().cpu()
+            if prev_label_mask is not None
+            else None
+        ),
+        "q_value": q_value,
+        "context_transformer": (
+            context_transformer.state_dict()
+            if context_transformer is not None
+            else None
+        ),
+        "context_optimizer": (
+            context_optimizer.state_dict()
+            if context_optimizer is not None
+            else None
+        ),
+        "context_comparator": (
+            context_comparator.state_dict()
+            if context_comparator is not None
+            else None
+        ),
+        "context_comparator_optimizer": (
+            context_comparator_optimizer.state_dict()
+            if context_comparator_optimizer is not None
+            else None
+        ),
+        "context_replay_memory": replay_state,
+        # Capture this last: it is the exact process state immediately before
+        # entering the next cycle. torch.save itself performs no sampling.
+        "rng_state": capture_process_rng_state(),
+    }
+
+
+def _restore_cycle_checkpoint(
+    payload,
+    *,
+    expected_contract,
+    netF,
+    netB,
+    netC,
+    optimizer,
+    clip_model,
+    clip_optimizer,
+    context_transformer,
+    context_optimizer,
+    context_comparator,
+    context_comparator_optimizer,
+    context_replay_memory,
+):
+    validate_cycle_checkpoint_contract(payload.get("contract", {}), expected_contract)
+    netF.load_state_dict(payload["netF"])
+    netB.load_state_dict(payload["netB"])
+    netC.load_state_dict(payload["netC"])
+    optimizer.load_state_dict(payload["optimizer"])
+    clip_model.visual.load_state_dict(payload["clip_visual"])
+    clip_optimizer.load_state_dict(payload["clip_optimizer"])
+
+    module_pairs = (
+        ("context_transformer", context_transformer),
+        ("context_comparator", context_comparator),
+    )
+    optimizer_pairs = (
+        ("context_optimizer", context_optimizer),
+        ("context_comparator_optimizer", context_comparator_optimizer),
+    )
+    for key, module in module_pairs:
+        saved_state = payload.get(key)
+        if (module is None) != (saved_state is None):
+            raise ValueError("cycle checkpoint module mismatch: {}".format(key))
+        if module is not None:
+            module.load_state_dict(saved_state)
+    for key, current_optimizer in optimizer_pairs:
+        saved_state = payload.get(key)
+        if (current_optimizer is None) != (saved_state is None):
+            raise ValueError("cycle checkpoint optimizer mismatch: {}".format(key))
+        if current_optimizer is not None:
+            current_optimizer.load_state_dict(saved_state)
+
+    saved_replay = payload.get("context_replay_memory")
+    if (context_replay_memory is None) != (saved_replay is None):
+        raise ValueError("cycle checkpoint replay-memory mismatch")
+    if context_replay_memory is not None:
+        context_replay_memory.task_features = saved_replay["task_features"].to(
+            context_replay_memory.device
+        )
+        context_replay_memory.clip_features = saved_replay["clip_features"].to(
+            context_replay_memory.device
+        )
+
+    completed_cycles = int(payload["completed_cycles"])
+    prev_label_mask = payload.get("prev_label_mask")
+    q_value = payload["q_value"]
+    # Restore RNG only after every module/optimizer load; no initialization or
+    # checkpoint deserialization is allowed to perturb the resumed trajectory.
+    restore_process_rng_state(payload["rng_state"])
+    return completed_cycles, prev_label_mask, q_value
 
 
 def op_copy(optimizer):
@@ -336,6 +538,22 @@ def train_target(
         cfg.DUET_CONTEXT.NUM_HEADS
     ) != 0:
         raise ValueError("DUET_CONTEXT.MODEL_DIM must be divisible by NUM_HEADS")
+    cycle_checkpoint_save_path = str(
+        getattr(cfg.DUET_CONTEXT, "CYCLE_CHECKPOINT_SAVE_PATH", "")
+    ).strip()
+    cycle_checkpoint_resume_path = str(
+        getattr(cfg.DUET_CONTEXT, "CYCLE_CHECKPOINT_RESUME_PATH", "")
+    ).strip()
+    cycle_checkpoint_save_after = int(
+        getattr(cfg.DUET_CONTEXT, "CYCLE_CHECKPOINT_SAVE_AFTER", 1)
+    )
+    if cycle_checkpoint_save_path and cycle_checkpoint_resume_path:
+        raise ValueError(
+            "CYCLE_CHECKPOINT_SAVE_PATH and CYCLE_CHECKPOINT_RESUME_PATH "
+            "are mutually exclusive"
+        )
+    if cycle_checkpoint_save_after < 1:
+        raise ValueError("CYCLE_CHECKPOINT_SAVE_AFTER must be >= 1")
 
     logging.info(
         "DUET first-cycle prior: enabled=True; power={:.3f}".format(
@@ -431,6 +649,7 @@ def train_target(
     context_optimizer = None
     context_comparator = None
     context_comparator_optimizer = None
+    context_replay_memory = None
     if context_enabled and context_refiner != "comparator":
         context_transformer = DuetContextConflictTransformer(
             feature_dim=int(cfg.bottleneck),
@@ -490,9 +709,43 @@ def train_target(
             device=next(context_comparator.parameters()).device,
         )
 
-    curr_cycle = 0
     # office-home : 1.0 / VisDA-C : 1.05
+    curr_cycle = 0
     q_value = cfg.ACTIVE.Q_VALUE
+    checkpoint_contract = _cycle_checkpoint_contract(cfg)
+    if cycle_checkpoint_resume_path:
+        checkpoint_payload = load_cycle_checkpoint(
+            cycle_checkpoint_resume_path
+        )
+        curr_cycle, prev_label_mask, q_value = _restore_cycle_checkpoint(
+            checkpoint_payload,
+            expected_contract=checkpoint_contract,
+            netF=netF,
+            netB=netB,
+            netC=netC,
+            optimizer=optimizer,
+            clip_model=clip_model,
+            clip_optimizer=clip_optimizer,
+            context_transformer=context_transformer,
+            context_optimizer=context_optimizer,
+            context_comparator=context_comparator,
+            context_comparator_optimizer=context_comparator_optimizer,
+            context_replay_memory=context_replay_memory,
+        )
+        if curr_cycle < 1 or curr_cycle >= int(cfg.ACTIVE.CYCLE):
+            raise ValueError(
+                "cycle checkpoint completed_cycles={} is incompatible with "
+                "ACTIVE.CYCLE={}".format(curr_cycle, int(cfg.ACTIVE.CYCLE))
+            )
+        logging.info(
+            "DUET cycle checkpoint resumed: path={}; completed_cycles={}; "
+            "next_cycle={}; rng_restored=True; optimizer_state_restored=True; "
+            "label_memory_restored=True".format(
+                cycle_checkpoint_resume_path,
+                curr_cycle,
+                curr_cycle + 1,
+            )
+        )
     print("train_clip")
     while curr_cycle < cfg.ACTIVE.CYCLE:
         iter_num = 0
@@ -593,6 +846,39 @@ def train_target(
                 netF.train()
                 netB.train()
         curr_cycle += 1
+        if (
+            cycle_checkpoint_save_path
+            and curr_cycle == cycle_checkpoint_save_after
+        ):
+            checkpoint_payload = _cycle_checkpoint_payload(
+                contract=checkpoint_contract,
+                completed_cycles=curr_cycle,
+                netF=netF,
+                netB=netB,
+                netC=netC,
+                optimizer=optimizer,
+                clip_model=clip_model,
+                clip_optimizer=clip_optimizer,
+                prev_label_mask=prev_label_mask,
+                q_value=q_value,
+                context_transformer=context_transformer,
+                context_optimizer=context_optimizer,
+                context_comparator=context_comparator,
+                context_comparator_optimizer=context_comparator_optimizer,
+                context_replay_memory=context_replay_memory,
+            )
+            saved_path = save_cycle_checkpoint(
+                cycle_checkpoint_save_path, checkpoint_payload
+            )
+            logging.info(
+                "DUET cycle checkpoint saved: path={}; completed_cycles={}; "
+                "next_cycle={}; rng_captured=True; optimizer_state_saved=True; "
+                "label_memory_saved=True".format(
+                    saved_path,
+                    curr_cycle,
+                    curr_cycle + 1,
+                )
+            )
 
     return netF, netB, netC
 
