@@ -19,6 +19,7 @@ from src.utils.duet_context import (
     ComparatorReplayMemory,
     DuetContextConflictTransformer,
     PairwiseConflictComparator,
+    PersistentConflictBeliefMemory,
     apply_pairwise_decision,
     apply_decision_rules,
     apply_weak_verification,
@@ -116,6 +117,10 @@ def make_context_cfg(**overrides):
         REAL_MULTIVIEW_FINETUNE_STEPS=10,
         REAL_MULTIVIEW_TEMPERATURE=0.50,
         REAL_MULTIVIEW_SYNTHETIC_MIX_FRACTION=0.25,
+        CONFLICT_MEMORY_ENABLED=False,
+        CONFLICT_MEMORY_COVERAGE_FRACTION=0.80,
+        CONFLICT_MEMORY_LOSS_WEIGHT=0.10,
+        CONFLICT_MEMORY_TEMPERATURE=0.50,
         AGREEMENT_AMBIGUITY_EVAL_ENABLED=False,
         AGREEMENT_AMBIGUITY_FRACTIONS=[10, 25, 50, 100],
         AGREEMENT_COMPARATOR_PROBE_ENABLED=False,
@@ -132,6 +137,33 @@ def make_context_cfg(**overrides):
 
 
 class AnchorBankTest(unittest.TestCase):
+    def test_persistent_conflict_memory_accumulates_and_resets_changed_pair(self):
+        memory = PersistentConflictBeliefMemory()
+        first = memory.update(
+            torch.tensor([10, 11]),
+            torch.tensor([1, 2]),
+            torch.tensor([3, 4]),
+            torch.tensor([0.80, 0.20]),
+            torch.ones(2),
+            cycle=2,
+            coverage_fraction=0.50,
+        )
+        self.assertEqual(int(first["active"].sum().item()), 1)
+        self.assertTrue(torch.equal(first["observations"], torch.ones(2).long()))
+        second = memory.update(
+            torch.tensor([10, 11]),
+            torch.tensor([1, 4]),
+            torch.tensor([3, 2]),
+            torch.tensor([0.90, 0.80]),
+            torch.ones(2),
+            cycle=3,
+            coverage_fraction=1.0,
+        )
+        self.assertEqual(int(second["observations"][0].item()), 2)
+        self.assertAlmostEqual(float(second["q"][0].item()), 0.85, places=6)
+        self.assertEqual(int(second["observations"][1].item()), 1)
+        self.assertEqual(second["pair_resets"], 1)
+
     def test_01_each_class_keeps_at_most_k(self):
         bank = ClassBalancedAnchorBank(num_classes=4, anchors_per_class=3, feature_dim=8)
         feats = torch.randn(100, 8)
@@ -1673,6 +1705,8 @@ class ComparatorTest(unittest.TestCase):
                 REAL_MULTIVIEW_ENABLED=True,
                 REAL_MULTIVIEW_TRAIN_FRACTION=0.60,
                 REAL_MULTIVIEW_FINETUNE_STEPS=5,
+                CONFLICT_MEMORY_ENABLED=True,
+                CONFLICT_MEMORY_COVERAGE_FRACTION=0.80,
             ),
             pre_prior_task_probs=task_prob, pre_prior_clip_probs=clip_prob,
             labels=true_label, sample_indices=torch.arange(n),
@@ -1680,6 +1714,7 @@ class ComparatorTest(unittest.TestCase):
             strong_task_probs=strong_task, strong_clip_probs=strong_clip,
             strong_task_features=feat, strong_clip_features=clip_feat,
             comparator=model, comparator_optimizer=optimizer,
+            conflict_belief_memory=PersistentConflictBeliefMemory(),
             cycle=2, log_fn=logs.append,
         )
         resolved = result["resolved_mask"]
@@ -1704,6 +1739,12 @@ class ComparatorTest(unittest.TestCase):
         )
         self.assertIn("train_coverage=", multiview_log)
         self.assertIn("construction_uses_gt=False", multiview_log)
+        conflict_total = int(result["strict_conflict_mask"].sum().item())
+        memory_active = int(result["conflict_memory"]["active"].sum().item())
+        self.assertEqual(memory_active, round(0.80 * conflict_total))
+        self.assertTrue(
+            any("DUET persistent conflict memory" in line for line in logs)
+        )
 
     def test_residual_soft_pipeline_uses_fallback_vs_challenger_without_hard_delta(self):
         torch.manual_seed(23)
@@ -1731,7 +1772,7 @@ class ComparatorTest(unittest.TestCase):
                 REAL_MULTIVIEW_ENABLED=True,
                 REAL_MULTIVIEW_RESIDUAL_FALLBACK=True,
                 REAL_MULTIVIEW_TRAIN_FRACTION=0.60,
-                REAL_MULTIVIEW_FINETUNE_STEPS=5,
+                REAL_MULTIVIEW_FINETUNE_STEPS=0,
                 REAL_MULTIVIEW_SYNTHETIC_MIX_FRACTION=0.0,
                 SOFT_ONLY_ADMISSION=True,
             ),
@@ -1769,12 +1810,21 @@ class ComparatorTest(unittest.TestCase):
         self.assertTrue(
             ((chosen == fallback[resolved]) | (chosen == challenger[resolved])).all()
         )
+        kept = resolved & (result["context_labels"] == fallback)
+        if int(kept.sum().item()) > 0:
+            self.assertTrue(
+                torch.equal(result["refined_targets"][kept], clip_prob[kept])
+            )
         self.assertEqual(result["stats"]["admitted_delta"], 0)
+        self.assertEqual(result["stats"]["optimizer_steps_this_cycle"], 0)
         self.assertTrue(
             any("candidate_a=duet_fallback" in line for line in logs)
         )
         self.assertTrue(
             any("residual_fallback=True" in line for line in logs)
+        )
+        self.assertTrue(
+            any("router=direct_strong_neighborhood_evidence" in line for line in logs)
         )
         self.assertTrue(
             any("DUET comparator real-conflict distribution" in line for line in logs)

@@ -2133,6 +2133,137 @@ class ComparatorReplayMemory:
         return self
 
 
+class PersistentConflictBeliefMemory:
+    """Per-image GT-free soft belief for Task-vs-CLIP candidates.
+
+    History is accumulated only while the ordered pair remains exactly
+    ``A=Task Top1, B=CLIP Top1``. A changed pair resets that image's record,
+    so probabilities with different candidate semantics are never averaged.
+    """
+
+    def __init__(self) -> None:
+        self.records = {}
+
+    def state_dict(self) -> dict:
+        return copy.deepcopy(self.records)
+
+    def load_state_dict(self, state: Optional[dict]) -> None:
+        self.records = copy.deepcopy(state or {})
+
+    @torch.no_grad()
+    def update(
+        self,
+        sample_indices: torch.Tensor,
+        candidate_a: torch.Tensor,
+        candidate_b: torch.Tensor,
+        current_q: torch.Tensor,
+        view_reliability: torch.Tensor,
+        *,
+        cycle: int,
+        coverage_fraction: float,
+    ) -> dict:
+        """Update memory and select a fixed reliability-ranked conflict pool."""
+        total = int(sample_indices.numel())
+        tensors = (candidate_a, candidate_b, current_q, view_reliability)
+        if any(tensor.shape != (total,) for tensor in tensors):
+            raise ValueError("conflict-memory inputs must all have shape [N]")
+        if not 0.0 < float(coverage_fraction) <= 1.0:
+            raise ValueError(
+                "CONFLICT_MEMORY_COVERAGE_FRACTION must satisfy 0 < value <= 1"
+            )
+        sample_indices = sample_indices.detach().long().cpu()
+        if sample_indices.unique().numel() != total:
+            raise ValueError("conflict-memory sample_indices must be unique")
+        candidate_a = candidate_a.detach().long().cpu()
+        candidate_b = candidate_b.detach().long().cpu()
+        current_q = current_q.detach().float().cpu().clamp(0.0, 1.0)
+        view_reliability = (
+            view_reliability.detach().float().cpu().clamp(0.0, 1.0)
+        )
+
+        memory_q = torch.zeros(total, dtype=torch.float32)
+        weights = torch.zeros(total, dtype=torch.float32)
+        observations = torch.zeros(total, dtype=torch.long)
+        temporal_reliability = torch.ones(total, dtype=torch.float32)
+        reset_count = 0
+        for row in range(total):
+            sample_id = int(sample_indices[row].item())
+            a = int(candidate_a[row].item())
+            b = int(candidate_b[row].item())
+            q_now = float(current_q[row].item())
+            view_now = float(view_reliability[row].item())
+            direction_now = int(q_now < 0.5)
+            record = self.records.get(sample_id)
+            same_pair = bool(
+                record is not None
+                and int(record["candidate_a"]) == a
+                and int(record["candidate_b"]) == b
+                and int(record["last_cycle"]) == int(cycle) - 1
+            )
+            if not same_pair:
+                if record is not None:
+                    reset_count += 1
+                record = {
+                    "candidate_a": a,
+                    "candidate_b": b,
+                    "q_mean": q_now,
+                    "view_mean": view_now,
+                    "observations": 1,
+                    "direction_matches": 0,
+                    "last_direction": direction_now,
+                    "last_cycle": int(cycle),
+                }
+            else:
+                old_n = int(record["observations"])
+                record["q_mean"] = (
+                    old_n * float(record["q_mean"]) + q_now
+                ) / float(old_n + 1)
+                record["view_mean"] = (
+                    old_n * float(record["view_mean"]) + view_now
+                ) / float(old_n + 1)
+                record["direction_matches"] = int(
+                    record["direction_matches"]
+                ) + int(int(record["last_direction"]) == direction_now)
+                record["observations"] = old_n + 1
+                record["last_direction"] = direction_now
+                record["last_cycle"] = int(cycle)
+            self.records[sample_id] = record
+
+            n_observations = int(record["observations"])
+            temporal = (
+                1.0
+                if n_observations == 1
+                else float(record["direction_matches"])
+                / float(n_observations - 1)
+            )
+            q_value = float(record["q_mean"])
+            confidence = 2.0 * abs(q_value - 0.5)
+            memory_q[row] = q_value
+            observations[row] = n_observations
+            temporal_reliability[row] = temporal
+            weights[row] = confidence * float(record["view_mean"]) * temporal
+
+        selected_count = (
+            max(1, min(total, int(round(total * float(coverage_fraction)))))
+            if total > 0
+            else 0
+        )
+        active = torch.zeros(total, dtype=torch.bool)
+        if selected_count > 0:
+            order = torch.argsort(weights, descending=True, stable=True)
+            active[order[:selected_count]] = True
+        return {
+            "candidate_a": candidate_a,
+            "candidate_b": candidate_b,
+            "q": memory_q,
+            "weight": weights,
+            "active": active,
+            "observations": observations,
+            "temporal_reliability": temporal_reliability,
+            "pair_resets": int(reset_count),
+        }
+
+
 def train_pairwise_comparator(
     comparator: PairwiseConflictComparator,
     optimizer: torch.optim.Optimizer,
@@ -3192,6 +3323,7 @@ def run_context_refinement(
     comparator: Optional[PairwiseConflictComparator] = None,
     comparator_optimizer: Optional[torch.optim.Optimizer] = None,
     replay_memory: Optional[ComparatorReplayMemory] = None,
+    conflict_belief_memory: Optional[PersistentConflictBeliefMemory] = None,
     cycle: int = 1,
     log_fn: Callable[[str], None] = logging.info,
 ) -> dict:
@@ -3224,6 +3356,7 @@ def run_context_refinement(
             comparator=comparator,
             comparator_optimizer=comparator_optimizer,
             replay_memory=replay_memory,
+            conflict_belief_memory=conflict_belief_memory,
             cycle=cycle,
             log_fn=log_fn,
         )
@@ -3306,7 +3439,6 @@ def run_context_refinement(
     weak_rejected_mask = torch.zeros(num_samples, dtype=torch.bool)
     context_labels = torch.full((num_samples,), -1, dtype=torch.long)
     refined_targets = clip_probs.detach().clone()
-
     query_count = int(query_mask.sum().item())
     anchor_count = int(anchor_mask.sum().item())
     stats = {
@@ -3589,6 +3721,7 @@ def run_comparator_refinement(
     comparator: Optional[PairwiseConflictComparator] = None,
     comparator_optimizer: Optional[torch.optim.Optimizer] = None,
     replay_memory: Optional[ComparatorReplayMemory] = None,
+    conflict_belief_memory: Optional[PersistentConflictBeliefMemory] = None,
     cycle: int = 1,
     log_fn: Callable[[str], None] = logging.info,
 ) -> dict:
@@ -3717,12 +3850,41 @@ def run_comparator_refinement(
             0.25,
         )
     )
+    conflict_memory_enabled = bool(
+        getattr(context_cfg, "CONFLICT_MEMORY_ENABLED", False)
+    )
+    conflict_memory_coverage = float(
+        getattr(context_cfg, "CONFLICT_MEMORY_COVERAGE_FRACTION", 0.80)
+    )
+    conflict_memory_temperature = float(
+        getattr(context_cfg, "CONFLICT_MEMORY_TEMPERATURE", 0.50)
+    )
+    if conflict_memory_enabled and not 0.0 < conflict_memory_coverage <= 1.0:
+        raise ValueError(
+            "CONFLICT_MEMORY_COVERAGE_FRACTION must satisfy 0 < value <= 1"
+        )
+    if conflict_memory_enabled and conflict_memory_temperature <= 0.0:
+        raise ValueError("CONFLICT_MEMORY_TEMPERATURE must be positive")
+    if conflict_memory_enabled and conflict_belief_memory is None:
+        raise ValueError(
+            "CONFLICT_MEMORY_ENABLED requires PersistentConflictBeliefMemory"
+        )
+    if conflict_memory_enabled and real_multiview_residual_fallback:
+        raise ValueError(
+            "CONFLICT_MEMORY_ENABLED requires Task-vs-CLIP candidate semantics"
+        )
     if real_multiview_enabled and not 0.0 < real_multiview_train_fraction <= 1.0:
         raise ValueError(
             "REAL_MULTIVIEW_TRAIN_FRACTION must satisfy 0 < value <= 1"
         )
-    if real_multiview_enabled and real_multiview_finetune_steps < 1:
+    if (
+        real_multiview_enabled
+        and not real_multiview_residual_fallback
+        and real_multiview_finetune_steps < 1
+    ):
         raise ValueError("REAL_MULTIVIEW_FINETUNE_STEPS must be >= 1")
+    if real_multiview_enabled and real_multiview_finetune_steps < 0:
+        raise ValueError("REAL_MULTIVIEW_FINETUNE_STEPS must be >= 0")
     if real_multiview_enabled and real_multiview_temperature <= 0.0:
         raise ValueError("REAL_MULTIVIEW_TEMPERATURE must be positive")
     if real_multiview_enabled and not (
@@ -3836,6 +3998,14 @@ def run_comparator_refinement(
     weak_rejected_mask = torch.zeros(num_samples, dtype=torch.bool)
     context_labels = torch.full((num_samples,), -1, dtype=torch.long)
     refined_targets = clip_probs.detach().clone()
+    conflict_memory_payload = {
+        "candidate_a": torch.full((num_samples,), -1, dtype=torch.long),
+        "candidate_b": torch.full((num_samples,), -1, dtype=torch.long),
+        "q": torch.full((num_samples,), 0.5, dtype=torch.float32),
+        "weight": torch.zeros(num_samples, dtype=torch.float32),
+        "active": torch.zeros(num_samples, dtype=torch.bool),
+        "observations": torch.zeros(num_samples, dtype=torch.long),
+    }
 
     strict_total = int(strict_conflict_mask.sum().item())
     anchor_count = int(anchor_mask.sum().item())
@@ -4010,6 +4180,7 @@ def run_comparator_refinement(
         strong_real_features = torch.zeros(
             0, 16, dtype=torch.float32
         )
+        residual_router_logits = None
         real_candidate_a = task_top1[strict_positions]
         real_candidate_b = clip_top1[strict_positions]
         if strict_positions.numel() > 0:
@@ -4445,22 +4616,36 @@ def run_comparator_refinement(
             )
             multiview_selected = multiview["selected"]
             selected_count = int(multiview_selected.sum().item())
-            real_multiview_loss = train_pairwise_comparator_real_multiview(
-                comparator,
-                comparator_optimizer,
-                real_features[multiview_selected.to(real_features.device)],
-                multiview["soft_targets"],
-                multiview["weights"],
-                steps=real_multiview_finetune_steps,
-                batch_size=train_batch_size,
-                seed=seed + 7919,
-                synthetic_features=synthetic_features,
-                synthetic_targets=synthetic_targets,
-                synthetic_mix_fraction=real_multiview_synthetic_mix_fraction,
-            )
-            stats["train_loss"] = real_multiview_loss
-            stats["train_current_samples"] = selected_count
-            stats["optimizer_steps_this_cycle"] = real_multiview_finetune_steps
+            if real_multiview_residual_fallback:
+                # The evidence already exists on every real conflict. Using it
+                # directly avoids fitting a weak-view MLP to strong-view pseudo
+                # targets (the previous run stayed at ln(2) and made zero
+                # switches). This path has no optimizer or RNG side effects.
+                router_score = multiview["score"].detach().float().cpu()
+                residual_router_logits = torch.stack(
+                    [router_score, -router_score], dim=1
+                ) / real_multiview_temperature
+                real_multiview_loss = None
+                stats["train_loss"] = None
+                stats["train_current_samples"] = selected_count
+                stats["optimizer_steps_this_cycle"] = 0
+            else:
+                real_multiview_loss = train_pairwise_comparator_real_multiview(
+                    comparator,
+                    comparator_optimizer,
+                    real_features[multiview_selected.to(real_features.device)],
+                    multiview["soft_targets"],
+                    multiview["weights"],
+                    steps=real_multiview_finetune_steps,
+                    batch_size=train_batch_size,
+                    seed=seed + 7919,
+                    synthetic_features=synthetic_features,
+                    synthetic_targets=synthetic_targets,
+                    synthetic_mix_fraction=real_multiview_synthetic_mix_fraction,
+                )
+                stats["train_loss"] = real_multiview_loss
+                stats["train_current_samples"] = selected_count
+                stats["optimizer_steps_this_cycle"] = real_multiview_finetune_steps
             selected_soft_targets = multiview["soft_targets"]
             pseudo_choose_task = int(
                 (selected_soft_targets[:, 0] >= selected_soft_targets[:, 1])
@@ -4474,8 +4659,8 @@ def run_comparator_refinement(
                 "pseudo_choose_a_keep={}; pseudo_choose_b_switch={}; "
                 "confidence_mean={:.4f}; "
                 "task_stability_mean={:.4f}; clip_stability_mean={:.4f}; "
-                "temperature={:.3f}; finetune_steps={}; "
-                "synthetic_mix_fraction={:.2f}; train_loss={:.6f}; "
+                "temperature={:.3f}; router={}; finetune_steps={}; "
+                "synthetic_mix_fraction={:.2f}; train_loss={}; "
                 "construction_uses_gt=False; ground_truth_affects_training=False".format(
                     cycle,
                     real_multiview_residual_fallback,
@@ -4496,9 +4681,18 @@ def run_comparator_refinement(
                         .item()
                     ),
                     real_multiview_temperature,
+                    (
+                        "direct_strong_neighborhood_evidence"
+                        if real_multiview_residual_fallback
+                        else "learned_mlp"
+                    ),
                     real_multiview_finetune_steps,
                     real_multiview_synthetic_mix_fraction,
-                    float(real_multiview_loss),
+                    (
+                        "none"
+                        if real_multiview_loss is None
+                        else "{:.6f}".format(float(real_multiview_loss))
+                    ),
                 )
             )
 
@@ -4526,9 +4720,161 @@ def run_comparator_refinement(
             )
 
         if strict_positions.numel() > 0:
-            comparator.eval()
-            with torch.no_grad():
-                logits = comparator(real_features).cpu()
+            if residual_router_logits is not None:
+                logits = residual_router_logits
+            else:
+                comparator.eval()
+                with torch.no_grad():
+                    logits = comparator(real_features).cpu()
+            if conflict_memory_enabled:
+                if strong_task_probs is None or strong_clip_probs is None:
+                    raise ValueError(
+                        "CONFLICT_MEMORY_ENABLED requires strong Task/CLIP probabilities"
+                    )
+                # Two independent voters produce the current observation:
+                # the synthetic-trained comparator and weak/strong A-vs-B
+                # stability. Disagreement pulls q toward 0.5 instead of
+                # creating a confident pseudo label.
+                memory_evidence = build_real_conflict_multiview_supervision(
+                    task_probs[strict_positions],
+                    clip_probs[strict_positions],
+                    strong_task_probs[strict_positions],
+                    strong_clip_probs[strict_positions],
+                    task_top1[strict_positions],
+                    clip_top1[strict_positions],
+                    train_fraction=1.0,
+                    temperature=conflict_memory_temperature,
+                )
+                comparator_prob = _softmax_probabilities(logits).cpu()
+                comparator_signed = comparator_prob[:, 0] - comparator_prob[:, 1]
+                multiview_signed = torch.tanh(
+                    memory_evidence["score"].detach().float().cpu()
+                    / conflict_memory_temperature
+                )
+                combined_signed = 0.5 * (
+                    comparator_signed + multiview_signed
+                )
+                current_q = (0.5 + 0.5 * combined_signed).clamp(0.0, 1.0)
+                voter_agreement = (
+                    comparator_signed * multiview_signed >= 0.0
+                ).float()
+                view_reliability = 0.5 * (
+                    memory_evidence["task_reliability"].float().cpu()
+                    + memory_evidence["clip_reliability"].float().cpu()
+                )
+                view_reliability = view_reliability * (
+                    0.5 + 0.5 * voter_agreement
+                )
+                conflict_sample_indices = (
+                    sample_indices[strict_positions]
+                    if sample_indices is not None
+                    else strict_positions
+                )
+                memory_local = conflict_belief_memory.update(
+                    conflict_sample_indices,
+                    task_top1[strict_positions],
+                    clip_top1[strict_positions],
+                    current_q,
+                    view_reliability,
+                    cycle=cycle,
+                    coverage_fraction=conflict_memory_coverage,
+                )
+                for key in (
+                    "candidate_a",
+                    "candidate_b",
+                    "q",
+                    "weight",
+                    "active",
+                    "observations",
+                ):
+                    conflict_memory_payload[key][strict_positions] = memory_local[key]
+                active_local = memory_local["active"]
+                active_count = int(active_local.sum().item())
+                effective_sample_equivalent = float(
+                    memory_local["weight"][active_local].sum().item()
+                )
+                effective_coverage = effective_sample_equivalent / max(
+                    int(strict_positions.numel()), 1
+                )
+                log_fn(
+                    "DUET persistent conflict memory: cycle={}; conflicts={}; "
+                    "conflict_fraction_of_target={:.2f}%; active={}; "
+                    "raw_coverage={:.2f}%; active_fraction_of_target={:.2f}%; "
+                    "effective_sample_equivalent={:.2f}; "
+                    "effective_coverage={:.2f}%; "
+                    "effective_fraction_of_target={:.2f}%; "
+                    "q_mean={:.4f}; weight_mean={:.4f}; observations_mean={:.2f}; "
+                    "pair_resets={}; candidates=task_top1_vs_clip_top1; "
+                    "hard_admission_changed=False; kl_target_changed=False; "
+                    "ground_truth_affects_training=False".format(
+                        cycle,
+                        int(strict_positions.numel()),
+                        100.0 * int(strict_positions.numel()) / num_samples,
+                        active_count,
+                        100.0 * active_count / int(strict_positions.numel()),
+                        100.0 * active_count / num_samples,
+                        effective_sample_equivalent,
+                        100.0 * effective_coverage,
+                        100.0 * effective_sample_equivalent / num_samples,
+                        float(memory_local["q"][active_local].mean().item()),
+                        float(memory_local["weight"][active_local].mean().item()),
+                        float(
+                            memory_local["observations"][active_local]
+                            .float()
+                            .mean()
+                            .item()
+                        ),
+                        memory_local["pair_resets"],
+                    )
+                )
+                if eval_only_logging and labels is not None and active_count > 0:
+                    chosen = torch.where(
+                        memory_local["q"] >= 0.5,
+                        task_top1[strict_positions],
+                        clip_top1[strict_positions],
+                    )
+                    active_labels = labels[strict_positions][active_local].long()
+                    task_active = task_top1[strict_positions][active_local]
+                    clip_active = clip_top1[strict_positions][active_local]
+                    fallback_active = (
+                        task_probs[strict_positions]
+                        + clip_probs[strict_positions]
+                    ).argmax(dim=1)[active_local]
+                    memory_acc = float(
+                        (chosen[active_local] == active_labels).float().mean().item()
+                    )
+                    task_acc = float(
+                        (task_active == active_labels).float().mean().item()
+                    )
+                    clip_acc = float(
+                        (clip_active == active_labels).float().mean().item()
+                    )
+                    fallback_acc = float(
+                        (fallback_active == active_labels).float().mean().item()
+                    )
+                    oracle_acc = float(
+                        (
+                            (task_active == active_labels)
+                            | (clip_active == active_labels)
+                        ).float().mean().item()
+                    )
+                    log_fn(
+                        "DUET persistent conflict memory eval-only: cycle={}; "
+                        "same_subset_n={}; task_acc={:.2f}%; clip_acc={:.2f}%; "
+                        "duet_fallback_acc={:.2f}%; memory_acc={:.2f}%; "
+                        "candidate_oracle_acc={:.2f}%; "
+                        "memory_gain_over_duet_fallback={:+.2f}pp; "
+                        "ground_truth_affects_training=False".format(
+                            cycle,
+                            active_count,
+                            100.0 * task_acc,
+                            100.0 * clip_acc,
+                            100.0 * fallback_acc,
+                            100.0 * memory_acc,
+                            100.0 * oracle_acc,
+                            100.0 * (memory_acc - fallback_acc),
+                        )
+                    )
             if (
                 real_conflict_gt_probe_enabled
                 and eval_only_logging
@@ -4695,21 +5041,28 @@ def run_comparator_refinement(
                 resolved_rows
             ].long()
             if real_multiview_residual_fallback:
-                winning_distribution = 0.5 * (
+                # Safe residual semantics: keeping fallback must be exactly a
+                # no-op relative to original DUET's CLIP KL target. Only rows
+                # whose router actually chooses the challenger are modified.
+                winning_distribution = clip_probs[strict_positions].clone()
+                residual_distribution = 0.5 * (
                     task_probs[strict_positions]
                     + clip_probs[strict_positions]
                 )
-                rows = torch.arange(strict_positions.numel())
+                switch_rows = decision["chosen"] != real_candidate_a.cpu()
+                rows = torch.nonzero(switch_rows, as_tuple=False).flatten()
                 pair_mass = (
-                    winning_distribution[rows, real_candidate_a]
-                    + winning_distribution[rows, real_candidate_b]
+                    residual_distribution[rows, real_candidate_a[rows]]
+                    + residual_distribution[rows, real_candidate_b[rows]]
                 )
-                winning_distribution[rows, real_candidate_a] = (
-                    decision["trust_task"].cpu() * pair_mass
-                )
-                winning_distribution[rows, real_candidate_b] = (
-                    decision["trust_clip"].cpu() * pair_mass
-                )
+                if rows.numel() > 0:
+                    winning_distribution[rows] = residual_distribution[rows]
+                    winning_distribution[rows, real_candidate_a[rows]] = (
+                        decision["trust_task"][rows].cpu() * pair_mass
+                    )
+                    winning_distribution[rows, real_candidate_b[rows]] = (
+                        decision["trust_clip"][rows].cpu() * pair_mass
+                    )
             else:
                 winning_distribution = torch.where(
                     (
@@ -4816,6 +5169,7 @@ def run_comparator_refinement(
         "weak_rejected_mask": weak_rejected_mask,
         "context_labels": context_labels,
         "refined_targets": refined_targets,
+        "conflict_memory": conflict_memory_payload,
         "stats": stats,
     }
 

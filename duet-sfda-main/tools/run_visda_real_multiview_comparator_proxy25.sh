@@ -82,7 +82,7 @@ python image_target_of_oh_vs.py \
   DUET_CONTEXT.REAL_MULTIVIEW_ENABLED True \
   DUET_CONTEXT.REAL_MULTIVIEW_RESIDUAL_FALLBACK True \
   DUET_CONTEXT.REAL_MULTIVIEW_TRAIN_FRACTION 0.60 \
-  DUET_CONTEXT.REAL_MULTIVIEW_FINETUNE_STEPS 100 \
+  DUET_CONTEXT.REAL_MULTIVIEW_FINETUNE_STEPS 0 \
   DUET_CONTEXT.REAL_MULTIVIEW_TEMPERATURE 0.50 \
   DUET_CONTEXT.REAL_MULTIVIEW_SYNTHETIC_MIX_FRACTION 0.0 \
   DUET_CONTEXT.SOFT_ONLY_ADMISSION True \
@@ -106,6 +106,10 @@ if ! grep -q "DUET cycle checkpoint resumed:.*completed_cycles=1; next_cycle=2" 
 fi
 if [ "$(grep -c "DUET comparator real-multiview training: cycle=2" "$log_file")" -ne 1 ]; then
   echo "Cycle 2 did not execute real-multiview comparator fine-tuning exactly once" >&2
+  exit 1
+fi
+if ! grep -q "router=direct_strong_neighborhood_evidence; finetune_steps=0;.*train_loss=none" "$log_file"; then
+  echo "Residual run did not use the optimizer-free evidence router" >&2
   exit 1
 fi
 if ! grep -q "DUET residual candidate construction: cycle=2; candidate_a=duet_fallback; candidate_b=task_clip_challenger" "$log_file"; then

@@ -421,6 +421,13 @@ _C.DUET_CONTEXT.REAL_MULTIVIEW_TRAIN_FRACTION = 0.60
 _C.DUET_CONTEXT.REAL_MULTIVIEW_FINETUNE_STEPS = 100
 _C.DUET_CONTEXT.REAL_MULTIVIEW_TEMPERATURE = 0.50
 _C.DUET_CONTEXT.REAL_MULTIVIEW_SYNTHETIC_MIX_FRACTION = 0.25
+# Persistent GT-free belief over real Task/CLIP conflicts. It never changes
+# DUET's hard admission or CLIP KL target; selected conflicts contribute only
+# an auxiliary A-vs-B soft loss to the Task branch.
+_C.DUET_CONTEXT.CONFLICT_MEMORY_ENABLED = False
+_C.DUET_CONTEXT.CONFLICT_MEMORY_COVERAGE_FRACTION = 0.80
+_C.DUET_CONTEXT.CONFLICT_MEMORY_LOSS_WEIGHT = 0.10
+_C.DUET_CONTEXT.CONFLICT_MEMORY_TEMPERATURE = 0.50
 # Exact cycle-boundary cache for repeated eval-only diagnostics. Saving and
 # resuming are opt-in and mutually exclusive; an existing cache is never
 # overwritten by the training code.

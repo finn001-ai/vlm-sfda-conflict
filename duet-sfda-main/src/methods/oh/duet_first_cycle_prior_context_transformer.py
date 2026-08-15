@@ -47,6 +47,7 @@ from src.utils.duet_context import (
     ComparatorReplayMemory,
     DuetContextConflictTransformer,
     PairwiseConflictComparator,
+    PersistentConflictBeliefMemory,
     run_context_refinement,
 )
 from src.utils.duet_cycle_checkpoint import (
@@ -136,6 +137,7 @@ def _cycle_checkpoint_payload(
     context_comparator,
     context_comparator_optimizer,
     context_replay_memory,
+    conflict_belief_memory,
 ):
     replay_state = None
     if context_replay_memory is not None:
@@ -181,6 +183,11 @@ def _cycle_checkpoint_payload(
             else None
         ),
         "context_replay_memory": replay_state,
+        "conflict_belief_memory": (
+            conflict_belief_memory.state_dict()
+            if conflict_belief_memory is not None
+            else None
+        ),
         # Capture this last: it is the exact process state immediately before
         # entering the next cycle. torch.save itself performs no sampling.
         "rng_state": capture_process_rng_state(),
@@ -202,6 +209,7 @@ def _restore_cycle_checkpoint(
     context_comparator,
     context_comparator_optimizer,
     context_replay_memory,
+    conflict_belief_memory,
 ):
     validate_cycle_checkpoint_contract(payload.get("contract", {}), expected_contract)
     netF.load_state_dict(payload["netF"])
@@ -243,6 +251,13 @@ def _restore_cycle_checkpoint(
             context_replay_memory.device
         )
 
+    # Cycle-1 caches created before persistent conflict memory existed are
+    # intentionally compatible: Cycle 2 starts from an empty belief memory.
+    if conflict_belief_memory is not None:
+        conflict_belief_memory.load_state_dict(
+            payload.get("conflict_belief_memory")
+        )
+
     completed_cycles = int(payload["completed_cycles"])
     prev_label_mask = payload.get("prev_label_mask")
     q_value = payload["q_value"]
@@ -256,6 +271,37 @@ def op_copy(optimizer):
     for param_group in optimizer.param_groups:
         param_group['lr0'] = param_group['lr']
     return optimizer
+
+
+def conflict_memory_pairwise_loss(
+    logits,
+    batch_indices,
+    payload,
+):
+    """Weighted soft CE on [Task Top1, CLIP Top1] for active conflicts."""
+    if payload is None:
+        return logits.sum() * 0.0
+    indices = batch_indices.detach().long().to(logits.device)
+    active = payload["active"][indices].bool()
+    if int(active.sum().item()) == 0:
+        return logits.sum() * 0.0
+    rows = torch.nonzero(active, as_tuple=False).flatten()
+    candidate_a = payload["candidate_a"][indices][rows].long()
+    candidate_b = payload["candidate_b"][indices][rows].long()
+    pair_logits = torch.stack(
+        [
+            logits[rows, candidate_a],
+            logits[rows, candidate_b],
+        ],
+        dim=1,
+    )
+    log_prob = F.log_softmax(pair_logits, dim=1)
+    q = payload["q"][indices][rows].float().detach()
+    weights = payload["weight"][indices][rows].float().detach()
+    soft_ce = -(q * log_prob[:, 0] + (1.0 - q) * log_prob[:, 1])
+    # Divide by selected conflicts, not sum(weights): low-reliability samples
+    # must remain weak instead of being renormalized back to full strength.
+    return (weights * soft_ce).sum() / float(rows.numel())
 
 
 def cosine_scheduler(cfg, optimizer, iter_num, max_iter, lr_min=1e-6):
@@ -538,6 +584,19 @@ def train_target(
         cfg.DUET_CONTEXT.NUM_HEADS
     ) != 0:
         raise ValueError("DUET_CONTEXT.MODEL_DIM must be divisible by NUM_HEADS")
+    conflict_memory_enabled = bool(
+        getattr(cfg.DUET_CONTEXT, "CONFLICT_MEMORY_ENABLED", False)
+    )
+    if conflict_memory_enabled and (
+        not context_enabled or context_refiner != "comparator"
+    ):
+        raise ValueError(
+            "CONFLICT_MEMORY_ENABLED requires the enabled comparator refiner"
+        )
+    if conflict_memory_enabled and float(
+        cfg.DUET_CONTEXT.CONFLICT_MEMORY_LOSS_WEIGHT
+    ) <= 0.0:
+        raise ValueError("CONFLICT_MEMORY_LOSS_WEIGHT must be positive")
     cycle_checkpoint_save_path = str(
         getattr(cfg.DUET_CONTEXT, "CYCLE_CHECKPOINT_SAVE_PATH", "")
     ).strip()
@@ -650,6 +709,7 @@ def train_target(
     context_comparator = None
     context_comparator_optimizer = None
     context_replay_memory = None
+    conflict_belief_memory = None
     if context_enabled and context_refiner != "comparator":
         context_transformer = DuetContextConflictTransformer(
             feature_dim=int(cfg.bottleneck),
@@ -708,6 +768,20 @@ def train_target(
             feature_dim=16,
             device=next(context_comparator.parameters()).device,
         )
+        if conflict_memory_enabled:
+            conflict_belief_memory = PersistentConflictBeliefMemory()
+            logging.info(
+                "DUET persistent conflict memory initialized: coverage={:.2f}%; "
+                "loss_weight={:.3f}; candidates=task_top1_vs_clip_top1; "
+                "hard_admission_changed=False; kl_target_changed=False; "
+                "ground_truth_affects_training=False".format(
+                    100.0
+                    * float(
+                        cfg.DUET_CONTEXT.CONFLICT_MEMORY_COVERAGE_FRACTION
+                    ),
+                    float(cfg.DUET_CONTEXT.CONFLICT_MEMORY_LOSS_WEIGHT),
+                )
+            )
 
     # office-home : 1.0 / VisDA-C : 1.05
     curr_cycle = 0
@@ -731,6 +805,7 @@ def train_target(
             context_comparator=context_comparator,
             context_comparator_optimizer=context_comparator_optimizer,
             context_replay_memory=context_replay_memory,
+            conflict_belief_memory=conflict_belief_memory,
         )
         if curr_cycle < 1 or curr_cycle >= int(cfg.ACTIVE.CYCLE):
             raise ValueError(
@@ -770,13 +845,37 @@ def train_target(
                 if context_enabled and context_refiner == "comparator"
                 else None
             ),
+            conflict_belief_memory=conflict_belief_memory,
             context_cfg=cfg.DUET_CONTEXT,
             context_active_cycles=context_active_cycles,
             context_num_classes=int(cfg.class_num),
         )
-        mem_label, label_mask, confi_imag, confi_dis, kl_soft = label_result
+        (
+            mem_label,
+            label_mask,
+            confi_imag,
+            confi_dis,
+            kl_soft,
+            conflict_training_payload,
+        ) = label_result
         kl_soft = kl_soft.cuda()
         mem_label = mem_label.cuda()
+        conflict_active_cpu = None
+        conflict_weight_cpu = None
+        conflict_unique_seen = None
+        conflict_exposures = 0
+        conflict_weighted_exposures = 0.0
+        conflict_scaled_loss_total = None
+        classifier_loss_total = None
+        conflict_loss_steps = 0
+        if conflict_training_payload is not None:
+            conflict_active_cpu = conflict_training_payload["active"].bool().cpu()
+            conflict_weight_cpu = conflict_training_payload["weight"].float().cpu()
+            conflict_unique_seen = torch.zeros_like(conflict_active_cpu)
+            conflict_training_payload = {
+                key: value.cuda() if torch.is_tensor(value) else value
+                for key, value in conflict_training_payload.items()
+            }
         prev_label_mask = label_mask
 
         clip_optimizer, q_value = train_clip(
@@ -820,6 +919,32 @@ def train_target(
             clip_soft_batch = kl_soft[tar_idx]
             mi_loss = F.kl_div(weak_preds.log(), clip_soft_batch, reduction="batchmean")
             classifier_loss += mi_loss * cfg.ACTIVE.KL_PAR
+            conflict_pair_loss = conflict_memory_pairwise_loss(
+                weak_logits,
+                tar_idx,
+                conflict_training_payload,
+            )
+            if conflict_active_cpu is not None:
+                batch_active_cpu = conflict_active_cpu[tar_idx]
+                active_batch_indices = tar_idx[batch_active_cpu]
+                if int(active_batch_indices.numel()) > 0:
+                    conflict_unique_seen[active_batch_indices] = True
+                    conflict_exposures += int(active_batch_indices.numel())
+                    conflict_weighted_exposures += float(
+                        conflict_weight_cpu[active_batch_indices].sum().item()
+                    )
+            conflict_scaled_loss = conflict_pair_loss * float(
+                getattr(cfg.DUET_CONTEXT, "CONFLICT_MEMORY_LOSS_WEIGHT", 0.0)
+            )
+            classifier_loss += conflict_scaled_loss
+            if conflict_active_cpu is not None:
+                if conflict_scaled_loss_total is None:
+                    conflict_scaled_loss_total = conflict_scaled_loss.detach()
+                    classifier_loss_total = classifier_loss.detach()
+                else:
+                    conflict_scaled_loss_total += conflict_scaled_loss.detach()
+                    classifier_loss_total += classifier_loss.detach()
+                conflict_loss_steps += 1
 
             optimizer.zero_grad()
             classifier_loss.backward()
@@ -831,20 +956,62 @@ def train_target(
                 if cfg.SETTING.DATASET == 'VISDA-C':
                     acc_s_te, acc_list = cal_acc(dset_loaders['test'], netF, netB, netC, True)
                     log_str = ('Task: {}, Iter:{}/{}; Cycle: {}/{}; '
-                               'Accuracy = {:.2f}%; classifier_loss = {}').format(
+                               'Accuracy = {:.2f}%; classifier_loss = {}; '
+                               'conflict_pairwise_loss = {}').format(
                                    cfg.name, iter_num, max_iter,
                                    curr_cycle + 1, cfg.ACTIVE.CYCLE,
-                                   acc_s_te, classifier_loss) + '\n' + acc_list
+                                   acc_s_te, classifier_loss,
+                                   conflict_pair_loss) + '\n' + acc_list
                 else:
                     acc_s_te, _ = cal_acc(dset_loaders['test'], netF, netB, netC, False)
                     log_str = ('Task: {}, Iter:{}/{}; Cycle: {}/{}; '
-                               'Accuracy = {:.2f}%; classifier_loss = {}').format(
+                               'Accuracy = {:.2f}%; classifier_loss = {}; '
+                               'conflict_pairwise_loss = {}').format(
                                    cfg.name, iter_num, max_iter,
                                    curr_cycle + 1, cfg.ACTIVE.CYCLE,
-                                   acc_s_te, classifier_loss)
+                                   acc_s_te, classifier_loss,
+                                   conflict_pair_loss)
                 logging.info(log_str)
                 netF.train()
                 netB.train()
+        if conflict_active_cpu is not None:
+            active_pool = int(conflict_active_cpu.sum().item())
+            unique_touched = int(conflict_unique_seen.sum().item())
+            effective_pool = float(
+                conflict_weight_cpu[conflict_active_cpu].sum().item()
+            )
+            mean_scaled_conflict_loss = float(
+                conflict_scaled_loss_total.item() / max(conflict_loss_steps, 1)
+            )
+            mean_total_loss = float(
+                classifier_loss_total.item() / max(conflict_loss_steps, 1)
+            )
+            logging.info(
+                "DUET conflict-memory training reach: cycle={}; "
+                "active_pool={}; unique_touched={}; unique_reach={:.2f}%; "
+                "unique_fraction_of_target={:.2f}%; exposures={}; "
+                "exposures_per_active={:.2f}; weighted_exposures={:.2f}; "
+                "weighted_passes_per_effective_sample={:.2f}; "
+                "loss_weight={:.3f}; mean_scaled_conflict_loss={:.6f}; "
+                "mean_total_loss={:.6f}; scalar_loss_share={:.2f}%; "
+                "ground_truth_affects_training=False".format(
+                    curr_cycle + 1,
+                    active_pool,
+                    unique_touched,
+                    100.0 * unique_touched / max(active_pool, 1),
+                    100.0 * unique_touched / max(conflict_active_cpu.numel(), 1),
+                    conflict_exposures,
+                    conflict_exposures / max(active_pool, 1),
+                    conflict_weighted_exposures,
+                    conflict_weighted_exposures / max(effective_pool, 1e-8),
+                    float(cfg.DUET_CONTEXT.CONFLICT_MEMORY_LOSS_WEIGHT),
+                    mean_scaled_conflict_loss,
+                    mean_total_loss,
+                    100.0
+                    * mean_scaled_conflict_loss
+                    / max(mean_total_loss, 1e-8),
+                )
+            )
         curr_cycle += 1
         if (
             cycle_checkpoint_save_path
@@ -866,6 +1033,7 @@ def train_target(
                 context_comparator=context_comparator,
                 context_comparator_optimizer=context_comparator_optimizer,
                 context_replay_memory=context_replay_memory,
+                conflict_belief_memory=conflict_belief_memory,
             )
             saved_path = save_cycle_checkpoint(
                 cycle_checkpoint_save_path, checkpoint_payload
@@ -903,13 +1071,15 @@ def obtain_label(
     comparator=None,
     comparator_optimizer=None,
     replay_memory=None,
+    conflict_belief_memory=None,
     context_cfg=None,
     context_active_cycles=(0,),
     context_num_classes=None,
 ):
     """收集全 target 的 Task/CLIP 概率与 Task feature，产出伪标签。
 
-    返回 ``(mem_label, label_mask, confi_imag, confi_dis, kl_soft)``：
+    返回 ``(mem_label, label_mask, confi_imag, confi_dis, kl_soft,
+    conflict_training_payload)``：
 
     - 基线路径与原始 DUET-FCP 完全一致；
     - Context 激活时，在 prior 校准后、admission 之前运行
@@ -917,6 +1087,7 @@ def obtain_label(
       ``label_mask`` / ``kl_soft`` / ``mem_label``。
     """
     start_test = True
+    conflict_training_payload = None
     context_active = bool(
         context_conflict_transformer
         and curr_cycle in tuple(context_active_cycles)
@@ -1083,6 +1254,9 @@ def obtain_label(
                 comparator_optimizer if comparator_mode else None
             ),
             replay_memory=(replay_memory if comparator_mode else None),
+            conflict_belief_memory=(
+                conflict_belief_memory if comparator_mode else None
+            ),
             cycle=int(curr_cycle + 1),
         )
         # weak-agreement 未通过验证：暂缓进入硬 CE（admission_matching=False），
@@ -1090,6 +1264,10 @@ def obtain_label(
         admission_matching = matching_indices.clone()
         if bool(context_cfg.USE_WEAK_AGREEMENT):
             admission_matching[context_payload["weak_rejected_mask"]] = False
+        if bool(
+            getattr(context_cfg, "CONFLICT_MEMORY_ENABLED", False)
+        ):
+            conflict_training_payload = context_payload.get("conflict_memory")
 
     # label_mask 单调累积（原始 DUET 规则不变）
     if prev_label_mask is not None:
@@ -1098,7 +1276,11 @@ def obtain_label(
         label_mask = admission_matching
 
     kl_soft_output = clip_all_output
-    if context_payload is not None:
+    conflict_memory_enabled = bool(
+        context_payload is not None
+        and getattr(context_cfg, "CONFLICT_MEMORY_ENABLED", False)
+    )
+    if context_payload is not None and not conflict_memory_enabled:
         soft_only_admission = bool(
             getattr(context_cfg, "SOFT_ONLY_ADMISSION", False)
         )
@@ -1146,14 +1328,14 @@ def obtain_label(
 
     # 混合分布：先按原始 DUET 生成，再覆盖 resolved 行
     all_mix_output = (all_output + clip_all_output) / 2.0
-    if context_payload is not None and not bool(
+    if context_payload is not None and not conflict_memory_enabled and not bool(
         getattr(context_cfg, "SOFT_ONLY_ADMISSION", False)
     ):
         all_mix_output[context_payload["resolved_mask"]] = context_payload[
             "refined_targets"
         ][context_payload["resolved_mask"]]
     _, all_mix_output_pred = torch.max(all_mix_output, dim=1)
-    if context_payload is not None and not bool(
+    if context_payload is not None and not conflict_memory_enabled and not bool(
         getattr(context_cfg, "SOFT_ONLY_ADMISSION", False)
     ):
         resolved_mask = context_payload["resolved_mask"]
@@ -1196,7 +1378,22 @@ def obtain_label(
 
     confi_imag = loader.dataset.imgs
     confi_dis = all_mix_output.detach()
-    return all_mix_output_pred, label_mask, confi_imag, confi_dis, kl_soft_output
+    if conflict_memory_enabled:
+        logging.info(
+            "DUET conflict-memory isolation: cycle={}; label_mask=original_duet; "
+            "mem_label=original_duet; kl_soft=original_clip; "
+            "only_auxiliary_pairwise_loss=True; ground_truth_affects_training=False".format(
+                curr_cycle + 1
+            )
+        )
+    return (
+        all_mix_output_pred,
+        label_mask,
+        confi_imag,
+        confi_dis,
+        kl_soft_output,
+        conflict_training_payload,
+    )
 
 
 def clip_pre_text(cfg):
