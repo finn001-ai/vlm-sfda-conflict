@@ -1358,6 +1358,169 @@ def build_comparator_features(
     return features
 
 
+def _rowwise_js(first: torch.Tensor, second: torch.Tensor) -> torch.Tensor:
+    first = first.float().clamp_min(_EPS)
+    second = second.float().clamp_min(_EPS)
+    midpoint = 0.5 * (first + second)
+    return 0.5 * (
+        (first * (first.log() - midpoint.log())).sum(dim=1)
+        + (second * (second.log() - midpoint.log())).sum(dim=1)
+    )
+
+
+@torch.no_grad()
+def _anchor_neighbor_distribution(
+    query_features: torch.Tensor,
+    bank: ClassBalancedAnchorBank,
+    *,
+    num_classes: int,
+    neighbors: int,
+) -> torch.Tensor:
+    anchor_features, anchor_labels, _, _, _ = bank.flatten()
+    if anchor_features.size(0) == 0:
+        return torch.full(
+            (query_features.size(0), num_classes),
+            1.0 / num_classes,
+            dtype=torch.float32,
+            device=query_features.device,
+        )
+    query = F.normalize(query_features.detach().float(), dim=1)
+    anchors = F.normalize(anchor_features.detach().float(), dim=1).to(query.device)
+    labels = anchor_labels.detach().long().to(query.device)
+    k = max(1, min(int(neighbors), anchors.size(0)))
+    similarities, positions = (query @ anchors.t()).topk(k, dim=1)
+    weights = F.softmax(similarities / 0.07, dim=1)
+    result = torch.zeros(
+        query.size(0), num_classes, dtype=torch.float32, device=query.device
+    )
+    result.scatter_add_(1, labels[positions], weights)
+    return result.clamp_min(_EPS)
+
+
+@torch.no_grad()
+def build_reliability_gated_fusion(
+    weak_task_probs: torch.Tensor,
+    weak_clip_probs: torch.Tensor,
+    strong_task_probs: torch.Tensor,
+    strong_clip_probs: torch.Tensor,
+    weak_task_features: torch.Tensor,
+    weak_clip_features: torch.Tensor,
+    strong_task_features: torch.Tensor,
+    strong_clip_features: torch.Tensor,
+    task_bank: ClassBalancedAnchorBank,
+    clip_bank: ClassBalancedAnchorBank,
+    *,
+    num_classes: int,
+    neighbors: int,
+    temperature: float,
+    coverage_fraction: float,
+) -> dict:
+    """Reliability comparator over complete Task/CLIP posteriors.
+
+    Relative reliability is estimated independently for each branch from
+    weak/strong stability and class-conditional anchor-neighborhood fit.
+    Equal fusion is the exact fallback; conflict strength controls how far
+    the adaptive weight may move away from 0.5.
+    """
+    if float(temperature) <= 0.0:
+        raise ValueError("RELIABILITY_GATE_TEMPERATURE must be positive")
+    if not 0.0 < float(coverage_fraction) <= 1.0:
+        raise ValueError(
+            "RELIABILITY_GATE_COVERAGE_FRACTION must satisfy 0 < value <= 1"
+        )
+    tensors = (
+        weak_task_probs,
+        weak_clip_probs,
+        strong_task_probs,
+        strong_clip_probs,
+    )
+    if any(tensor.shape != weak_task_probs.shape for tensor in tensors):
+        raise ValueError("reliability-gate probabilities must have equal shape")
+    total = int(weak_task_probs.size(0))
+    if total == 0:
+        return {
+            "active": torch.zeros(0, dtype=torch.bool),
+            "target": weak_task_probs.new_zeros(0, num_classes),
+            "alpha": torch.zeros(0),
+            "reliability": torch.zeros(0),
+            "task_error": torch.zeros(0),
+            "clip_error": torch.zeros(0),
+        }
+
+    device = weak_task_probs.device
+    weak_task = weak_task_probs.detach().float().to(device)
+    weak_clip = weak_clip_probs.detach().float().to(device)
+    strong_task = strong_task_probs.detach().float().to(device)
+    strong_clip = strong_clip_probs.detach().float().to(device)
+    task_neighbor_weak = _anchor_neighbor_distribution(
+        weak_task_features.to(device), task_bank,
+        num_classes=num_classes, neighbors=neighbors,
+    )
+    task_neighbor_strong = _anchor_neighbor_distribution(
+        strong_task_features.to(device), task_bank,
+        num_classes=num_classes, neighbors=neighbors,
+    )
+    clip_neighbor_weak = _anchor_neighbor_distribution(
+        weak_clip_features.to(device), clip_bank,
+        num_classes=num_classes, neighbors=neighbors,
+    )
+    clip_neighbor_strong = _anchor_neighbor_distribution(
+        strong_clip_features.to(device), clip_bank,
+        num_classes=num_classes, neighbors=neighbors,
+    )
+    log_two = 0.6931471805599453
+    task_view_error = _rowwise_js(weak_task, strong_task) / log_two
+    clip_view_error = _rowwise_js(weak_clip, strong_clip) / log_two
+    task_neighbor_error = 0.5 * (
+        _rowwise_js(weak_task, task_neighbor_weak)
+        + _rowwise_js(strong_task, task_neighbor_strong)
+    ) / log_two
+    clip_neighbor_error = 0.5 * (
+        _rowwise_js(weak_clip, clip_neighbor_weak)
+        + _rowwise_js(strong_clip, clip_neighbor_strong)
+    ) / log_two
+    # Both sources must support a branch: the geometric mean prevents one
+    # near-zero error from hiding failure of the other independent source.
+    task_error = torch.sqrt(
+        task_view_error.clamp_min(_EPS)
+        * task_neighbor_error.clamp_min(_EPS)
+    )
+    clip_error = torch.sqrt(
+        clip_view_error.clamp_min(_EPS)
+        * clip_neighbor_error.clamp_min(_EPS)
+    )
+    raw_alpha = torch.sigmoid(
+        (clip_error - task_error) / float(temperature)
+    )
+    conflict_strength = (
+        _rowwise_js(weak_task, weak_clip) / log_two
+    ).clamp(0.0, 1.0)
+    alpha = 0.5 + conflict_strength * (raw_alpha - 0.5)
+    target = (
+        alpha.unsqueeze(1) * weak_task
+        + (1.0 - alpha).unsqueeze(1) * weak_clip
+    )
+    reliability = (
+        conflict_strength
+        * (task_error - clip_error).abs()
+        / (task_error + clip_error).clamp_min(_EPS)
+    ).clamp(0.0, 1.0)
+    selected_count = max(
+        1, min(total, int(round(total * float(coverage_fraction))))
+    )
+    order = torch.argsort(reliability, descending=True, stable=True)
+    active = torch.zeros(total, dtype=torch.bool, device=device)
+    active[order[:selected_count]] = True
+    return {
+        "active": active.cpu(),
+        "target": target.cpu(),
+        "alpha": alpha.cpu(),
+        "reliability": reliability.cpu(),
+        "task_error": task_error.cpu(),
+        "clip_error": clip_error.cpu(),
+    }
+
+
 @torch.no_grad()
 def _log_agreement_synthetic_feasibility_eval_only(
     pool_labels: torch.Tensor,
@@ -3859,6 +4022,30 @@ def run_comparator_refinement(
     conflict_memory_temperature = float(
         getattr(context_cfg, "CONFLICT_MEMORY_TEMPERATURE", 0.50)
     )
+    reliability_gate_enabled = bool(
+        getattr(context_cfg, "RELIABILITY_GATE_ENABLED", False)
+    )
+    reliability_gate_coverage = float(
+        getattr(context_cfg, "RELIABILITY_GATE_COVERAGE_FRACTION", 0.80)
+    )
+    reliability_gate_temperature = float(
+        getattr(context_cfg, "RELIABILITY_GATE_TEMPERATURE", 0.25)
+    )
+    reliability_gate_neighbors = int(
+        getattr(context_cfg, "RELIABILITY_GATE_NEIGHBORS", 5)
+    )
+    if reliability_gate_enabled and conflict_memory_enabled:
+        raise ValueError(
+            "RELIABILITY_GATE_ENABLED and CONFLICT_MEMORY_ENABLED are exclusive"
+        )
+    if reliability_gate_enabled and not 0.0 < reliability_gate_coverage <= 1.0:
+        raise ValueError(
+            "RELIABILITY_GATE_COVERAGE_FRACTION must satisfy 0 < value <= 1"
+        )
+    if reliability_gate_enabled and reliability_gate_temperature <= 0.0:
+        raise ValueError("RELIABILITY_GATE_TEMPERATURE must be positive")
+    if reliability_gate_enabled and reliability_gate_neighbors < 1:
+        raise ValueError("RELIABILITY_GATE_NEIGHBORS must be >= 1")
     if conflict_memory_enabled and not 0.0 < conflict_memory_coverage <= 1.0:
         raise ValueError(
             "CONFLICT_MEMORY_COVERAGE_FRACTION must satisfy 0 < value <= 1"
@@ -4005,6 +4192,12 @@ def run_comparator_refinement(
         "weight": torch.zeros(num_samples, dtype=torch.float32),
         "active": torch.zeros(num_samples, dtype=torch.bool),
         "observations": torch.zeros(num_samples, dtype=torch.long),
+    }
+    reliability_gate_payload = {
+        "active": torch.zeros(num_samples, dtype=torch.bool),
+        "target": clip_probs.detach().clone(),
+        "alpha": torch.full((num_samples,), 0.5, dtype=torch.float32),
+        "reliability": torch.zeros(num_samples, dtype=torch.float32),
     }
 
     strict_total = int(strict_conflict_mask.sum().item())
@@ -4252,6 +4445,97 @@ def run_comparator_refinement(
                         cycle
                     )
                 )
+            if reliability_gate_enabled:
+                if (
+                    strong_task_probs is None
+                    or strong_clip_probs is None
+                    or strong_task_features is None
+                    or strong_clip_features is None
+                ):
+                    raise ValueError(
+                        "RELIABILITY_GATE_ENABLED requires strong probabilities and features"
+                    )
+                gate_local = build_reliability_gated_fusion(
+                    task_probs[strict_positions],
+                    clip_probs[strict_positions],
+                    strong_task_probs[strict_positions],
+                    strong_clip_probs[strict_positions],
+                    task_features[strict_positions],
+                    clip_features[strict_positions],
+                    strong_task_features[strict_positions],
+                    strong_clip_features[strict_positions],
+                    task_bank,
+                    clip_bank,
+                    num_classes=num_classes,
+                    neighbors=reliability_gate_neighbors,
+                    temperature=reliability_gate_temperature,
+                    coverage_fraction=reliability_gate_coverage,
+                )
+                for key in ("active", "target", "alpha", "reliability"):
+                    reliability_gate_payload[key][strict_positions] = gate_local[key]
+                gate_active = gate_local["active"]
+                gate_count = int(gate_active.sum().item())
+                baseline_local = 0.5 * (
+                    task_probs[strict_positions] + clip_probs[strict_positions]
+                )
+                gated_local = gate_local["target"]
+                baseline_label = baseline_local.argmax(dim=1)
+                gated_label = gated_local.argmax(dim=1)
+                switches = gate_active & (gated_label != baseline_label)
+                log_fn(
+                    "DUET reliability-gated comparator: cycle={}; conflicts={}; "
+                    "active={}; coverage={:.2f}%; alpha_mean={:.4f}; "
+                    "alpha_p10={:.4f}; alpha_p90={:.4f}; "
+                    "reliability_mean={:.4f}; switches_from_duet_fallback={}; "
+                    "candidate_space=complete_posterior; hard_admission_changed=False; "
+                    "ground_truth_affects_training=False".format(
+                        cycle,
+                        int(strict_positions.numel()),
+                        gate_count,
+                        100.0 * gate_count / int(strict_positions.numel()),
+                        float(gate_local["alpha"][gate_active].mean().item()),
+                        float(torch.quantile(gate_local["alpha"][gate_active], 0.10).item()),
+                        float(torch.quantile(gate_local["alpha"][gate_active], 0.90).item()),
+                        float(
+                            gate_local["reliability"][gate_active].mean().item()
+                        ),
+                        int(switches.sum().item()),
+                    )
+                )
+                if eval_only_logging and labels is not None and gate_count > 0:
+                    active_labels = labels[strict_positions][gate_active].long()
+                    baseline_acc = float(
+                        (baseline_label[gate_active] == active_labels)
+                        .float().mean().item()
+                    )
+                    gated_acc = float(
+                        (gated_label[gate_active] == active_labels)
+                        .float().mean().item()
+                    )
+                    switch_count = int(switches.sum().item())
+                    switch_precision = (
+                        float(
+                            (gated_label[switches] == labels[strict_positions][switches])
+                            .float().mean().item()
+                        )
+                        if switch_count > 0
+                        else float("nan")
+                    )
+                    log_fn(
+                        "DUET reliability-gated comparator eval-only: cycle={}; "
+                        "same_subset_n={}; duet_fallback_acc={:.2f}%; "
+                        "gated_comparator_acc={:.2f}%; gain={:+.2f}pp; "
+                        "switches={}; switch_precision={:.2f}%; "
+                        "ground_truth_affects_training=False".format(
+                            cycle,
+                            gate_count,
+                            100.0 * baseline_acc,
+                            100.0 * gated_acc,
+                            100.0 * (gated_acc - baseline_acc),
+                            switch_count,
+                            100.0 * switch_precision,
+                        )
+                    )
         # distribution matching：只保留“长得像真实 conflict”的 synthetic 对
         if (
             dist_match_synthetic
@@ -5170,6 +5454,7 @@ def run_comparator_refinement(
         "context_labels": context_labels,
         "refined_targets": refined_targets,
         "conflict_memory": conflict_memory_payload,
+        "reliability_gate": reliability_gate_payload,
         "stats": stats,
     }
 

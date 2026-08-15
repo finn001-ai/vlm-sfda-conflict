@@ -587,6 +587,13 @@ def train_target(
     conflict_memory_enabled = bool(
         getattr(cfg.DUET_CONTEXT, "CONFLICT_MEMORY_ENABLED", False)
     )
+    reliability_gate_enabled = bool(
+        getattr(cfg.DUET_CONTEXT, "RELIABILITY_GATE_ENABLED", False)
+    )
+    if conflict_memory_enabled and reliability_gate_enabled:
+        raise ValueError(
+            "CONFLICT_MEMORY_ENABLED and RELIABILITY_GATE_ENABLED are exclusive"
+        )
     if conflict_memory_enabled and (
         not context_enabled or context_refiner != "comparator"
     ):
@@ -597,6 +604,12 @@ def train_target(
         cfg.DUET_CONTEXT.CONFLICT_MEMORY_LOSS_WEIGHT
     ) <= 0.0:
         raise ValueError("CONFLICT_MEMORY_LOSS_WEIGHT must be positive")
+    if reliability_gate_enabled and (
+        not context_enabled or context_refiner != "comparator"
+    ):
+        raise ValueError(
+            "RELIABILITY_GATE_ENABLED requires the enabled comparator refiner"
+        )
     cycle_checkpoint_save_path = str(
         getattr(cfg.DUET_CONTEXT, "CYCLE_CHECKPOINT_SAVE_PATH", "")
     ).strip()
@@ -1088,6 +1101,7 @@ def obtain_label(
     """
     start_test = True
     conflict_training_payload = None
+    reliability_gate_training_payload = None
     context_active = bool(
         context_conflict_transformer
         and curr_cycle in tuple(context_active_cycles)
@@ -1268,6 +1282,12 @@ def obtain_label(
             getattr(context_cfg, "CONFLICT_MEMORY_ENABLED", False)
         ):
             conflict_training_payload = context_payload.get("conflict_memory")
+        if bool(
+            getattr(context_cfg, "RELIABILITY_GATE_ENABLED", False)
+        ):
+            reliability_gate_training_payload = context_payload.get(
+                "reliability_gate"
+            )
 
     # label_mask 单调累积（原始 DUET 规则不变）
     if prev_label_mask is not None:
@@ -1280,7 +1300,27 @@ def obtain_label(
         context_payload is not None
         and getattr(context_cfg, "CONFLICT_MEMORY_ENABLED", False)
     )
-    if context_payload is not None and not conflict_memory_enabled:
+    reliability_gate_enabled = bool(
+        context_payload is not None
+        and getattr(context_cfg, "RELIABILITY_GATE_ENABLED", False)
+    )
+    isolated_context_enabled = (
+        conflict_memory_enabled or reliability_gate_enabled
+    )
+    if reliability_gate_enabled:
+        gate_active = reliability_gate_training_payload["active"].bool()
+        kl_soft_output = clip_all_output.clone()
+        kl_soft_output[gate_active] = reliability_gate_training_payload[
+            "target"
+        ][gate_active]
+        logging.info(
+            "DUET reliability-gated soft target: cycle={}; samples={}; "
+            "hard_admission=0; original_clip_kl_replaced_on_gate_only=True; "
+            "ground_truth_affects_training=False".format(
+                curr_cycle + 1, int(gate_active.sum().item())
+            )
+        )
+    if context_payload is not None and not isolated_context_enabled:
         soft_only_admission = bool(
             getattr(context_cfg, "SOFT_ONLY_ADMISSION", False)
         )
@@ -1328,14 +1368,14 @@ def obtain_label(
 
     # 混合分布：先按原始 DUET 生成，再覆盖 resolved 行
     all_mix_output = (all_output + clip_all_output) / 2.0
-    if context_payload is not None and not conflict_memory_enabled and not bool(
+    if context_payload is not None and not isolated_context_enabled and not bool(
         getattr(context_cfg, "SOFT_ONLY_ADMISSION", False)
     ):
         all_mix_output[context_payload["resolved_mask"]] = context_payload[
             "refined_targets"
         ][context_payload["resolved_mask"]]
     _, all_mix_output_pred = torch.max(all_mix_output, dim=1)
-    if context_payload is not None and not conflict_memory_enabled and not bool(
+    if context_payload is not None and not isolated_context_enabled and not bool(
         getattr(context_cfg, "SOFT_ONLY_ADMISSION", False)
     ):
         resolved_mask = context_payload["resolved_mask"]
@@ -1385,6 +1425,12 @@ def obtain_label(
             "only_auxiliary_pairwise_loss=True; ground_truth_affects_training=False".format(
                 curr_cycle + 1
             )
+        )
+    if reliability_gate_enabled:
+        logging.info(
+            "DUET reliability-gate isolation: cycle={}; label_mask=original_duet; "
+            "mem_label=original_duet; only_conflict_soft_kl_changed=True; "
+            "ground_truth_affects_training=False".format(curr_cycle + 1)
         )
     return (
         all_mix_output_pred,

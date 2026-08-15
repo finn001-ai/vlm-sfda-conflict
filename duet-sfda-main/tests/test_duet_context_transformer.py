@@ -24,6 +24,7 @@ from src.utils.duet_context import (
     apply_decision_rules,
     apply_weak_verification,
     build_comparator_features,
+    build_reliability_gated_fusion,
     build_real_conflict_multiview_supervision,
     build_synthetic_conflicts,
     cosine_knn_refine,
@@ -121,6 +122,10 @@ def make_context_cfg(**overrides):
         CONFLICT_MEMORY_COVERAGE_FRACTION=0.80,
         CONFLICT_MEMORY_LOSS_WEIGHT=0.10,
         CONFLICT_MEMORY_TEMPERATURE=0.50,
+        RELIABILITY_GATE_ENABLED=False,
+        RELIABILITY_GATE_COVERAGE_FRACTION=0.80,
+        RELIABILITY_GATE_TEMPERATURE=0.25,
+        RELIABILITY_GATE_NEIGHBORS=5,
         AGREEMENT_AMBIGUITY_EVAL_ENABLED=False,
         AGREEMENT_AMBIGUITY_FRACTIONS=[10, 25, 50, 100],
         AGREEMENT_COMPARATOR_PROBE_ENABLED=False,
@@ -137,6 +142,41 @@ def make_context_cfg(**overrides):
 
 
 class AnchorBankTest(unittest.TestCase):
+    def test_reliability_gate_preserves_full_distribution_and_fixed_coverage(self):
+        torch.manual_seed(31)
+        n, c, d = 20, 4, 8
+        labels = torch.arange(n) % c
+        anchor_features = torch.randn(n, d)
+        task_bank = ClassBalancedAnchorBank(c, 3, d, device=torch.device("cpu"))
+        clip_bank = ClassBalancedAnchorBank(c, 3, d, device=torch.device("cpu"))
+        scores = torch.linspace(0.1, 1.0, n)
+        task_bank.update(anchor_features, labels, scores)
+        clip_bank.update(anchor_features, labels, scores)
+        weak_task = torch.softmax(torch.randn(n, c), dim=1)
+        weak_clip = torch.softmax(torch.randn(n, c), dim=1)
+        strong_task = 0.9 * weak_task + 0.1 / c
+        strong_clip = torch.softmax(torch.randn(n, c), dim=1)
+        result = build_reliability_gated_fusion(
+            weak_task,
+            weak_clip,
+            strong_task,
+            strong_clip,
+            anchor_features,
+            anchor_features,
+            anchor_features,
+            torch.randn(n, d),
+            task_bank,
+            clip_bank,
+            num_classes=c,
+            neighbors=3,
+            temperature=0.25,
+            coverage_fraction=0.80,
+        )
+        self.assertEqual(result["target"].shape, (n, c))
+        self.assertEqual(int(result["active"].sum().item()), 16)
+        self.assertTrue(torch.allclose(result["target"].sum(dim=1), torch.ones(n)))
+        self.assertTrue(((result["alpha"] >= 0.0) & (result["alpha"] <= 1.0)).all())
+
     def test_persistent_conflict_memory_accumulates_and_resets_changed_pair(self):
         memory = PersistentConflictBeliefMemory()
         first = memory.update(

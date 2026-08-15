@@ -428,6 +428,14 @@ _C.DUET_CONTEXT.CONFLICT_MEMORY_ENABLED = False
 _C.DUET_CONTEXT.CONFLICT_MEMORY_COVERAGE_FRACTION = 0.80
 _C.DUET_CONTEXT.CONFLICT_MEMORY_LOSS_WEIGHT = 0.10
 _C.DUET_CONTEXT.CONFLICT_MEMORY_TEMPERATURE = 0.50
+# Breakpoint-aware reliability fusion.  The comparator estimates relative
+# Task/CLIP reliability from view stability and class-conditional anchor
+# neighborhoods, then reweights the complete posterior instead of choosing
+# between two Top-1 labels.
+_C.DUET_CONTEXT.RELIABILITY_GATE_ENABLED = False
+_C.DUET_CONTEXT.RELIABILITY_GATE_COVERAGE_FRACTION = 0.80
+_C.DUET_CONTEXT.RELIABILITY_GATE_TEMPERATURE = 0.25
+_C.DUET_CONTEXT.RELIABILITY_GATE_NEIGHBORS = 5
 # Exact cycle-boundary cache for repeated eval-only diagnostics. Saving and
 # resuming are opt-in and mutually exclusive; an existing cache is never
 # overwritten by the training code.
