@@ -2390,13 +2390,25 @@ def train_pairwise_comparator_real_multiview(
     if not 0.0 <= float(synthetic_mix_fraction) < 1.0:
         raise ValueError("synthetic_mix_fraction must satisfy 0 <= value < 1")
 
+    # ``real_features`` is normally built on the comparator GPU, while the
+    # weak/strong probabilities (and therefore soft targets/weights) are
+    # collected on CPU. Align every training tensor before creating indices.
+    device = next(comparator.parameters()).device
+    real_features = real_features.detach().to(device)
+    real_soft_targets = real_soft_targets.detach().to(device)
+    real_weights = real_weights.detach().to(device)
+    if synthetic_features is not None:
+        synthetic_features = synthetic_features.detach().to(device)
+    if synthetic_targets is not None:
+        synthetic_targets = synthetic_targets.detach().to(device)
+
     use_synthetic = (
         synthetic_features is not None
         and synthetic_targets is not None
         and synthetic_features.size(0) > 0
         and synthetic_mix_fraction > 0.0
     )
-    generator = torch.Generator(device=real_features.device)
+    generator = torch.Generator(device=device)
     generator.manual_seed(int(seed))
     total_loss = 0.0
     comparator.train()
@@ -4313,7 +4325,7 @@ def run_comparator_refinement(
             real_multiview_loss = train_pairwise_comparator_real_multiview(
                 comparator,
                 comparator_optimizer,
-                real_features[multiview_selected],
+                real_features[multiview_selected.to(real_features.device)],
                 multiview["soft_targets"],
                 multiview["weights"],
                 steps=real_multiview_finetune_steps,
