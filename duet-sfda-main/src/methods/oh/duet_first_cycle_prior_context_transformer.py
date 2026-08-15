@@ -610,6 +610,10 @@ def train_target(
         raise ValueError(
             "RELIABILITY_GATE_ENABLED requires the enabled comparator refiner"
         )
+    if reliability_gate_enabled and float(
+        cfg.DUET_CONTEXT.RELIABILITY_GATE_LOSS_WEIGHT
+    ) <= 0.0:
+        raise ValueError("RELIABILITY_GATE_LOSS_WEIGHT must be positive")
     cycle_checkpoint_save_path = str(
         getattr(cfg.DUET_CONTEXT, "CYCLE_CHECKPOINT_SAVE_PATH", "")
     ).strip()
@@ -881,6 +885,13 @@ def train_target(
         conflict_scaled_loss_total = None
         classifier_loss_total = None
         conflict_loss_steps = 0
+        conflict_loss_weight = (
+            float(cfg.DUET_CONTEXT.RELIABILITY_GATE_LOSS_WEIGHT)
+            if reliability_gate_enabled
+            else float(
+                getattr(cfg.DUET_CONTEXT, "CONFLICT_MEMORY_LOSS_WEIGHT", 0.0)
+            )
+        )
         if conflict_training_payload is not None:
             conflict_active_cpu = conflict_training_payload["active"].bool().cpu()
             conflict_weight_cpu = conflict_training_payload["weight"].float().cpu()
@@ -946,9 +957,7 @@ def train_target(
                     conflict_weighted_exposures += float(
                         conflict_weight_cpu[active_batch_indices].sum().item()
                     )
-            conflict_scaled_loss = conflict_pair_loss * float(
-                getattr(cfg.DUET_CONTEXT, "CONFLICT_MEMORY_LOSS_WEIGHT", 0.0)
-            )
+            conflict_scaled_loss = conflict_pair_loss * conflict_loss_weight
             classifier_loss += conflict_scaled_loss
             if conflict_active_cpu is not None:
                 if conflict_scaled_loss_total is None:
@@ -969,21 +978,17 @@ def train_target(
                 if cfg.SETTING.DATASET == 'VISDA-C':
                     acc_s_te, acc_list = cal_acc(dset_loaders['test'], netF, netB, netC, True)
                     log_str = ('Task: {}, Iter:{}/{}; Cycle: {}/{}; '
-                               'Accuracy = {:.2f}%; classifier_loss = {}; '
-                               'conflict_pairwise_loss = {}').format(
+                               'Accuracy = {:.2f}%; classifier_loss = {}').format(
                                    cfg.name, iter_num, max_iter,
                                    curr_cycle + 1, cfg.ACTIVE.CYCLE,
-                                   acc_s_te, classifier_loss,
-                                   conflict_pair_loss) + '\n' + acc_list
+                                   acc_s_te, classifier_loss) + '\n' + acc_list
                 else:
                     acc_s_te, _ = cal_acc(dset_loaders['test'], netF, netB, netC, False)
                     log_str = ('Task: {}, Iter:{}/{}; Cycle: {}/{}; '
-                               'Accuracy = {:.2f}%; classifier_loss = {}; '
-                               'conflict_pairwise_loss = {}').format(
+                               'Accuracy = {:.2f}%; classifier_loss = {}').format(
                                    cfg.name, iter_num, max_iter,
                                    curr_cycle + 1, cfg.ACTIVE.CYCLE,
-                                   acc_s_te, classifier_loss,
-                                   conflict_pair_loss)
+                                   acc_s_te, classifier_loss)
                 logging.info(log_str)
                 netF.train()
                 netB.train()
@@ -1000,7 +1005,7 @@ def train_target(
                 classifier_loss_total.item() / max(conflict_loss_steps, 1)
             )
             logging.info(
-                "DUET conflict-memory training reach: cycle={}; "
+                "DUET conflict auxiliary training reach: cycle={}; "
                 "active_pool={}; unique_touched={}; unique_reach={:.2f}%; "
                 "unique_fraction_of_target={:.2f}%; exposures={}; "
                 "exposures_per_active={:.2f}; weighted_exposures={:.2f}; "
@@ -1017,7 +1022,7 @@ def train_target(
                     conflict_exposures / max(active_pool, 1),
                     conflict_weighted_exposures,
                     conflict_weighted_exposures / max(effective_pool, 1e-8),
-                    float(cfg.DUET_CONTEXT.CONFLICT_MEMORY_LOSS_WEIGHT),
+                    conflict_loss_weight,
                     mean_scaled_conflict_loss,
                     mean_total_loss,
                     100.0
@@ -1200,6 +1205,75 @@ def obtain_label(
                         (all_strong_clip_features, strong_clip_feature), 0
                     )
 
+        reliability_task_view_probs = None
+        reliability_clip_view_probs = None
+        reliability_task_view_features = None
+        reliability_clip_view_features = None
+        reliability_gate_enabled = bool(
+            comparator_mode
+            and getattr(context_cfg, "RELIABILITY_GATE_ENABLED", False)
+        )
+        if reliability_gate_enabled:
+            num_views = int(
+                getattr(context_cfg, "RELIABILITY_GATE_NUM_VIEWS", 1)
+            )
+            task_view_logits = [all_strong_task_outputs]
+            clip_view_logits = [all_strong_clip_outputs]
+            task_view_features = [all_strong_task_features]
+            clip_view_features = [all_strong_clip_features]
+            # Extra stochastic-view inference must not alter the subsequent
+            # Task/CLIP optimizer RNG trajectory.
+            saved_view_rng = capture_process_rng_state()
+            for _ in range(max(0, num_views - 1)):
+                view_task_logits = []
+                view_clip_logits = []
+                view_task_features = []
+                view_clip_features = []
+                view_indices = []
+                iter_view = iter(loader)
+                for _ in range(len(loader)):
+                    view_inputs, _, view_index = next(iter_view)
+                    view_x = view_inputs[2].cuda()
+                    view_task_feature = netB(netF(view_x))
+                    view_task_logits.append(
+                        netC(view_task_feature).float().cpu()
+                    )
+                    view_clip_logits_batch, _ = clip_model(view_x, text_inputs)
+                    view_clip_logits.append(
+                        view_clip_logits_batch.float().cpu()
+                    )
+                    view_task_features.append(view_task_feature.float().cpu())
+                    view_clip_features.append(
+                        clip_model.encode_image(view_x).float().cpu()
+                    )
+                    view_indices.append(view_index.long().cpu())
+                collected_indices = torch.cat(view_indices)
+                if not torch.equal(collected_indices, all_sample_index):
+                    raise ValueError(
+                        "reliability-gate stochastic views changed sample ordering"
+                    )
+                task_view_logits.append(torch.cat(view_task_logits))
+                clip_view_logits.append(torch.cat(view_clip_logits))
+                task_view_features.append(torch.cat(view_task_features))
+                clip_view_features.append(torch.cat(view_clip_features))
+            restore_process_rng_state(saved_view_rng)
+            reliability_task_view_probs = nn.Softmax(dim=2)(
+                torch.stack(task_view_logits)
+            )
+            reliability_clip_view_probs = nn.Softmax(dim=2)(
+                torch.stack(clip_view_logits)
+            )
+            reliability_task_view_features = torch.stack(task_view_features)
+            reliability_clip_view_features = torch.stack(clip_view_features)
+            logging.info(
+                "DUET reliability-gate stochastic evidence: cycle={}; views={}; "
+                "samples={}; rng_restored=True; ground_truth_affects_training=False".format(
+                    curr_cycle + 1,
+                    num_views,
+                    all_sample_index.numel(),
+                )
+            )
+
     all_output = nn.Softmax(dim=1)(all_output)
     clip_all_output = nn.Softmax(dim=1)(all_clip_score).cpu()
 
@@ -1271,6 +1345,10 @@ def obtain_label(
             conflict_belief_memory=(
                 conflict_belief_memory if comparator_mode else None
             ),
+            reliability_task_view_probs=reliability_task_view_probs,
+            reliability_clip_view_probs=reliability_clip_view_probs,
+            reliability_task_view_features=reliability_task_view_features,
+            reliability_clip_view_features=reliability_clip_view_features,
             cycle=int(curr_cycle + 1),
         )
         # weak-agreement 未通过验证：暂缓进入硬 CE（admission_matching=False），
@@ -1288,6 +1366,7 @@ def obtain_label(
             reliability_gate_training_payload = context_payload.get(
                 "reliability_gate"
             )
+            conflict_training_payload = reliability_gate_training_payload
 
     # label_mask 单调累积（原始 DUET 规则不变）
     if prev_label_mask is not None:
@@ -1309,15 +1388,18 @@ def obtain_label(
     )
     if reliability_gate_enabled:
         gate_active = reliability_gate_training_payload["active"].bool()
-        kl_soft_output = clip_all_output.clone()
-        kl_soft_output[gate_active] = reliability_gate_training_payload[
-            "target"
-        ][gate_active]
+        gate_switch = reliability_gate_training_payload["switch"].bool()
         logging.info(
-            "DUET reliability-gated soft target: cycle={}; samples={}; "
-            "hard_admission=0; original_clip_kl_replaced_on_gate_only=True; "
+            "DUET candidate-committee auxiliary target: cycle={}; evaluated_pool={}; "
+            "breakpoint_crossings={}; hard_admission=0; "
+            "auxiliary_pairwise_pool={}; original_clip_kl_changed=False; "
+            "loss_weight={:.3f}; "
             "ground_truth_affects_training=False".format(
-                curr_cycle + 1, int(gate_active.sum().item())
+                curr_cycle + 1,
+                int(gate_active.sum().item()),
+                int(gate_switch.sum().item()),
+                int(gate_active.sum().item()),
+                float(context_cfg.RELIABILITY_GATE_LOSS_WEIGHT),
             )
         )
     if context_payload is not None and not isolated_context_enabled:
@@ -1429,7 +1511,8 @@ def obtain_label(
     if reliability_gate_enabled:
         logging.info(
             "DUET reliability-gate isolation: cycle={}; label_mask=original_duet; "
-            "mem_label=original_duet; only_conflict_soft_kl_changed=True; "
+            "mem_label=original_duet; kl_soft=original_clip; "
+            "only_auxiliary_candidate_pair_loss=True; "
             "ground_truth_affects_training=False".format(curr_cycle + 1)
         )
     return (

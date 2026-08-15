@@ -436,6 +436,8 @@ _C.DUET_CONTEXT.RELIABILITY_GATE_ENABLED = False
 _C.DUET_CONTEXT.RELIABILITY_GATE_COVERAGE_FRACTION = 0.80
 _C.DUET_CONTEXT.RELIABILITY_GATE_TEMPERATURE = 0.25
 _C.DUET_CONTEXT.RELIABILITY_GATE_NEIGHBORS = 5
+_C.DUET_CONTEXT.RELIABILITY_GATE_NUM_VIEWS = 4
+_C.DUET_CONTEXT.RELIABILITY_GATE_LOSS_WEIGHT = 0.10
 # Exact cycle-boundary cache for repeated eval-only diagnostics. Saving and
 # resuming are opt-in and mutually exclusive; an existing cache is never
 # overwritten by the training code.

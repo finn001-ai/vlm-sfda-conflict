@@ -5,7 +5,7 @@ shopt -s nullglob
 seed=2020
 proxy_list="data/VISDA-C/validation_proxy25_seed2020_list.txt"
 cycle1_checkpoint="output/checkpoints/duet_fcp_context_visda_proxy25_seed2020_cycle1.pt"
-method="duet_first_cycle_prior_context_transformer_reliability_gate80_visda_proxy25_seed${seed}"
+method="duet_first_cycle_prior_context_transformer_candidate_committee80_visda_proxy25_seed${seed}"
 run_dir="output/uda/VISDA-C/TV/${method}"
 
 for path in "$proxy_list" "$cycle1_checkpoint" \
@@ -19,12 +19,12 @@ for path in "$proxy_list" "$cycle1_checkpoint" \
 done
 
 case "$run_dir" in
-  output/uda/VISDA-C/TV/duet_first_cycle_prior_context_transformer_reliability_gate80_visda_proxy25_seed2020) ;;
+  output/uda/VISDA-C/TV/duet_first_cycle_prior_context_transformer_candidate_committee80_visda_proxy25_seed2020) ;;
   *) echo "Refusing unexpected output path: $run_dir" >&2; exit 1 ;;
 esac
 rm -rf -- "$run_dir"
 
-echo "==> Resume exact Cycle 1; run reliability-gated full-posterior fusion in Cycle 2"
+echo "==> Resume exact Cycle 1; run candidate-evidence committee in Cycle 2"
 python image_target_of_oh_vs.py \
   --cfg cfgs/visda/duet_first_cycle_prior_context_transformer.yaml \
   CKPT_DIR . SETTING.OUTPUT_SRC source \
@@ -40,6 +40,8 @@ python image_target_of_oh_vs.py \
   DUET_CONTEXT.RELIABILITY_GATE_COVERAGE_FRACTION 0.80 \
   DUET_CONTEXT.RELIABILITY_GATE_TEMPERATURE 0.25 \
   DUET_CONTEXT.RELIABILITY_GATE_NEIGHBORS 5 \
+  DUET_CONTEXT.RELIABILITY_GATE_NUM_VIEWS 4 \
+  DUET_CONTEXT.RELIABILITY_GATE_LOSS_WEIGHT 0.10 \
   DUET_CONTEXT.REAL_MULTIVIEW_ENABLED False \
   DUET_CONTEXT.REAL_MULTIVIEW_RESIDUAL_FALLBACK False \
   DUET_CONTEXT.SOFT_ONLY_ADMISSION True \
@@ -59,15 +61,16 @@ fi
 log_file="${logs[0]}"
 grep -q "DUET cycle checkpoint resumed:.*completed_cycles=1; next_cycle=2" "$log_file"
 grep -q "DUET reliability-gated comparator: cycle=2;.*coverage=80" "$log_file"
-grep -q "DUET reliability-gated soft target: cycle=2;.*hard_admission=0" "$log_file"
+grep -q "DUET candidate-committee auxiliary target: cycle=2;.*hard_admission=0" "$log_file"
 grep -q "DUET reliability-gate isolation: cycle=2; label_mask=original_duet" "$log_file"
 if grep -q "DUET context transformer admitted: cycle=2" "$log_file"; then
   echo "Reliability gate unexpectedly changed hard admission" >&2
   exit 1
 fi
 
-echo "==> Reliability-gate result"
+echo "==> Candidate-committee result"
 grep "DUET reliability-gated comparator:" "$log_file"
 grep "DUET reliability-gated comparator eval-only:" "$log_file"
+grep "DUET conflict auxiliary training reach:" "$log_file"
 grep "Task: TV" "$log_file" | tail -4
 echo "==> Full log: $log_file"

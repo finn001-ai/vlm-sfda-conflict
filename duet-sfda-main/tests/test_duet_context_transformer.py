@@ -126,6 +126,8 @@ def make_context_cfg(**overrides):
         RELIABILITY_GATE_COVERAGE_FRACTION=0.80,
         RELIABILITY_GATE_TEMPERATURE=0.25,
         RELIABILITY_GATE_NEIGHBORS=5,
+        RELIABILITY_GATE_NUM_VIEWS=1,
+        RELIABILITY_GATE_LOSS_WEIGHT=0.10,
         AGREEMENT_AMBIGUITY_EVAL_ENABLED=False,
         AGREEMENT_AMBIGUITY_FRACTIONS=[10, 25, 50, 100],
         AGREEMENT_COMPARATOR_PROBE_ENABLED=False,
@@ -153,7 +155,7 @@ class AnchorBankTest(unittest.TestCase):
         task_bank.update(anchor_features, labels, scores)
         clip_bank.update(anchor_features, labels, scores)
         weak_task = torch.softmax(torch.randn(n, c), dim=1)
-        weak_clip = torch.softmax(torch.randn(n, c), dim=1)
+        weak_clip = torch.roll(weak_task, shifts=1, dims=1)
         strong_task = 0.9 * weak_task + 0.1 / c
         strong_clip = torch.softmax(torch.randn(n, c), dim=1)
         result = build_reliability_gated_fusion(
@@ -175,7 +177,9 @@ class AnchorBankTest(unittest.TestCase):
         self.assertEqual(result["target"].shape, (n, c))
         self.assertEqual(int(result["active"].sum().item()), 16)
         self.assertTrue(torch.allclose(result["target"].sum(dim=1), torch.ones(n)))
-        self.assertTrue(((result["alpha"] >= 0.0) & (result["alpha"] <= 1.0)).all())
+        self.assertTrue(((result["q"] >= 0.0) & (result["q"] <= 1.0)).all())
+        self.assertTrue((result["candidate_a"] != result["candidate_b"]).all())
+        self.assertTrue((result["weight"][~result["active"]] == 0.0).all())
 
     def test_persistent_conflict_memory_accumulates_and_resets_changed_pair(self):
         memory = PersistentConflictBeliefMemory()

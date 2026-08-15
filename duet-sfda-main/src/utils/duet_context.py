@@ -1401,12 +1401,12 @@ def _anchor_neighbor_distribution(
 def build_reliability_gated_fusion(
     weak_task_probs: torch.Tensor,
     weak_clip_probs: torch.Tensor,
-    strong_task_probs: torch.Tensor,
-    strong_clip_probs: torch.Tensor,
+    task_view_probs: torch.Tensor,
+    clip_view_probs: torch.Tensor,
     weak_task_features: torch.Tensor,
     weak_clip_features: torch.Tensor,
-    strong_task_features: torch.Tensor,
-    strong_clip_features: torch.Tensor,
+    task_view_features: torch.Tensor,
+    clip_view_features: torch.Tensor,
     task_bank: ClassBalancedAnchorBank,
     clip_bank: ClassBalancedAnchorBank,
     *,
@@ -1415,12 +1415,13 @@ def build_reliability_gated_fusion(
     temperature: float,
     coverage_fraction: float,
 ) -> dict:
-    """Reliability comparator over complete Task/CLIP posteriors.
+    """Candidate-level committee over real Task/CLIP conflicts.
 
-    Relative reliability is estimated independently for each branch from
-    weak/strong stability and class-conditional anchor-neighborhood fit.
-    Equal fusion is the exact fallback; conflict strength controls how far
-    the adaptive weight may move away from 0.5.
+    ``A`` and ``B`` are the weak Task and CLIP top-1 classes.  Weak and
+    stochastic-view posteriors vote on A/B independently, as do Task/CLIP
+    anchor neighborhoods.  This keeps class identity (unlike a single
+    branch-reliability scalar) and lets several independent observations
+    overturn the equal-fusion fallback.  Target labels are never used.
     """
     if float(temperature) <= 0.0:
         raise ValueError("RELIABILITY_GATE_TEMPERATURE must be positive")
@@ -1428,96 +1429,134 @@ def build_reliability_gated_fusion(
         raise ValueError(
             "RELIABILITY_GATE_COVERAGE_FRACTION must satisfy 0 < value <= 1"
         )
-    tensors = (
-        weak_task_probs,
-        weak_clip_probs,
-        strong_task_probs,
-        strong_clip_probs,
+    if weak_task_probs.shape != weak_clip_probs.shape:
+        raise ValueError("weak Task/CLIP probabilities must have equal shape")
+    if task_view_probs.dim() == 2:
+        task_view_probs = task_view_probs.unsqueeze(0)
+        clip_view_probs = clip_view_probs.unsqueeze(0)
+        task_view_features = task_view_features.unsqueeze(0)
+        clip_view_features = clip_view_features.unsqueeze(0)
+    expected_view_shape = (
+        task_view_probs.size(0),
+        weak_task_probs.size(0),
+        weak_task_probs.size(1),
     )
-    if any(tensor.shape != weak_task_probs.shape for tensor in tensors):
-        raise ValueError("reliability-gate probabilities must have equal shape")
+    if task_view_probs.shape != expected_view_shape or clip_view_probs.shape != expected_view_shape:
+        raise ValueError("reliability-gate view probabilities must be [V,N,C]")
+    if task_view_features.dim() != 3 or clip_view_features.dim() != 3:
+        raise ValueError("reliability-gate view features must be [V,N,D]")
+    if task_view_features.shape[:2] != expected_view_shape[:2] or clip_view_features.shape[:2] != expected_view_shape[:2]:
+        raise ValueError("reliability-gate view features must match [V,N]")
     total = int(weak_task_probs.size(0))
     if total == 0:
         return {
             "active": torch.zeros(0, dtype=torch.bool),
             "target": weak_task_probs.new_zeros(0, num_classes),
-            "alpha": torch.zeros(0),
+            "candidate_a": torch.zeros(0, dtype=torch.long),
+            "candidate_b": torch.zeros(0, dtype=torch.long),
+            "q": torch.zeros(0),
+            "weight": torch.zeros(0),
             "reliability": torch.zeros(0),
-            "task_error": torch.zeros(0),
-            "clip_error": torch.zeros(0),
+            "source_agreement": torch.zeros(0),
         }
 
     device = weak_task_probs.device
     weak_task = weak_task_probs.detach().float().to(device)
     weak_clip = weak_clip_probs.detach().float().to(device)
-    strong_task = strong_task_probs.detach().float().to(device)
-    strong_clip = strong_clip_probs.detach().float().to(device)
+    task_views = task_view_probs.detach().float().to(device)
+    clip_views = clip_view_probs.detach().float().to(device)
     task_neighbor_weak = _anchor_neighbor_distribution(
         weak_task_features.to(device), task_bank,
-        num_classes=num_classes, neighbors=neighbors,
-    )
-    task_neighbor_strong = _anchor_neighbor_distribution(
-        strong_task_features.to(device), task_bank,
         num_classes=num_classes, neighbors=neighbors,
     )
     clip_neighbor_weak = _anchor_neighbor_distribution(
         weak_clip_features.to(device), clip_bank,
         num_classes=num_classes, neighbors=neighbors,
     )
-    clip_neighbor_strong = _anchor_neighbor_distribution(
-        strong_clip_features.to(device), clip_bank,
-        num_classes=num_classes, neighbors=neighbors,
+    task_neighbors = [task_neighbor_weak]
+    clip_neighbors = [clip_neighbor_weak]
+    for view in range(task_views.size(0)):
+        task_neighbors.append(
+            _anchor_neighbor_distribution(
+                task_view_features[view].to(device), task_bank,
+                num_classes=num_classes, neighbors=neighbors,
+            )
+        )
+        clip_neighbors.append(
+            _anchor_neighbor_distribution(
+                clip_view_features[view].to(device), clip_bank,
+                num_classes=num_classes, neighbors=neighbors,
+            )
+        )
+
+    candidate_a = weak_task.argmax(dim=1)
+    candidate_b = weak_clip.argmax(dim=1)
+    if bool((candidate_a == candidate_b).any().item()):
+        raise ValueError(
+            "candidate-evidence committee expects strict Task/CLIP conflicts"
+        )
+    rows = torch.arange(total, device=device)
+
+    def pair_probability(distribution: torch.Tensor) -> torch.Tensor:
+        prob_a = distribution[rows, candidate_a]
+        prob_b = distribution[rows, candidate_b]
+        return (prob_a + _EPS) / (prob_a + prob_b + 2.0 * _EPS)
+
+    # Keep the two networks balanced: each contributes one vote per view.
+    posterior_sources = [weak_task, weak_clip]
+    posterior_sources.extend(task_views[view] for view in range(task_views.size(0)))
+    posterior_sources.extend(clip_views[view] for view in range(clip_views.size(0)))
+    neighbor_sources = task_neighbors + clip_neighbors
+    posterior_votes = torch.stack(
+        [pair_probability(source) for source in posterior_sources]
     )
-    log_two = 0.6931471805599453
-    task_view_error = _rowwise_js(weak_task, strong_task) / log_two
-    clip_view_error = _rowwise_js(weak_clip, strong_clip) / log_two
-    task_neighbor_error = 0.5 * (
-        _rowwise_js(weak_task, task_neighbor_weak)
-        + _rowwise_js(strong_task, task_neighbor_strong)
-    ) / log_two
-    clip_neighbor_error = 0.5 * (
-        _rowwise_js(weak_clip, clip_neighbor_weak)
-        + _rowwise_js(strong_clip, clip_neighbor_strong)
-    ) / log_two
-    # Both sources must support a branch: the geometric mean prevents one
-    # near-zero error from hiding failure of the other independent source.
-    task_error = torch.sqrt(
-        task_view_error.clamp_min(_EPS)
-        * task_neighbor_error.clamp_min(_EPS)
+    neighbor_votes = torch.stack(
+        [pair_probability(source) for source in neighbor_sources]
     )
-    clip_error = torch.sqrt(
-        clip_view_error.clamp_min(_EPS)
-        * clip_neighbor_error.clamp_min(_EPS)
-    )
-    raw_alpha = torch.sigmoid(
-        (clip_error - task_error) / float(temperature)
-    )
-    conflict_strength = (
-        _rowwise_js(weak_task, weak_clip) / log_two
-    ).clamp(0.0, 1.0)
-    alpha = 0.5 + conflict_strength * (raw_alpha - 0.5)
-    target = (
-        alpha.unsqueeze(1) * weak_task
-        + (1.0 - alpha).unsqueeze(1) * weak_clip
+    posterior_q = posterior_votes.mean(dim=0)
+    neighbor_q = neighbor_votes.mean(dim=0)
+    raw_q = 0.5 * (posterior_q + neighbor_q)
+
+    all_votes = torch.cat([posterior_votes, neighbor_votes], dim=0)
+    vote_a_fraction = (all_votes >= 0.5).float().mean(dim=0)
+    source_agreement = torch.maximum(vote_a_fraction, 1.0 - vote_a_fraction)
+    # A low temperature sharpens the committee belief for the auxiliary loss
+    # without changing which candidate wins or which samples are selected.
+    q = torch.sigmoid(
+        torch.logit(raw_q.clamp(_EPS, 1.0 - _EPS)) / float(temperature)
     )
     reliability = (
-        conflict_strength
-        * (task_error - clip_error).abs()
-        / (task_error + clip_error).clamp_min(_EPS)
+        (2.0 * (raw_q - 0.5).abs())
+        * source_agreement
+        * (1.0 - 0.5 * (posterior_q - neighbor_q).abs())
     ).clamp(0.0, 1.0)
+
+    # Preserve every non-candidate class from the exact DUET fallback and
+    # reallocate only the A/B probability mass according to the committee.
+    fallback = 0.5 * (weak_task + weak_clip)
+    target = fallback.clone()
+    pair_mass = fallback[rows, candidate_a] + fallback[rows, candidate_b]
+    target[rows, candidate_a] = pair_mass * q
+    target[rows, candidate_b] = pair_mass * (1.0 - q)
     selected_count = max(
         1, min(total, int(round(total * float(coverage_fraction))))
     )
     order = torch.argsort(reliability, descending=True, stable=True)
     active = torch.zeros(total, dtype=torch.bool, device=device)
     active[order[:selected_count]] = True
+    # Selected samples always retain a small training weight; reliability then
+    # scales genuinely decisive committee observations up to full strength.
+    weight = torch.zeros(total, dtype=torch.float32, device=device)
+    weight[active] = 0.25 + 0.75 * reliability[active]
     return {
         "active": active.cpu(),
         "target": target.cpu(),
-        "alpha": alpha.cpu(),
+        "candidate_a": candidate_a.cpu(),
+        "candidate_b": candidate_b.cpu(),
+        "q": q.cpu(),
+        "weight": weight.cpu(),
         "reliability": reliability.cpu(),
-        "task_error": task_error.cpu(),
-        "clip_error": clip_error.cpu(),
+        "source_agreement": source_agreement.cpu(),
     }
 
 
@@ -3487,6 +3526,10 @@ def run_context_refinement(
     comparator_optimizer: Optional[torch.optim.Optimizer] = None,
     replay_memory: Optional[ComparatorReplayMemory] = None,
     conflict_belief_memory: Optional[PersistentConflictBeliefMemory] = None,
+    reliability_task_view_probs: Optional[torch.Tensor] = None,
+    reliability_clip_view_probs: Optional[torch.Tensor] = None,
+    reliability_task_view_features: Optional[torch.Tensor] = None,
+    reliability_clip_view_features: Optional[torch.Tensor] = None,
     cycle: int = 1,
     log_fn: Callable[[str], None] = logging.info,
 ) -> dict:
@@ -3520,6 +3563,10 @@ def run_context_refinement(
             comparator_optimizer=comparator_optimizer,
             replay_memory=replay_memory,
             conflict_belief_memory=conflict_belief_memory,
+            reliability_task_view_probs=reliability_task_view_probs,
+            reliability_clip_view_probs=reliability_clip_view_probs,
+            reliability_task_view_features=reliability_task_view_features,
+            reliability_clip_view_features=reliability_clip_view_features,
             cycle=cycle,
             log_fn=log_fn,
         )
@@ -3885,6 +3932,10 @@ def run_comparator_refinement(
     comparator_optimizer: Optional[torch.optim.Optimizer] = None,
     replay_memory: Optional[ComparatorReplayMemory] = None,
     conflict_belief_memory: Optional[PersistentConflictBeliefMemory] = None,
+    reliability_task_view_probs: Optional[torch.Tensor] = None,
+    reliability_clip_view_probs: Optional[torch.Tensor] = None,
+    reliability_task_view_features: Optional[torch.Tensor] = None,
+    reliability_clip_view_features: Optional[torch.Tensor] = None,
     cycle: int = 1,
     log_fn: Callable[[str], None] = logging.info,
 ) -> dict:
@@ -4034,6 +4085,9 @@ def run_comparator_refinement(
     reliability_gate_neighbors = int(
         getattr(context_cfg, "RELIABILITY_GATE_NEIGHBORS", 5)
     )
+    reliability_gate_num_views = int(
+        getattr(context_cfg, "RELIABILITY_GATE_NUM_VIEWS", 1)
+    )
     if reliability_gate_enabled and conflict_memory_enabled:
         raise ValueError(
             "RELIABILITY_GATE_ENABLED and CONFLICT_MEMORY_ENABLED are exclusive"
@@ -4046,6 +4100,8 @@ def run_comparator_refinement(
         raise ValueError("RELIABILITY_GATE_TEMPERATURE must be positive")
     if reliability_gate_enabled and reliability_gate_neighbors < 1:
         raise ValueError("RELIABILITY_GATE_NEIGHBORS must be >= 1")
+    if reliability_gate_enabled and reliability_gate_num_views < 1:
+        raise ValueError("RELIABILITY_GATE_NUM_VIEWS must be >= 1")
     if conflict_memory_enabled and not 0.0 < conflict_memory_coverage <= 1.0:
         raise ValueError(
             "CONFLICT_MEMORY_COVERAGE_FRACTION must satisfy 0 < value <= 1"
@@ -4195,9 +4251,14 @@ def run_comparator_refinement(
     }
     reliability_gate_payload = {
         "active": torch.zeros(num_samples, dtype=torch.bool),
+        "switch": torch.zeros(num_samples, dtype=torch.bool),
         "target": clip_probs.detach().clone(),
-        "alpha": torch.full((num_samples,), 0.5, dtype=torch.float32),
+        "candidate_a": torch.full((num_samples,), -1, dtype=torch.long),
+        "candidate_b": torch.full((num_samples,), -1, dtype=torch.long),
+        "q": torch.full((num_samples,), 0.5, dtype=torch.float32),
+        "weight": torch.zeros(num_samples, dtype=torch.float32),
         "reliability": torch.zeros(num_samples, dtype=torch.float32),
+        "source_agreement": torch.zeros(num_samples, dtype=torch.float32),
     }
 
     strict_total = int(strict_conflict_mask.sum().item())
@@ -4458,12 +4519,28 @@ def run_comparator_refinement(
                 gate_local = build_reliability_gated_fusion(
                     task_probs[strict_positions],
                     clip_probs[strict_positions],
-                    strong_task_probs[strict_positions],
-                    strong_clip_probs[strict_positions],
+                    (
+                        reliability_task_view_probs[:, strict_positions]
+                        if reliability_task_view_probs is not None
+                        else strong_task_probs[strict_positions]
+                    ),
+                    (
+                        reliability_clip_view_probs[:, strict_positions]
+                        if reliability_clip_view_probs is not None
+                        else strong_clip_probs[strict_positions]
+                    ),
                     task_features[strict_positions],
                     clip_features[strict_positions],
-                    strong_task_features[strict_positions],
-                    strong_clip_features[strict_positions],
+                    (
+                        reliability_task_view_features[:, strict_positions]
+                        if reliability_task_view_features is not None
+                        else strong_task_features[strict_positions]
+                    ),
+                    (
+                        reliability_clip_view_features[:, strict_positions]
+                        if reliability_clip_view_features is not None
+                        else strong_clip_features[strict_positions]
+                    ),
                     task_bank,
                     clip_bank,
                     num_classes=num_classes,
@@ -4471,7 +4548,10 @@ def run_comparator_refinement(
                     temperature=reliability_gate_temperature,
                     coverage_fraction=reliability_gate_coverage,
                 )
-                for key in ("active", "target", "alpha", "reliability"):
+                for key in (
+                    "active", "target", "candidate_a", "candidate_b", "q",
+                    "weight", "reliability", "source_agreement",
+                ):
                     reliability_gate_payload[key][strict_positions] = gate_local[key]
                 gate_active = gate_local["active"]
                 gate_count = int(gate_active.sum().item())
@@ -4482,23 +4562,33 @@ def run_comparator_refinement(
                 baseline_label = baseline_local.argmax(dim=1)
                 gated_label = gated_local.argmax(dim=1)
                 switches = gate_active & (gated_label != baseline_label)
+                reliability_gate_payload["switch"][strict_positions] = switches
                 log_fn(
                     "DUET reliability-gated comparator: cycle={}; conflicts={}; "
-                    "active={}; coverage={:.2f}%; alpha_mean={:.4f}; "
-                    "alpha_p10={:.4f}; alpha_p90={:.4f}; "
-                    "reliability_mean={:.4f}; switches_from_duet_fallback={}; "
-                    "candidate_space=complete_posterior; hard_admission_changed=False; "
+                    "views={}; active={}; coverage={:.2f}%; candidate_q_mean={:.4f}; "
+                    "candidate_q_p10={:.4f}; candidate_q_p90={:.4f}; "
+                    "reliability_mean={:.4f}; source_agreement_mean={:.4f}; "
+                    "effective_sample_equivalent={:.2f}; "
+                    "switches_from_duet_fallback={}; "
+                    "method=candidate_evidence_committee; "
+                    "candidate_space=task_top1_vs_clip_top1; "
+                    "hard_admission_changed=False; original_clip_kl_changed=False; "
                     "ground_truth_affects_training=False".format(
                         cycle,
                         int(strict_positions.numel()),
+                        reliability_gate_num_views,
                         gate_count,
                         100.0 * gate_count / int(strict_positions.numel()),
-                        float(gate_local["alpha"][gate_active].mean().item()),
-                        float(torch.quantile(gate_local["alpha"][gate_active], 0.10).item()),
-                        float(torch.quantile(gate_local["alpha"][gate_active], 0.90).item()),
+                        float(gate_local["q"][gate_active].mean().item()),
+                        float(torch.quantile(gate_local["q"][gate_active], 0.10).item()),
+                        float(torch.quantile(gate_local["q"][gate_active], 0.90).item()),
                         float(
                             gate_local["reliability"][gate_active].mean().item()
                         ),
+                        float(
+                            gate_local["source_agreement"][gate_active].mean().item()
+                        ),
+                        float(gate_local["weight"][gate_active].sum().item()),
                         int(switches.sum().item()),
                     )
                 )
@@ -4521,11 +4611,22 @@ def run_comparator_refinement(
                         if switch_count > 0
                         else float("nan")
                     )
+                    beneficial_switches = int(
+                        (gated_label[switches] == labels[strict_positions][switches])
+                        .sum().item()
+                    )
+                    harmful_switches = int(
+                        (baseline_label[switches] == labels[strict_positions][switches])
+                        .sum().item()
+                    )
+                    net_corrected = beneficial_switches - harmful_switches
                     log_fn(
                         "DUET reliability-gated comparator eval-only: cycle={}; "
                         "same_subset_n={}; duet_fallback_acc={:.2f}%; "
                         "gated_comparator_acc={:.2f}%; gain={:+.2f}pp; "
                         "switches={}; switch_precision={:.2f}%; "
+                        "beneficial_switches={}; harmful_switches={}; "
+                        "net_corrected={:+d}; full_target_equivalent={:+.2f}pp; "
                         "ground_truth_affects_training=False".format(
                             cycle,
                             gate_count,
@@ -4534,6 +4635,10 @@ def run_comparator_refinement(
                             100.0 * (gated_acc - baseline_acc),
                             switch_count,
                             100.0 * switch_precision,
+                            beneficial_switches,
+                            harmful_switches,
+                            net_corrected,
+                            100.0 * net_corrected / num_samples,
                         )
                     )
         # distribution matching：只保留“长得像真实 conflict”的 synthetic 对
