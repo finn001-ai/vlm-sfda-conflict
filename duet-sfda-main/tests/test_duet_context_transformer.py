@@ -111,6 +111,7 @@ def make_context_cfg(**overrides):
         REAL_CONFLICT_GT_PROBE_LR=0.02,
         REAL_CONFLICT_GT_PROBE_EXTENDED_20D_ENABLED=False,
         REAL_MULTIVIEW_ENABLED=False,
+        REAL_MULTIVIEW_RESIDUAL_FALLBACK=False,
         REAL_MULTIVIEW_TRAIN_FRACTION=0.60,
         REAL_MULTIVIEW_FINETUNE_STEPS=10,
         REAL_MULTIVIEW_TEMPERATURE=0.50,
@@ -1703,6 +1704,78 @@ class ComparatorTest(unittest.TestCase):
         )
         self.assertIn("train_coverage=", multiview_log)
         self.assertIn("construction_uses_gt=False", multiview_log)
+
+    def test_residual_soft_pipeline_uses_fallback_vs_challenger_without_hard_delta(self):
+        torch.manual_seed(23)
+        n, c, d = 512, 8, 32
+        feat = torch.randn(n, d)
+        proto = torch.randn(c, d)
+        sim = feat @ proto.t()
+        task_prob = torch.softmax(sim * 3.0 + torch.randn(n, c) * 0.3, dim=1)
+        clip_prob = torch.softmax(sim * 2.7 + torch.randn(n, c) * 0.5, dim=1)
+        clip_feat = torch.randn(n, d)
+        strong_task = torch.softmax(sim * 1.4 + torch.randn(n, c) * 0.8, dim=1)
+        strong_clip = torch.softmax(sim * 1.2 + torch.randn(n, c) * 0.9, dim=1)
+        model = PairwiseConflictComparator(input_dim=16, hidden=32, layers=2)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        logs = []
+        result = run_context_refinement(
+            task_prob,
+            clip_prob,
+            feat,
+            num_classes=c,
+            context_cfg=make_context_cfg(
+                REFINER_TYPE="comparator",
+                TRAIN_STEPS_PER_CYCLE=0,
+                COMPARATOR_COVERAGE_FRACTION=0.50,
+                REAL_MULTIVIEW_ENABLED=True,
+                REAL_MULTIVIEW_RESIDUAL_FALLBACK=True,
+                REAL_MULTIVIEW_TRAIN_FRACTION=0.60,
+                REAL_MULTIVIEW_FINETUNE_STEPS=5,
+                REAL_MULTIVIEW_SYNTHETIC_MIX_FRACTION=0.0,
+                SOFT_ONLY_ADMISSION=True,
+            ),
+            pre_prior_task_probs=task_prob,
+            pre_prior_clip_probs=clip_prob,
+            labels=sim.argmax(dim=1),
+            sample_indices=torch.arange(n),
+            clip_features=clip_feat,
+            strong_task_probs=strong_task,
+            strong_clip_probs=strong_clip,
+            strong_task_features=feat,
+            strong_clip_features=clip_feat,
+            comparator=model,
+            comparator_optimizer=optimizer,
+            cycle=2,
+            log_fn=logs.append,
+        )
+        resolved = result["resolved_mask"]
+        fallback = (task_prob + clip_prob).argmax(dim=1)
+        task_top1 = task_prob.argmax(dim=1)
+        clip_top1 = clip_prob.argmax(dim=1)
+        rows = torch.arange(n)
+        mixed = 0.5 * (task_prob + clip_prob)
+        stronger = torch.where(
+            mixed[rows, task_top1] >= mixed[rows, clip_top1],
+            task_top1,
+            clip_top1,
+        )
+        challenger = torch.where(
+            fallback == task_top1,
+            clip_top1,
+            torch.where(fallback == clip_top1, task_top1, stronger),
+        )
+        chosen = result["context_labels"][resolved]
+        self.assertTrue(
+            ((chosen == fallback[resolved]) | (chosen == challenger[resolved])).all()
+        )
+        self.assertEqual(result["stats"]["admitted_delta"], 0)
+        self.assertTrue(
+            any("candidate_a=duet_fallback" in line for line in logs)
+        )
+        self.assertTrue(
+            any("residual_fallback=True" in line for line in logs)
+        )
         self.assertTrue(
             any("DUET comparator real-conflict distribution" in line for line in logs)
         )

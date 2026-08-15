@@ -8,7 +8,7 @@ shopt -s nullglob
 seed=2020
 proxy_list="data/VISDA-C/validation_proxy25_seed2020_list.txt"
 cycle1_checkpoint="output/checkpoints/duet_fcp_context_visda_proxy25_seed2020_cycle1.pt"
-method="duet_first_cycle_prior_context_transformer_real_multiview_visda_proxy25_seed${seed}"
+method="duet_first_cycle_prior_context_transformer_residual_soft_visda_proxy25_seed${seed}"
 run_dir="output/uda/VISDA-C/TV/${method}"
 
 # image_target_of_oh_vs.py dispatches the checkpoint-aware implementation only
@@ -58,7 +58,7 @@ if [ "$proxy_samples" -ne 13847 ] || [ "$full_samples" -ne 55388 ]; then
 fi
 
 case "$run_dir" in
-  output/uda/VISDA-C/TV/duet_first_cycle_prior_context_transformer_real_multiview_visda_proxy25_seed2020) ;;
+  output/uda/VISDA-C/TV/duet_first_cycle_prior_context_transformer_residual_soft_visda_proxy25_seed2020) ;;
   *)
     echo "Refusing to clear unexpected VisDA-C path: $run_dir" >&2
     exit 1
@@ -67,8 +67,8 @@ esac
 rm -rf -- "$run_dir"
 
 echo "==> Resume exact Cycle 1; run only Cycle 2 on proxy25"
-echo "==> Formal method: synthetic pretrain + GT-free real weak/strong soft fine-tune"
-echo "==> Admission coverage=50%; real supervision coverage=60%"
+echo "==> Formal method v2: DUET fallback vs challenger residual soft correction"
+echo "==> Soft intervention coverage=50%; real supervision coverage=60%; hard CE additions=0"
 python image_target_of_oh_vs.py \
   --cfg cfgs/visda/duet_first_cycle_prior_context_transformer.yaml \
   CKPT_DIR . SETTING.OUTPUT_SRC source \
@@ -77,12 +77,15 @@ python image_target_of_oh_vs.py \
   ACTIVE.CYCLE 2 \
   ACTIVE.ADAPTATION_LIST "$proxy_list" \
   DUET_CONTEXT.CYCLE_CHECKPOINT_RESUME_PATH "$cycle1_checkpoint" \
+  DUET_CONTEXT.TRAIN_STEPS_PER_CYCLE 0 \
   DUET_CONTEXT.COMPARATOR_COVERAGE_FRACTION 0.50 \
   DUET_CONTEXT.REAL_MULTIVIEW_ENABLED True \
+  DUET_CONTEXT.REAL_MULTIVIEW_RESIDUAL_FALLBACK True \
   DUET_CONTEXT.REAL_MULTIVIEW_TRAIN_FRACTION 0.60 \
   DUET_CONTEXT.REAL_MULTIVIEW_FINETUNE_STEPS 100 \
   DUET_CONTEXT.REAL_MULTIVIEW_TEMPERATURE 0.50 \
-  DUET_CONTEXT.REAL_MULTIVIEW_SYNTHETIC_MIX_FRACTION 0.25 \
+  DUET_CONTEXT.REAL_MULTIVIEW_SYNTHETIC_MIX_FRACTION 0.0 \
+  DUET_CONTEXT.SOFT_ONLY_ADMISSION True \
   DUET_CONTEXT.EARLY_STOP_ENABLED False \
   DUET_CONTEXT.REAL_CONFLICT_GT_PROBE_ENABLED False \
   DUET_CONTEXT.REAL_CONFLICT_GT_PROBE_EXTENDED_20D_ENABLED False \
@@ -103,6 +106,14 @@ if ! grep -q "DUET cycle checkpoint resumed:.*completed_cycles=1; next_cycle=2" 
 fi
 if [ "$(grep -c "DUET comparator real-multiview training: cycle=2" "$log_file")" -ne 1 ]; then
   echo "Cycle 2 did not execute real-multiview comparator fine-tuning exactly once" >&2
+  exit 1
+fi
+if ! grep -q "DUET residual candidate construction: cycle=2; candidate_a=duet_fallback; candidate_b=task_clip_challenger" "$log_file"; then
+  echo "Cycle 2 did not use DUET fallback vs challenger candidates" >&2
+  exit 1
+fi
+if ! grep -q "DUET context soft-only: cycle=2;.*hard_admission=0" "$log_file"; then
+  echo "Residual run unexpectedly added conflict labels to hard CE" >&2
   exit 1
 fi
 if ! grep -q "DUET comparator selection: cycle=2; mode=rank_coverage;.*requested_coverage=50.00%" "$log_file"; then

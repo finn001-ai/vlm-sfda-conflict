@@ -107,7 +107,7 @@ def test_real_multiview_runner_dispatches_to_checkpoint_aware_method():
         "tools/run_visda_real_multiview_comparator_proxy25.sh"
     ).read_text()
     assert (
-        'method="duet_first_cycle_prior_context_transformer_real_multiview_'
+        'method="duet_first_cycle_prior_context_transformer_residual_soft_'
         'visda_proxy25_seed${seed}"' in runner
     )
     assert "duet_first_cycle_prior_context_transformer_*)" in runner

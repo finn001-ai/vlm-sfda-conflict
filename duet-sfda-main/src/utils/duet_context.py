@@ -2270,6 +2270,9 @@ def build_real_conflict_multiview_supervision(
     *,
     train_fraction: float,
     temperature: float,
+    weak_pair_features: Optional[torch.Tensor] = None,
+    strong_pair_features: Optional[torch.Tensor] = None,
+    residual_from_fallback: bool = False,
 ) -> dict:
     """Build label-free soft A/B targets from weak/strong conflict stability.
 
@@ -2328,10 +2331,61 @@ def build_real_conflict_multiview_supervision(
     clip_reliability = 1.0 - 0.5 * (
         clip_weak_margin - clip_strong_margin
     ).abs()
-    task_evidence = 0.5 * (task_weak_margin + task_strong_margin)
-    clip_evidence = 0.5 * (clip_weak_margin + clip_strong_margin)
-    # Positive score means choose A/Task; negative means choose B/CLIP.
-    score = task_reliability * task_evidence + clip_reliability * clip_evidence
+    if residual_from_fallback:
+        if weak_pair_features is None or strong_pair_features is None:
+            raise ValueError(
+                "residual multiview supervision requires weak/strong pair features"
+            )
+        if weak_pair_features.shape != strong_pair_features.shape:
+            raise ValueError("weak/strong pair features must have equal shape")
+        if weak_pair_features.shape != (total, 16):
+            raise ValueError("weak/strong pair features must have shape [N, 16]")
+
+        # Candidate A is defined by the weak DUET fallback, so using the weak
+        # probability margin as supervision would merely teach identity. The
+        # residual target instead uses the independently augmented strong view
+        # and neighborhood support from both weak and strong representations.
+        strong_probability_evidence = 0.5 * (
+            task_strong_margin + clip_strong_margin
+        )
+
+        def anchor_evidence(features: torch.Tensor) -> torch.Tensor:
+            features = features.detach().float().to(device)
+            differences = torch.stack(
+                [
+                    0.5 * (features[:, 8] - features[:, 9]),
+                    0.5 * (features[:, 10] - features[:, 11]),
+                ],
+                dim=1,
+            )
+            available = torch.stack(
+                [
+                    features[:, 12] * features[:, 13],
+                    features[:, 14] * features[:, 15],
+                ],
+                dim=1,
+            )
+            return (differences * available).sum(dim=1) / available.sum(
+                dim=1
+            ).clamp_min(1.0)
+
+        neighborhood_evidence = 0.5 * (
+            anchor_evidence(weak_pair_features)
+            + anchor_evidence(strong_pair_features)
+        )
+        score = strong_probability_evidence + neighborhood_evidence
+        # Reliability now measures agreement between the independent strong
+        # probability vote and the cross-view neighborhood vote.
+        agreement = (
+            strong_probability_evidence * neighborhood_evidence >= 0.0
+        ).float()
+        task_reliability = 0.5 + 0.5 * agreement
+        clip_reliability = task_reliability.clone()
+    else:
+        task_evidence = 0.5 * (task_weak_margin + task_strong_margin)
+        clip_evidence = 0.5 * (clip_weak_margin + clip_strong_margin)
+        # Positive score means choose A/Task; negative means choose B/CLIP.
+        score = task_reliability * task_evidence + clip_reliability * clip_evidence
     confidence = (0.5 * score.abs()).clamp(0.0, 1.0)
     probability_a = torch.sigmoid(score / float(temperature))
     soft_targets = torch.stack([probability_a, 1.0 - probability_a], dim=1)
@@ -3640,6 +3694,13 @@ def run_comparator_refinement(
     real_multiview_enabled = bool(
         getattr(context_cfg, "REAL_MULTIVIEW_ENABLED", False)
     )
+    real_multiview_residual_fallback = bool(
+        getattr(
+            context_cfg,
+            "REAL_MULTIVIEW_RESIDUAL_FALLBACK",
+            False,
+        )
+    )
     real_multiview_train_fraction = float(
         getattr(context_cfg, "REAL_MULTIVIEW_TRAIN_FRACTION", 0.60)
     )
@@ -3946,7 +4007,37 @@ def run_comparator_refinement(
         real_features = torch.zeros(
             0, 16, dtype=torch.float32
         )
+        strong_real_features = torch.zeros(
+            0, 16, dtype=torch.float32
+        )
+        real_candidate_a = task_top1[strict_positions]
+        real_candidate_b = clip_top1[strict_positions]
         if strict_positions.numel() > 0:
+            if real_multiview_residual_fallback:
+                duet_mix = 0.5 * (
+                    task_probs[strict_positions]
+                    + clip_probs[strict_positions]
+                )
+                real_candidate_a = duet_mix.argmax(dim=1)
+                strict_task_candidate = task_top1[strict_positions]
+                strict_clip_candidate = clip_top1[strict_positions]
+                rows = torch.arange(strict_positions.numel())
+                task_mix_score = duet_mix[rows, strict_task_candidate]
+                clip_mix_score = duet_mix[rows, strict_clip_candidate]
+                stronger_branch_candidate = torch.where(
+                    task_mix_score >= clip_mix_score,
+                    strict_task_candidate,
+                    strict_clip_candidate,
+                )
+                real_candidate_b = torch.where(
+                    real_candidate_a == strict_task_candidate,
+                    strict_clip_candidate,
+                    torch.where(
+                        real_candidate_a == strict_clip_candidate,
+                        strict_task_candidate,
+                        stronger_branch_candidate,
+                    ),
+                )
             real_features = build_comparator_features(
                 task_probs[strict_positions],
                 clip_probs[strict_positions],
@@ -3954,13 +4045,42 @@ def run_comparator_refinement(
                 clip_features[strict_positions],
                 task_bank,
                 clip_bank,
-                class_a=task_top1[strict_positions],
-                class_b=clip_top1[strict_positions],
+                class_a=real_candidate_a,
+                class_b=real_candidate_b,
                 sim_topk=sim_topk,
             ).to(device)
             _log_pair_distribution(
                 real_features.cpu(), "real-conflict", cycle, log_fn
             )
+            if real_multiview_residual_fallback:
+                if (
+                    strong_task_probs is None
+                    or strong_clip_probs is None
+                    or strong_task_features is None
+                    or strong_clip_features is None
+                ):
+                    raise ValueError(
+                        "residual fallback mode requires strong probabilities and features"
+                    )
+                strong_real_features = build_comparator_features(
+                    strong_task_probs[strict_positions],
+                    strong_clip_probs[strict_positions],
+                    strong_task_features[strict_positions],
+                    strong_clip_features[strict_positions],
+                    task_bank,
+                    clip_bank,
+                    class_a=real_candidate_a,
+                    class_b=real_candidate_b,
+                    sim_topk=sim_topk,
+                ).to(device)
+                log_fn(
+                    "DUET residual candidate construction: cycle={}; "
+                    "candidate_a=duet_fallback; candidate_b=task_clip_challenger; "
+                    "strong_view=True; neighborhood_views=weak,strong; "
+                    "construction_uses_gt=False; ground_truth_affects_training=False".format(
+                        cycle
+                    )
+                )
         # distribution matching：只保留“长得像真实 conflict”的 synthetic 对
         if (
             dist_match_synthetic
@@ -4315,10 +4435,13 @@ def run_comparator_refinement(
                 clip_probs[strict_positions],
                 strong_task_probs[strict_positions],
                 strong_clip_probs[strict_positions],
-                task_top1[strict_positions],
-                clip_top1[strict_positions],
+                real_candidate_a,
+                real_candidate_b,
                 train_fraction=real_multiview_train_fraction,
                 temperature=real_multiview_temperature,
+                weak_pair_features=real_features,
+                strong_pair_features=strong_real_features,
+                residual_from_fallback=real_multiview_residual_fallback,
             )
             multiview_selected = multiview["selected"]
             selected_count = int(multiview_selected.sum().item())
@@ -4335,6 +4458,9 @@ def run_comparator_refinement(
                 synthetic_targets=synthetic_targets,
                 synthetic_mix_fraction=real_multiview_synthetic_mix_fraction,
             )
+            stats["train_loss"] = real_multiview_loss
+            stats["train_current_samples"] = selected_count
+            stats["optimizer_steps_this_cycle"] = real_multiview_finetune_steps
             selected_soft_targets = multiview["soft_targets"]
             pseudo_choose_task = int(
                 (selected_soft_targets[:, 0] >= selected_soft_targets[:, 1])
@@ -4343,14 +4469,16 @@ def run_comparator_refinement(
             )
             log_fn(
                 "DUET comparator real-multiview training: cycle={}; "
-                "views=weak_plus_strong; real_conflicts={}; selected={}; "
-                "train_coverage={:.2f}%; pseudo_choose_task={}; "
-                "pseudo_choose_clip={}; confidence_mean={:.4f}; "
+                "views=weak_plus_strong; residual_fallback={}; "
+                "real_conflicts={}; selected={}; train_coverage={:.2f}%; "
+                "pseudo_choose_a_keep={}; pseudo_choose_b_switch={}; "
+                "confidence_mean={:.4f}; "
                 "task_stability_mean={:.4f}; clip_stability_mean={:.4f}; "
                 "temperature={:.3f}; finetune_steps={}; "
                 "synthetic_mix_fraction={:.2f}; train_loss={:.6f}; "
                 "construction_uses_gt=False; ground_truth_affects_training=False".format(
                     cycle,
+                    real_multiview_residual_fallback,
                     int(strict_positions.numel()),
                     selected_count,
                     100.0 * selected_count / int(strict_positions.numel()),
@@ -4515,8 +4643,8 @@ def run_comparator_refinement(
                         )
             decision = apply_pairwise_decision(
                 logits,
-                task_top1[strict_positions],
-                clip_top1[strict_positions],
+                real_candidate_a,
+                real_candidate_b,
                 gate=gate,
                 coverage_fraction=coverage_fraction,
             )
@@ -4526,6 +4654,14 @@ def run_comparator_refinement(
                 decision["margin"], cycle, gate, log_fn
             )
             selected_count = int(decision["resolved"].sum().item())
+            switch_count = int(
+                (
+                    decision["resolved"]
+                    & (decision["chosen"] != real_candidate_a.cpu())
+                )
+                .sum()
+                .item()
+            )
             achieved_coverage = (
                 100.0 * selected_count / int(strict_positions.numel())
             )
@@ -4533,7 +4669,9 @@ def run_comparator_refinement(
                 "DUET comparator selection: cycle={}; mode={}; selected={}; "
                 "total={}; achieved_coverage={:.2f}%; "
                 "requested_coverage={:.2f}%; absolute_gate={:.2f}; "
-                "absolute_gate_ignored={}; ground_truth_affects_training=False".format(
+                "absolute_gate_ignored={}; candidate_semantics={}; "
+                "switches_from_fallback={}; "
+                "ground_truth_affects_training=False".format(
                     cycle,
                     decision["selection_mode"],
                     selected_count,
@@ -4542,6 +4680,12 @@ def run_comparator_refinement(
                     100.0 * coverage_fraction,
                     gate,
                     decision["selection_mode"] == "rank_coverage",
+                    (
+                        "duet_fallback_vs_challenger"
+                        if real_multiview_residual_fallback
+                        else "task_vs_clip"
+                    ),
+                    switch_count,
                 )
             )
             resolved_rows = decision["resolved"]
@@ -4550,34 +4694,71 @@ def run_comparator_refinement(
             context_labels[resolved_strict] = decision["chosen"][
                 resolved_rows
             ].long()
-            winning_distribution = torch.where(
-                (
-                    decision["trust_task"].unsqueeze(1)
-                    >= decision["trust_clip"].unsqueeze(1)
-                ).cpu(),
-                task_probs[strict_positions],
-                clip_probs[strict_positions],
-            )
+            if real_multiview_residual_fallback:
+                winning_distribution = 0.5 * (
+                    task_probs[strict_positions]
+                    + clip_probs[strict_positions]
+                )
+                rows = torch.arange(strict_positions.numel())
+                pair_mass = (
+                    winning_distribution[rows, real_candidate_a]
+                    + winning_distribution[rows, real_candidate_b]
+                )
+                winning_distribution[rows, real_candidate_a] = (
+                    decision["trust_task"].cpu() * pair_mass
+                )
+                winning_distribution[rows, real_candidate_b] = (
+                    decision["trust_clip"].cpu() * pair_mass
+                )
+            else:
+                winning_distribution = torch.where(
+                    (
+                        decision["trust_task"].unsqueeze(1)
+                        >= decision["trust_clip"].unsqueeze(1)
+                    ).cpu(),
+                    task_probs[strict_positions],
+                    clip_probs[strict_positions],
+                )
             refined_targets[resolved_strict] = winning_distribution[
                 resolved_rows
             ].detach()
             stats["resolved_strict"] = int(resolved_rows.sum().item())
-            stats["support_task"] = int(
-                (
-                    resolved_rows
-                    & (decision["trust_task"] >= decision["trust_clip"])
+            if real_multiview_residual_fallback:
+                chosen = decision["chosen"]
+                strict_task_candidate = task_top1[strict_positions]
+                strict_clip_candidate = clip_top1[strict_positions]
+                stats["support_task"] = int(
+                    (resolved_rows & (chosen == strict_task_candidate)).sum().item()
                 )
-                .sum()
-                .item()
-            )
-            stats["support_clip"] = int(
-                (
-                    resolved_rows
-                    & (decision["trust_task"] < decision["trust_clip"])
+                stats["support_clip"] = int(
+                    (resolved_rows & (chosen == strict_clip_candidate)).sum().item()
                 )
-                .sum()
-                .item()
-            )
+                stats["third_class"] = int(
+                    (
+                        resolved_rows
+                        & (chosen != strict_task_candidate)
+                        & (chosen != strict_clip_candidate)
+                    )
+                    .sum()
+                    .item()
+                )
+            else:
+                stats["support_task"] = int(
+                    (
+                        resolved_rows
+                        & (decision["trust_task"] >= decision["trust_clip"])
+                    )
+                    .sum()
+                    .item()
+                )
+                stats["support_clip"] = int(
+                    (
+                        resolved_rows
+                        & (decision["trust_task"] < decision["trust_clip"])
+                    )
+                    .sum()
+                    .item()
+                )
             stats["abstain"] = int((~resolved_rows).sum().item())
             stats["context_mean_conf"] = float(
                 decision["confidence"][resolved_rows].mean().item()
@@ -4593,10 +4774,21 @@ def run_comparator_refinement(
         else 0.0
     )
     stats["weak_defer_rate_pct"] = 0.0
-    stats["final_admitted"] = (
-        stats["post_prior_agreement"] - stats["weak_deferred"] + stats["resolved_strict"]
+    soft_only_admission = bool(
+        getattr(context_cfg, "SOFT_ONLY_ADMISSION", False)
     )
-    stats["admitted_delta"] = stats["resolved_strict"] - stats["weak_deferred"]
+    if soft_only_admission:
+        stats["final_admitted"] = stats["post_prior_agreement"]
+        stats["admitted_delta"] = 0
+    else:
+        stats["final_admitted"] = (
+            stats["post_prior_agreement"]
+            - stats["weak_deferred"]
+            + stats["resolved_strict"]
+        )
+        stats["admitted_delta"] = (
+            stats["resolved_strict"] - stats["weak_deferred"]
+        )
     _log_correction_stats(stats, cycle, log_fn)
     _log_context_stats(stats, "comparator", cycle, log_fn)
     if eval_only_logging and labels is not None:

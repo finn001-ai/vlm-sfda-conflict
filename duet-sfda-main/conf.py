@@ -413,6 +413,10 @@ _C.DUET_CONTEXT.REAL_CONFLICT_GT_PROBE_EXTENDED_20D_ENABLED = False
 # soft pseudo targets on a fixed confidence-ranked subset, followed by a short
 # fine-tune that retains a small synthetic mix.
 _C.DUET_CONTEXT.REAL_MULTIVIEW_ENABLED = False
+# Baseline-aware variant: candidate A is the original DUET mixed fallback and
+# candidate B is the strongest alternative from Task/CLIP. Formal runs use
+# this with soft-only intervention so conflict labels never enter hard CE.
+_C.DUET_CONTEXT.REAL_MULTIVIEW_RESIDUAL_FALLBACK = False
 _C.DUET_CONTEXT.REAL_MULTIVIEW_TRAIN_FRACTION = 0.60
 _C.DUET_CONTEXT.REAL_MULTIVIEW_FINETUNE_STEPS = 100
 _C.DUET_CONTEXT.REAL_MULTIVIEW_TEMPERATURE = 0.50
