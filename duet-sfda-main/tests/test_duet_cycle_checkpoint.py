@@ -100,3 +100,14 @@ def test_context_method_and_proxy_runner_save_every_required_cycle1_state():
     assert "CYCLE_CHECKPOINT_SAVE_PATH" in runner
     assert "expected_task_checkpoints=4" in runner
     assert "expected_task_checkpoints=8" in runner
+
+
+def test_real_multiview_runner_dispatches_to_checkpoint_aware_method():
+    runner = Path(
+        "tools/run_visda_real_multiview_comparator_proxy25.sh"
+    ).read_text()
+    assert (
+        'method="duet_first_cycle_prior_context_transformer_real_multiview_'
+        'visda_proxy25_seed${seed}"' in runner
+    )
+    assert "duet_first_cycle_prior_context_transformer_*)" in runner

@@ -8,8 +8,19 @@ shopt -s nullglob
 seed=2020
 proxy_list="data/VISDA-C/validation_proxy25_seed2020_list.txt"
 cycle1_checkpoint="output/checkpoints/duet_fcp_context_visda_proxy25_seed2020_cycle1.pt"
-method="duet_first_cycle_prior_context_real_multiview_visda_proxy25_seed${seed}"
+method="duet_first_cycle_prior_context_transformer_real_multiview_visda_proxy25_seed${seed}"
 run_dir="output/uda/VISDA-C/TV/${method}"
+
+# image_target_of_oh_vs.py dispatches the checkpoint-aware implementation only
+# for this exact prefix. Refuse to run if a future rename would fall through to
+# the generic duet_first_cycle_prior/plmatch implementation.
+case "$method" in
+  duet_first_cycle_prior_context_transformer_*) ;;
+  *)
+    echo "Method name would bypass the checkpoint-aware context implementation: $method" >&2
+    exit 1
+    ;;
+esac
 
 for path in \
   "$proxy_list" \
@@ -47,7 +58,7 @@ if [ "$proxy_samples" -ne 13847 ] || [ "$full_samples" -ne 55388 ]; then
 fi
 
 case "$run_dir" in
-  output/uda/VISDA-C/TV/duet_first_cycle_prior_context_real_multiview_visda_proxy25_seed2020) ;;
+  output/uda/VISDA-C/TV/duet_first_cycle_prior_context_transformer_real_multiview_visda_proxy25_seed2020) ;;
   *)
     echo "Refusing to clear unexpected VisDA-C path: $run_dir" >&2
     exit 1
