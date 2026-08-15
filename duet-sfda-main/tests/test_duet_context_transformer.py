@@ -210,6 +210,64 @@ class AnchorBankTest(unittest.TestCase):
         self.assertEqual(int((result["targets"] == 0).sum()), 4)
         self.assertEqual(int((result["targets"] == 1).sum()), 4)
 
+    def test_delayed_transition_supervision_keeps_imbalanced_majority(self):
+        n, c, d = 14, 3, 5
+        historical_task = torch.full((n, c), 0.01)
+        historical_clip = torch.full((n, c), 0.01)
+        historical_task[:10, 0] = 0.98
+        historical_clip[:10, 1] = 0.98
+        for row in range(10, n):
+            label = row % c
+            historical_task[row, label] = 0.98
+            historical_clip[row, label] = 0.98
+        historical_task /= historical_task.sum(dim=1, keepdim=True)
+        historical_clip /= historical_clip.sum(dim=1, keepdim=True)
+        current_task = historical_task.clone()
+        current_clip = historical_clip.clone()
+        # Two choose-A and eight choose-B matured transitions.
+        for row in range(10):
+            label = 0 if row < 2 else 1
+            current_task[row] = 0.01
+            current_clip[row] = 0.01
+            current_task[row, label] = 0.98
+            current_clip[row, label] = 0.98
+        current_task /= current_task.sum(dim=1, keepdim=True)
+        current_clip /= current_clip.sum(dim=1, keepdim=True)
+        views_task = current_task.unsqueeze(0).repeat(4, 1, 1)
+        views_clip = current_clip.unsqueeze(0).repeat(4, 1, 1)
+        snapshot = {
+            "task_probs": historical_task,
+            "clip_probs": historical_clip,
+            "pre_prior_task_probs": historical_task,
+            "pre_prior_clip_probs": historical_clip,
+            "task_features": torch.randn(n, d),
+            "clip_features": torch.randn(n, d),
+        }
+        result = build_delayed_transition_supervision(
+            snapshot,
+            current_task,
+            current_clip,
+            views_task,
+            views_clip,
+            num_classes=c,
+            anchors_per_class=2,
+            anchor_task_conf=0.90,
+            anchor_clip_conf=0.90,
+            anchor_task_entropy=0.40,
+            anchor_clip_entropy=0.40,
+            entropy_weight=1.0,
+            require_pre_post_prior_agreement=True,
+            sim_topk=2,
+            min_view_agreement=0.75,
+            min_per_direction=2,
+            seed=2020,
+        )
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["features"].shape, (10, 16))
+        self.assertEqual(int((result["targets"] == 0).sum()), 2)
+        self.assertEqual(int((result["targets"] == 1).sum()), 8)
+        self.assertEqual(result["balanced_per_direction"], 2)
+
     def test_transition_vote_fusion_preserves_fixed_coverage(self):
         weak_task = torch.tensor(
             [[0.70, 0.20, 0.10], [0.20, 0.70, 0.10], [0.60, 0.30, 0.10], [0.30, 0.60, 0.10]]
@@ -1269,6 +1327,45 @@ class ComparatorTest(unittest.TestCase):
             acc = (probs.argmax(1) == current_t.long()).float().mean().item()
         self.assertGreater(acc, 0.7)
 
+    def test_train_pairwise_comparator_balances_batches_without_downsampling(self):
+        class RecordingComparator(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.linear = nn.Linear(2, 2)
+                self.seen = []
+
+            def forward(self, inputs):
+                self.seen.append(inputs.detach().clone())
+                return self.linear(inputs)
+
+        features = torch.stack(
+            [
+                torch.cat([torch.zeros(2), torch.ones(18)]),
+                torch.arange(20, dtype=torch.float32),
+            ],
+            dim=1,
+        )
+        targets = torch.cat([torch.zeros(2), torch.ones(18)])
+        model = RecordingComparator()
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+        train_pairwise_comparator(
+            model,
+            optimizer,
+            features,
+            targets,
+            steps=4,
+            batch_size=10,
+            seed=7,
+            balance_current_directions=True,
+        )
+        self.assertEqual(len(model.seen), 4)
+        for batch in model.seen:
+            self.assertEqual(int((batch[:, 0] == 0).sum()), 5)
+            self.assertEqual(int((batch[:, 0] == 1).sum()), 5)
+        seen = torch.cat(model.seen)
+        seen_majority_ids = torch.unique(seen[seen[:, 0] == 1, 1])
+        self.assertEqual(seen_majority_ids.numel(), 18)
+
     def test_train_pairwise_comparator_epochs(self):
         """Full-batch epoch training performs exactly one update per epoch."""
         torch.manual_seed(0)
@@ -2209,6 +2306,76 @@ class MethodFileContractTest(unittest.TestCase):
         self.assertIn("SOFT_ONLY_ADMISSION", source)
         self.assertIn("DUET context soft-only", source)
         self.assertIn("hard_admission=0", source)
+
+    def test_transition_auxiliary_uses_clip_kl_residual(self):
+        source = Path(
+            "src/methods/oh/duet_first_cycle_prior_context_transformer.py"
+        ).read_text()
+        self.assertIn('payload.get("residual_pairwise", False)', source)
+        self.assertIn('payload["baseline_q"]', source)
+        self.assertIn('payload["baseline_pair_mass"]', source)
+        self.assertIn("q - baseline_q", source)
+        self.assertIn("float(logits.size(0))", source)
+        self.assertIn("clip_kl_residual", source)
+
+    def test_transition_residual_matches_interpolated_clip_teacher_gradient(self):
+        source = Path(
+            "src/methods/oh/duet_first_cycle_prior_context_transformer.py"
+        ).read_text()
+        function_source = ast.get_source_segment(
+            source, self._function("conflict_memory_pairwise_loss")
+        )
+        namespace = {"torch": torch, "F": torch.nn.functional}
+        exec(function_source, namespace)
+        residual_loss = namespace["conflict_memory_pairwise_loss"]
+
+        clip_target = torch.tensor(
+            [[0.60, 0.30, 0.10], [0.20, 0.50, 0.30], [0.10, 0.30, 0.60]]
+        )
+        candidate_a = torch.tensor([0, 0, 1])
+        candidate_b = torch.tensor([1, 1, 2])
+        rows = torch.arange(3)
+        pair_mass = (
+            clip_target[rows, candidate_a] + clip_target[rows, candidate_b]
+        )
+        baseline_q = clip_target[rows, candidate_a] / pair_mass
+        q = torch.tensor([0.85, 0.40, 0.25])
+        weights = torch.tensor([0.50, 0.00, 0.80])
+        active = torch.tensor([True, False, True])
+        payload = {
+            "active": active,
+            "candidate_a": candidate_a,
+            "candidate_b": candidate_b,
+            "q": q,
+            "baseline_q": baseline_q,
+            "baseline_pair_mass": pair_mass,
+            "weight": weights,
+            "residual_pairwise": True,
+        }
+
+        logits = torch.randn(3, 3, requires_grad=True)
+        original_kl = torch.nn.functional.kl_div(
+            torch.nn.functional.log_softmax(logits, dim=1),
+            clip_target,
+            reduction="batchmean",
+        )
+        combined = original_kl + residual_loss(
+            logits, torch.arange(3), payload
+        )
+        combined_grad = torch.autograd.grad(combined, logits)[0]
+
+        corrected_target = clip_target.clone()
+        delta = weights * pair_mass * (q - baseline_q)
+        corrected_target[rows, candidate_a] += delta
+        corrected_target[rows, candidate_b] -= delta
+        expected_logits = logits.detach().clone().requires_grad_(True)
+        expected = torch.nn.functional.kl_div(
+            torch.nn.functional.log_softmax(expected_logits, dim=1),
+            corrected_target,
+            reduction="batchmean",
+        )
+        expected_grad = torch.autograd.grad(expected, expected_logits)[0]
+        self.assertTrue(torch.allclose(combined_grad, expected_grad, atol=1e-7))
 
     def test_strong_feature_collection_guarded_by_comparator_mode(self):
         """Regression：旧版 collect_strong 未定义就引用 strong_feas 的

@@ -1544,36 +1544,26 @@ def build_delayed_transition_supervision(
     raw_choose_b = int((targets == 1).sum().item())
     balance_n = min(raw_choose_a, raw_choose_b)
     ready = balance_n >= int(min_per_direction)
-    if not ready:
-        balanced_positions = torch.zeros(0, dtype=torch.long)
-    else:
-        generator = torch.Generator(device="cpu")
-        generator.manual_seed(int(seed))
-        choose_a_rows = torch.nonzero(targets == 0, as_tuple=False).flatten()
-        choose_b_rows = torch.nonzero(targets == 1, as_tuple=False).flatten()
-        choose_a_rows = choose_a_rows[
-            torch.randperm(choose_a_rows.numel(), generator=generator)[:balance_n]
-        ]
-        choose_b_rows = choose_b_rows[
-            torch.randperm(choose_b_rows.numel(), generator=generator)[:balance_n]
-        ]
-        balanced_rows = torch.cat([choose_a_rows, choose_b_rows])
-        balanced_positions = selected_positions[balanced_rows]
-
-    if balanced_positions.numel() > 0:
+    # Keep every matured real conflict. Direction balancing belongs in the
+    # minibatch sampler; downsampling here would discard most high-precision
+    # samples whenever one transition direction is naturally more common.
+    training_positions = (
+        selected_positions if ready else torch.zeros(0, dtype=torch.long)
+    )
+    if training_positions.numel() > 0:
         features = build_comparator_features(
-            historical_task[balanced_positions],
-            historical_clip[balanced_positions],
-            historical_task_feature[balanced_positions],
-            historical_clip_feature[balanced_positions],
+            historical_task[training_positions],
+            historical_clip[training_positions],
+            historical_task_feature[training_positions],
+            historical_clip_feature[training_positions],
             task_bank,
             clip_bank,
-            class_a=candidate_a[balanced_positions],
-            class_b=candidate_b[balanced_positions],
+            class_a=candidate_a[training_positions],
+            class_b=candidate_b[training_positions],
             sim_topk=sim_topk,
         ).cpu()
         balanced_targets = (
-            matured_label[balanced_positions] == candidate_b[balanced_positions]
+            matured_label[training_positions] == candidate_b[training_positions]
         ).long()
     else:
         features = empty
@@ -1757,6 +1747,8 @@ def build_reliability_gated_fusion(
             "candidate_a": torch.zeros(0, dtype=torch.long),
             "candidate_b": torch.zeros(0, dtype=torch.long),
             "q": torch.zeros(0),
+            "baseline_q": torch.zeros(0),
+            "baseline_pair_mass": torch.zeros(0),
             "weight": torch.zeros(0),
             "reliability": torch.zeros(0),
             "source_agreement": torch.zeros(0),
@@ -1803,6 +1795,14 @@ def build_reliability_gated_fusion(
         prob_a = distribution[rows, candidate_a]
         prob_b = distribution[rows, candidate_b]
         return (prob_a + _EPS) / (prob_a + prob_b + 2.0 * _EPS)
+
+    # This is the A-vs-B target already supplied by DUET's original CLIP KL.
+    # The auxiliary loss can therefore inject only q - baseline_q instead of
+    # training the same conflict a second time with a complete soft CE.
+    baseline_q = pair_probability(weak_clip)
+    baseline_pair_mass = (
+        weak_clip[rows, candidate_a] + weak_clip[rows, candidate_b]
+    )
 
     # Keep the two networks balanced: each contributes one vote per view.
     posterior_sources = [weak_task, weak_clip]
@@ -1856,6 +1856,8 @@ def build_reliability_gated_fusion(
         "candidate_a": candidate_a.cpu(),
         "candidate_b": candidate_b.cpu(),
         "q": q.cpu(),
+        "baseline_q": baseline_q.cpu(),
+        "baseline_pair_mass": baseline_pair_mass.cpu(),
         "weight": weight.cpu(),
         "reliability": reliability.cpu(),
         "source_agreement": source_agreement.cpu(),
@@ -2780,6 +2782,7 @@ def train_pairwise_comparator(
     memory_features: Optional[torch.Tensor] = None,
     memory_targets: Optional[torch.Tensor] = None,
     memory_fraction: float = 0.25,
+    balance_current_directions: bool = False,
     trajectory_features: Optional[torch.Tensor] = None,
     trajectory_interval: int = 0,
     trajectory_sink: Optional[list[dict]] = None,
@@ -2790,7 +2793,8 @@ def train_pairwise_comparator(
     池子 <= batch_size 时每个 step 直接用全部样本，否则随机抽 batch。
     提供 ``memory_features/memory_targets`` 时启用 replay：每个 step 按
     ``memory_fraction`` 从历史 memory 采样、其余从当前 matched synthetic
-    采样（persistent + replay 实验）。
+    采样（persistent + replay 实验）。``balance_current_directions=True``
+    时每个 batch 等量抽取两个方向，但不删除 majority 样本。
     """
     if features.numel() == 0 or features.size(0) < 2:
         return None
@@ -2828,11 +2832,58 @@ def train_pairwise_comparator(
     comparator.train()
     generator = torch.Generator(device=features.device)
     generator.manual_seed(int(seed))
+    direction_zero = torch.nonzero(
+        targets.detach().long().to(features.device) == 0,
+        as_tuple=False,
+    ).flatten()
+    direction_one = torch.nonzero(
+        targets.detach().long().to(features.device) == 1,
+        as_tuple=False,
+    ).flatten()
+    if balance_current_directions and (
+        direction_zero.numel() == 0 or direction_one.numel() == 0
+    ):
+        raise ValueError(
+            "balanced comparator sampling requires both target directions"
+        )
+    direction_states = {
+        0: {"pool": direction_zero, "order": None, "cursor": 0},
+        1: {"pool": direction_one, "order": None, "cursor": 0},
+    }
+
+    def sample_direction(direction: int, count: int) -> torch.Tensor:
+        """Cycle through shuffled direction pools before reusing a row."""
+        state = direction_states[direction]
+        pieces = []
+        remaining = int(count)
+        while remaining > 0:
+            if (
+                state["order"] is None
+                or state["cursor"] >= state["order"].numel()
+            ):
+                state["order"] = state["pool"][
+                    torch.randperm(
+                        state["pool"].numel(),
+                        generator=generator,
+                        device=features.device,
+                    )
+                ]
+                state["cursor"] = 0
+            available = state["order"].numel() - state["cursor"]
+            take = min(remaining, available)
+            pieces.append(
+                state["order"][state["cursor"] : state["cursor"] + take]
+            )
+            state["cursor"] += take
+            remaining -= take
+        return torch.cat(pieces)
     use_memory = (
         memory_features is not None
         and memory_targets is not None
         and memory_features.size(0) >= 1
     )
+    minimum_current = 2 if balance_current_directions else 1
+    n_current = max(minimum_current, int(batch_size))
     if use_memory:
         combined_features = torch.cat(
             [features, memory_features.detach().to(features.device)], dim=0
@@ -2841,19 +2892,29 @@ def train_pairwise_comparator(
             [targets, memory_targets.detach().to(features.device)], dim=0
         )
         n_memory = max(1, int(round(batch_size * memory_fraction)))
-        n_current = max(1, batch_size - n_memory)
+        n_current = max(minimum_current, batch_size - n_memory)
     total_loss = 0.0
     counted = 0
     total_steps = max(1, int(steps))
     for step in range(1, total_steps + 1):
         if use_memory:
-            current_indices = torch.randint(
-                0,
-                features.size(0),
-                (n_current,),
-                generator=generator,
-                device=features.device,
-            )
+            if balance_current_directions:
+                n_zero = n_current // 2
+                n_one = n_current - n_zero
+                current_indices = torch.cat(
+                    [
+                        sample_direction(0, n_zero),
+                        sample_direction(1, n_one),
+                    ]
+                )
+            else:
+                current_indices = torch.randint(
+                    0,
+                    features.size(0),
+                    (n_current,),
+                    generator=generator,
+                    device=features.device,
+                )
             memory_indices = torch.randint(
                 0,
                 memory_features.size(0),
@@ -2870,7 +2931,23 @@ def train_pairwise_comparator(
             logits = comparator(combined_features[indices].detach())
             batch_targets = combined_targets[indices].detach().long()
         else:
-            if features.size(0) <= batch_size:
+            if balance_current_directions:
+                n_zero = n_current // 2
+                n_one = n_current - n_zero
+                indices = torch.cat(
+                    [
+                        sample_direction(0, n_zero),
+                        sample_direction(1, n_one),
+                    ]
+                )
+                indices = indices[
+                    torch.randperm(
+                        indices.numel(),
+                        generator=generator,
+                        device=features.device,
+                    )
+                ]
+            elif features.size(0) <= batch_size:
                 indices = torch.arange(features.size(0), device=features.device)
             else:
                 indices = torch.randperm(
@@ -4622,9 +4699,14 @@ def run_comparator_refinement(
         "candidate_a": torch.full((num_samples,), -1, dtype=torch.long),
         "candidate_b": torch.full((num_samples,), -1, dtype=torch.long),
         "q": torch.full((num_samples,), 0.5, dtype=torch.float32),
+        "baseline_q": torch.full((num_samples,), 0.5, dtype=torch.float32),
+        "baseline_pair_mass": torch.zeros(num_samples, dtype=torch.float32),
         "weight": torch.zeros(num_samples, dtype=torch.float32),
         "reliability": torch.zeros(num_samples, dtype=torch.float32),
         "source_agreement": torch.zeros(num_samples, dtype=torch.float32),
+        # Delayed transition supervision is used to change the original
+        # DUET CLIP teacher, so train only that change in the Task branch.
+        "residual_pairwise": bool(transition_supervision_enabled),
     }
 
     strict_total = int(strict_conflict_mask.sum().item())
@@ -4914,7 +4996,7 @@ def run_comparator_refinement(
                     "DUET delayed real-conflict supervision: cycle={}; "
                     "historical_conflicts={}; matured={}; matured_rate={:.2f}%; "
                     "raw_choose_a={}; raw_choose_b={}; "
-                    "balanced_per_direction={}; train_samples={}; "
+                    "minority_direction_samples={}; train_samples={}; "
                     "historical_anchor_count={}; min_view_agreement={:.2f}; "
                     "construction=pre_cycle1_conflict_to_post_cycle1_stable_agreement; "
                     "uses_current_conflict_gt=False; ground_truth_affects_training=False".format(
@@ -4974,6 +5056,7 @@ def run_comparator_refinement(
                             else None
                         ),
                         memory_fraction=transition_synthetic_mix_fraction,
+                        balance_current_directions=True,
                     )
                     transition_comparator_trained = True
                     stats["train_loss"] = transition_loss
@@ -4991,6 +5074,7 @@ def run_comparator_refinement(
                         "optimizer_steps={}; real_transition_samples={}; "
                         "synthetic_regularizer_samples={}; synthetic_mix_fraction={:.2f}; "
                         "train_loss={}; supervision_distribution=historical_real_conflicts; "
+                        "sampling=direction_balanced_without_downsampling; "
                         "ground_truth_affects_training=False".format(
                             cycle,
                             transition_train_steps,
@@ -5095,7 +5179,8 @@ def run_comparator_refinement(
                     )
                 for key in (
                     "active", "target", "candidate_a", "candidate_b", "q",
-                    "weight", "reliability", "source_agreement",
+                    "baseline_q", "baseline_pair_mass", "weight",
+                    "reliability", "source_agreement",
                 ):
                     reliability_gate_payload[key][strict_positions] = gate_local[key]
                 gate_active = gate_local["active"]
@@ -6080,7 +6165,14 @@ def run_comparator_refinement(
         )
     _log_correction_stats(stats, cycle, log_fn)
     _log_context_stats(stats, "comparator", cycle, log_fn)
-    if eval_only_logging and labels is not None:
+    # Reliability-gate runs have their own same-subset fallback-vs-gated
+    # evaluation above. The generic raw-comparator metric describes a
+    # different decision path and is misleading for the method actually used.
+    if (
+        eval_only_logging
+        and labels is not None
+        and not reliability_gate_enabled
+    ):
         _log_eval_only_metrics(
             stats,
             resolved_mask=resolved_mask,

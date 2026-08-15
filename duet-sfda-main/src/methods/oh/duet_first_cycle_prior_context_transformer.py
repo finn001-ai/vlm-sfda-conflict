@@ -278,7 +278,14 @@ def conflict_memory_pairwise_loss(
     batch_indices,
     payload,
 ):
-    """Weighted soft CE on [Task Top1, CLIP Top1] for active conflicts."""
+    """Weighted A-vs-B loss for active Task/CLIP conflicts.
+
+    The default is the existing complete soft CE.  Delayed transition
+    supervision instead supplies ``residual_pairwise=True`` and the original
+    DUET CLIP pair target, so this term contributes only the newly learned
+    A-vs-B correction rather than duplicating the CLIP KL already in the
+    objective.
+    """
     if payload is None:
         return logits.sum() * 0.0
     indices = batch_indices.detach().long().to(logits.device)
@@ -298,7 +305,20 @@ def conflict_memory_pairwise_loss(
     log_prob = F.log_softmax(pair_logits, dim=1)
     q = payload["q"][indices][rows].float().detach()
     weights = payload["weight"][indices][rows].float().detach()
-    soft_ce = -(q * log_prob[:, 0] + (1.0 - q) * log_prob[:, 1])
+    if bool(payload.get("residual_pairwise", False)):
+        baseline_q = payload["baseline_q"][indices][rows].float().detach()
+        pair_mass = payload["baseline_pair_mass"][indices][rows].float().detach()
+        soft_ce = -(
+            pair_mass
+            * (q - baseline_q)
+            * (log_prob[:, 0] - log_prob[:, 1])
+        )
+        # Match the batchmean normalization of the original DUET CLIP KL.
+        # With the same outer coefficient, their sum is exactly a partial
+        # replacement of CLIP's conditional A/B teacher by q.
+        return (weights * soft_ce).sum() / float(logits.size(0))
+    else:
+        soft_ce = -(q * log_prob[:, 0] + (1.0 - q) * log_prob[:, 1])
     # Divide by selected conflicts, not sum(weights): low-reliability samples
     # must remain weak instead of being renormalized back to full strength.
     return (weights * soft_ce).sum() / float(rows.numel())
@@ -1543,17 +1563,45 @@ def obtain_label(
     if reliability_gate_enabled:
         gate_active = reliability_gate_training_payload["active"].bool()
         gate_switch = reliability_gate_training_payload["switch"].bool()
+        residual_pairwise = bool(
+            reliability_gate_training_payload.get("residual_pairwise", False)
+        )
+        if residual_pairwise:
+            residual_delta = (
+                reliability_gate_training_payload["q"]
+                - reliability_gate_training_payload["baseline_q"]
+            ).abs()
+            residual_changed = gate_active & (residual_delta > 1e-6)
+            mean_abs_residual = float(
+                residual_delta[gate_active].mean().item()
+            )
+        else:
+            residual_changed = gate_active
+            mean_abs_residual = float("nan")
         logging.info(
             "DUET candidate-committee auxiliary target: cycle={}; evaluated_pool={}; "
             "breakpoint_crossings={}; hard_admission=0; "
             "auxiliary_pairwise_pool={}; original_clip_kl_changed=False; "
-            "loss_weight={:.3f}; "
+            "loss_weight={:.3f}; loss_mode={}; residual_changed={}; "
+            "mean_abs_delta_q={}; teacher_effect={}; "
             "ground_truth_affects_training=False".format(
                 curr_cycle + 1,
                 int(gate_active.sum().item()),
                 int(gate_switch.sum().item()),
                 int(gate_active.sum().item()),
                 float(context_cfg.RELIABILITY_GATE_LOSS_WEIGHT),
+                "clip_kl_residual" if residual_pairwise else "full_soft_ce",
+                int(residual_changed.sum().item()),
+                (
+                    "{:.4f}".format(mean_abs_residual)
+                    if residual_pairwise
+                    else "nan"
+                ),
+                (
+                    "reliability_weighted_A_B_interpolation"
+                    if residual_pairwise
+                    else "additional_soft_CE"
+                ),
             )
         )
     if context_payload is not None and not isolated_context_enabled:
