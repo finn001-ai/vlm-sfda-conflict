@@ -409,6 +409,14 @@ _C.DUET_CONTEXT.REAL_CONFLICT_GT_PROBE_LR = 0.01
 # Paired eval-only ablation: append profile drift, JS divergence, and complete
 # ranking disagreement. The formal Comparator remains 16-dimensional.
 _C.DUET_CONTEXT.REAL_CONFLICT_GT_PROBE_EXTENDED_20D_ENABLED = False
+# Formal GT-free real-conflict adaptation. Weak/strong A-vs-B stability makes
+# soft pseudo targets on a fixed confidence-ranked subset, followed by a short
+# fine-tune that retains a small synthetic mix.
+_C.DUET_CONTEXT.REAL_MULTIVIEW_ENABLED = False
+_C.DUET_CONTEXT.REAL_MULTIVIEW_TRAIN_FRACTION = 0.60
+_C.DUET_CONTEXT.REAL_MULTIVIEW_FINETUNE_STEPS = 100
+_C.DUET_CONTEXT.REAL_MULTIVIEW_TEMPERATURE = 0.50
+_C.DUET_CONTEXT.REAL_MULTIVIEW_SYNTHETIC_MIX_FRACTION = 0.25
 # Exact cycle-boundary cache for repeated eval-only diagnostics. Saving and
 # resuming are opt-in and mutually exclusive; an existing cache is never
 # overwritten by the training code.

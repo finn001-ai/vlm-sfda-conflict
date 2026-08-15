@@ -886,6 +886,7 @@ def _log_fixed_conflict_trajectory(
     *,
     task_candidates: torch.Tensor,
     clip_candidates: torch.Tensor,
+    duet_fallback_candidates: Optional[torch.Tensor] = None,
     labels: torch.Tensor,
     coverages: list[int],
     cycle: int,
@@ -900,15 +901,23 @@ def _log_fixed_conflict_trajectory(
     """
     task_candidates = task_candidates.detach().long().cpu()
     clip_candidates = clip_candidates.detach().long().cpu()
+    if duet_fallback_candidates is None:
+        duet_fallback_candidates = task_candidates
+    duet_fallback_candidates = duet_fallback_candidates.detach().long().cpu()
     labels = labels.detach().long().cpu()
     total = int(labels.numel())
     if total == 0:
         return
-    if task_candidates.shape != labels.shape or clip_candidates.shape != labels.shape:
+    if (
+        task_candidates.shape != labels.shape
+        or clip_candidates.shape != labels.shape
+        or duet_fallback_candidates.shape != labels.shape
+    ):
         raise ValueError("fixed-conflict candidates and labels must have equal shape")
 
     task_correct = task_candidates == labels
     clip_correct = clip_candidates == labels
+    duet_fallback_correct = duet_fallback_candidates == labels
     oracle_correct = task_correct | clip_correct
     oracle_correct_count = int(oracle_correct.sum().item())
 
@@ -937,7 +946,8 @@ def _log_fixed_conflict_trajectory(
         log_fn(
             "DUET comparator fixed-conflict trajectory eval-only: cycle={}; "
             "step={}; fixed_conflicts={}; synthetic_train_loss={:.6f}; "
-            "task_acc={:.2f}%; clip_acc={:.2f}%; comparator_acc={:.2f}%; "
+            "task_acc={:.2f}%; clip_acc={:.2f}%; duet_fallback_acc={:.2f}%; "
+            "comparator_acc={:.2f}%; "
             "candidate_oracle_acc={:.2f}%; conditional_arbitration_acc={:.2f}%; "
             "trust_task={}; trust_clip={}; margin_mean={:.4f}; "
             "margin_p50={:.4f}; margin_p90={:.4f}; gate_used=False; "
@@ -948,6 +958,7 @@ def _log_fixed_conflict_trajectory(
                 checkpoint["synthetic_train_loss"],
                 pct(task_correct),
                 pct(clip_correct),
+                pct(duet_fallback_correct),
                 pct(comparator_correct),
                 pct(oracle_correct),
                 conditional,
@@ -980,6 +991,10 @@ def _log_fixed_conflict_trajectory(
                 else float("nan")
             )
             prefix = "coverage_{}".format(int(requested_coverage))
+            comparator_acc = pct(comparator_correct[selected])
+            fallback_acc = pct(duet_fallback_correct[selected])
+            gain = comparator_acc - fallback_acc
+            achieved_fraction = float(selected_count) / float(total)
             coverage_parts.extend(
                 [
                     "{}_n={}".format(prefix, selected_count),
@@ -989,8 +1004,17 @@ def _log_fixed_conflict_trajectory(
                     "{}_clip_acc={:.2f}%".format(
                         prefix, pct(clip_correct[selected])
                     ),
+                    "{}_duet_fallback_acc={:.2f}%".format(
+                        prefix, fallback_acc
+                    ),
                     "{}_comparator_acc={:.2f}%".format(
-                        prefix, pct(comparator_correct[selected])
+                        prefix, comparator_acc
+                    ),
+                    "{}_gain_over_duet_fallback={:+.2f}pp".format(
+                        prefix, gain
+                    ),
+                    "{}_coverage_weighted_gain={:+.3f}pp".format(
+                        prefix, achieved_fraction * gain
                     ),
                     "{}_candidate_oracle_acc={:.2f}%".format(
                         prefix, pct(oracle_correct[selected])
@@ -2235,6 +2259,197 @@ def train_pairwise_comparator(
     return total_loss / counted if counted else None
 
 
+@torch.no_grad()
+def build_real_conflict_multiview_supervision(
+    weak_task_probs: torch.Tensor,
+    weak_clip_probs: torch.Tensor,
+    strong_task_probs: torch.Tensor,
+    strong_clip_probs: torch.Tensor,
+    class_a: torch.Tensor,
+    class_b: torch.Tensor,
+    *,
+    train_fraction: float,
+    temperature: float,
+) -> dict:
+    """Build label-free soft A/B targets from weak/strong conflict stability.
+
+    ``A`` is the weak Task top-1 and ``B`` the weak CLIP top-1.  Each branch
+    votes with its A-vs-B normalized margin in both views.  A branch receives
+    less weight when its weak and strong margins disagree.  Only a fixed top
+    fraction by the resulting confidence is used for real-conflict fine-tuning;
+    neither construction nor ranking receives target labels.
+    """
+    probability_tensors = (
+        weak_task_probs,
+        weak_clip_probs,
+        strong_task_probs,
+        strong_clip_probs,
+    )
+    if any(tensor.dim() != 2 for tensor in probability_tensors):
+        raise ValueError("all multiview probabilities must have shape [N, C]")
+    if any(tensor.shape != weak_task_probs.shape for tensor in probability_tensors):
+        raise ValueError("all multiview probabilities must have equal shape")
+    total = int(weak_task_probs.size(0))
+    if class_a.shape != (total,) or class_b.shape != (total,):
+        raise ValueError("class_a and class_b must have shape [N]")
+    if not 0.0 < float(train_fraction) <= 1.0:
+        raise ValueError("train_fraction must satisfy 0 < value <= 1")
+    if float(temperature) <= 0.0:
+        raise ValueError("temperature must be positive")
+    if total == 0:
+        return {
+            "selected": torch.zeros(0, dtype=torch.bool),
+            "soft_targets": torch.zeros(0, 2, dtype=torch.float32),
+            "weights": torch.zeros(0, dtype=torch.float32),
+            "score": torch.zeros(0, dtype=torch.float32),
+            "confidence": torch.zeros(0, dtype=torch.float32),
+            "task_reliability": torch.zeros(0, dtype=torch.float32),
+            "clip_reliability": torch.zeros(0, dtype=torch.float32),
+        }
+
+    device = weak_task_probs.device
+    class_a = class_a.detach().long().to(device)
+    class_b = class_b.detach().long().to(device)
+    rows = torch.arange(total, device=device)
+
+    def normalized_pair_margin(probabilities: torch.Tensor) -> torch.Tensor:
+        probabilities = probabilities.detach().float().to(device)
+        prob_a = probabilities[rows, class_a]
+        prob_b = probabilities[rows, class_b]
+        return (prob_a - prob_b) / (prob_a + prob_b).clamp_min(1e-8)
+
+    task_weak_margin = normalized_pair_margin(weak_task_probs)
+    task_strong_margin = normalized_pair_margin(strong_task_probs)
+    clip_weak_margin = normalized_pair_margin(weak_clip_probs)
+    clip_strong_margin = normalized_pair_margin(strong_clip_probs)
+    task_reliability = 1.0 - 0.5 * (
+        task_weak_margin - task_strong_margin
+    ).abs()
+    clip_reliability = 1.0 - 0.5 * (
+        clip_weak_margin - clip_strong_margin
+    ).abs()
+    task_evidence = 0.5 * (task_weak_margin + task_strong_margin)
+    clip_evidence = 0.5 * (clip_weak_margin + clip_strong_margin)
+    # Positive score means choose A/Task; negative means choose B/CLIP.
+    score = task_reliability * task_evidence + clip_reliability * clip_evidence
+    confidence = (0.5 * score.abs()).clamp(0.0, 1.0)
+    probability_a = torch.sigmoid(score / float(temperature))
+    soft_targets = torch.stack([probability_a, 1.0 - probability_a], dim=1)
+
+    selected_count = max(1, min(total, int(round(total * train_fraction))))
+    order = torch.argsort(confidence, descending=True, stable=True)
+    selected = torch.zeros(total, dtype=torch.bool, device=device)
+    selected[order[:selected_count]] = True
+    # Confidence weighting plus inverse-frequency direction balancing prevents
+    # a mostly-one-sided pseudo pool from collapsing the comparator.
+    selected_confidence = confidence[selected]
+    selected_direction = score[selected] < 0.0  # False=A/Task, True=B/CLIP
+    direction_weights = torch.ones_like(selected_confidence)
+    direction_counts = torch.stack(
+        [(selected_direction == direction).sum() for direction in (False, True)]
+    ).float()
+    if bool((direction_counts > 0).all().item()):
+        for direction in (False, True):
+            direction_weights[selected_direction == direction] = (
+                float(selected_count) / (2.0 * direction_counts[int(direction)])
+            )
+    weights = selected_confidence * direction_weights
+    weights = weights / weights.mean().clamp_min(1e-6)
+    return {
+        "selected": selected,
+        "soft_targets": soft_targets[selected],
+        "weights": weights,
+        "score": score,
+        "confidence": confidence,
+        "task_reliability": task_reliability,
+        "clip_reliability": clip_reliability,
+    }
+
+
+def train_pairwise_comparator_real_multiview(
+    comparator: PairwiseConflictComparator,
+    optimizer: torch.optim.Optimizer,
+    real_features: torch.Tensor,
+    real_soft_targets: torch.Tensor,
+    real_weights: torch.Tensor,
+    *,
+    steps: int,
+    batch_size: int,
+    seed: int,
+    synthetic_features: Optional[torch.Tensor] = None,
+    synthetic_targets: Optional[torch.Tensor] = None,
+    synthetic_mix_fraction: float = 0.25,
+) -> Optional[float]:
+    """Fine-tune on label-free real conflicts, retaining synthetic replay."""
+    if real_features.numel() == 0 or int(steps) <= 0:
+        return None
+    if real_soft_targets.shape != (real_features.size(0), 2):
+        raise ValueError("real_soft_targets must have shape [N, 2]")
+    if real_weights.shape != (real_features.size(0),):
+        raise ValueError("real_weights must have shape [N]")
+    if not 0.0 <= float(synthetic_mix_fraction) < 1.0:
+        raise ValueError("synthetic_mix_fraction must satisfy 0 <= value < 1")
+
+    use_synthetic = (
+        synthetic_features is not None
+        and synthetic_targets is not None
+        and synthetic_features.size(0) > 0
+        and synthetic_mix_fraction > 0.0
+    )
+    generator = torch.Generator(device=real_features.device)
+    generator.manual_seed(int(seed))
+    total_loss = 0.0
+    comparator.train()
+    for _ in range(int(steps)):
+        if real_features.size(0) <= batch_size:
+            real_indices = torch.arange(
+                real_features.size(0), device=real_features.device
+            )
+        else:
+            real_indices = torch.randperm(
+                real_features.size(0),
+                generator=generator,
+                device=real_features.device,
+            )[:batch_size]
+        logits = comparator(real_features[real_indices].detach())
+        targets = real_soft_targets[real_indices].detach().to(logits.device)
+        weights = real_weights[real_indices].detach().to(logits.device)
+        real_row_loss = -(targets * F.log_softmax(logits, dim=1)).sum(dim=1)
+        real_loss = (real_row_loss * weights).sum() / weights.sum().clamp_min(1e-8)
+        loss = real_loss
+        if use_synthetic:
+            synthetic_batch = max(
+                1,
+                int(round(real_indices.numel() * synthetic_mix_fraction)),
+            )
+            synthetic_indices = torch.randint(
+                0,
+                synthetic_features.size(0),
+                (synthetic_batch,),
+                generator=generator,
+                device=real_features.device,
+            )
+            synthetic_logits = comparator(
+                synthetic_features[synthetic_indices].detach()
+            )
+            synthetic_loss = F.cross_entropy(
+                synthetic_logits,
+                synthetic_targets[synthetic_indices].detach().long().to(
+                    synthetic_logits.device
+                ),
+            )
+            loss = (
+                (1.0 - synthetic_mix_fraction) * real_loss
+                + synthetic_mix_fraction * synthetic_loss
+            )
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        total_loss += float(loss.detach().item())
+    comparator.eval()
+    return total_loss / int(steps)
+
+
 def _stratified_binary_train_val_split(
     targets: torch.Tensor,
     *,
@@ -3268,6 +3483,7 @@ def run_context_refinement(
             context_labels=context_labels,
             task_top1=task_top1,
             clip_top1=clip_top1,
+            duet_fallback_top1=(task_probs + clip_probs).argmax(dim=1),
             all_label=labels,
             anchor_mask=anchor_mask,
             weak_agreement_mask=weak_agreement_mask,
@@ -3409,6 +3625,39 @@ def run_comparator_refinement(
             False,
         )
     )
+    real_multiview_enabled = bool(
+        getattr(context_cfg, "REAL_MULTIVIEW_ENABLED", False)
+    )
+    real_multiview_train_fraction = float(
+        getattr(context_cfg, "REAL_MULTIVIEW_TRAIN_FRACTION", 0.60)
+    )
+    real_multiview_finetune_steps = int(
+        getattr(context_cfg, "REAL_MULTIVIEW_FINETUNE_STEPS", 100)
+    )
+    real_multiview_temperature = float(
+        getattr(context_cfg, "REAL_MULTIVIEW_TEMPERATURE", 0.50)
+    )
+    real_multiview_synthetic_mix_fraction = float(
+        getattr(
+            context_cfg,
+            "REAL_MULTIVIEW_SYNTHETIC_MIX_FRACTION",
+            0.25,
+        )
+    )
+    if real_multiview_enabled and not 0.0 < real_multiview_train_fraction <= 1.0:
+        raise ValueError(
+            "REAL_MULTIVIEW_TRAIN_FRACTION must satisfy 0 < value <= 1"
+        )
+    if real_multiview_enabled and real_multiview_finetune_steps < 1:
+        raise ValueError("REAL_MULTIVIEW_FINETUNE_STEPS must be >= 1")
+    if real_multiview_enabled and real_multiview_temperature <= 0.0:
+        raise ValueError("REAL_MULTIVIEW_TEMPERATURE must be positive")
+    if real_multiview_enabled and not (
+        0.0 <= real_multiview_synthetic_mix_fraction < 1.0
+    ):
+        raise ValueError(
+            "REAL_MULTIVIEW_SYNTHETIC_MIX_FRACTION must satisfy 0 <= value < 1"
+        )
     if real_conflict_gt_probe_enabled and real_conflict_gt_probe_folds < 2:
         raise ValueError("REAL_CONFLICT_GT_PROBE_FOLDS must be >= 2")
     if real_conflict_gt_probe_enabled and real_conflict_gt_probe_steps < 1:
@@ -4024,6 +4273,10 @@ def run_comparator_refinement(
                         trajectory,
                         task_candidates=task_top1[strict_positions],
                         clip_candidates=clip_top1[strict_positions],
+                        duet_fallback_candidates=(
+                            task_probs[strict_positions]
+                            + clip_probs[strict_positions]
+                        ).argmax(dim=1),
                         labels=labels[strict_positions],
                         coverages=trajectory_coverages,
                         cycle=cycle,
@@ -4032,6 +4285,82 @@ def run_comparator_refinement(
             if replay_memory is not None:
                 # 训练后把当前 cycle 的 matched synthetic 写入历史 memory
                 replay_memory.update(synthetic_features, synthetic_targets)
+
+        # Formal GT-free adaptation on the real strict-conflict distribution.
+        # Pseudo targets come only from weak/strong A-vs-B stability. Synthetic
+        # conflicts remain in the loss as an anti-collapse regularizer.
+        if real_multiview_enabled and strict_positions.numel() > 0:
+            if comparator_optimizer is None:
+                raise ValueError(
+                    "REAL_MULTIVIEW_ENABLED requires a comparator optimizer"
+                )
+            if strong_task_probs is None or strong_clip_probs is None:
+                raise ValueError(
+                    "REAL_MULTIVIEW_ENABLED requires strong Task/CLIP probabilities"
+                )
+            multiview = build_real_conflict_multiview_supervision(
+                task_probs[strict_positions],
+                clip_probs[strict_positions],
+                strong_task_probs[strict_positions],
+                strong_clip_probs[strict_positions],
+                task_top1[strict_positions],
+                clip_top1[strict_positions],
+                train_fraction=real_multiview_train_fraction,
+                temperature=real_multiview_temperature,
+            )
+            multiview_selected = multiview["selected"]
+            selected_count = int(multiview_selected.sum().item())
+            real_multiview_loss = train_pairwise_comparator_real_multiview(
+                comparator,
+                comparator_optimizer,
+                real_features[multiview_selected],
+                multiview["soft_targets"],
+                multiview["weights"],
+                steps=real_multiview_finetune_steps,
+                batch_size=train_batch_size,
+                seed=seed + 7919,
+                synthetic_features=synthetic_features,
+                synthetic_targets=synthetic_targets,
+                synthetic_mix_fraction=real_multiview_synthetic_mix_fraction,
+            )
+            selected_soft_targets = multiview["soft_targets"]
+            pseudo_choose_task = int(
+                (selected_soft_targets[:, 0] >= selected_soft_targets[:, 1])
+                .sum()
+                .item()
+            )
+            log_fn(
+                "DUET comparator real-multiview training: cycle={}; "
+                "views=weak_plus_strong; real_conflicts={}; selected={}; "
+                "train_coverage={:.2f}%; pseudo_choose_task={}; "
+                "pseudo_choose_clip={}; confidence_mean={:.4f}; "
+                "task_stability_mean={:.4f}; clip_stability_mean={:.4f}; "
+                "temperature={:.3f}; finetune_steps={}; "
+                "synthetic_mix_fraction={:.2f}; train_loss={:.6f}; "
+                "construction_uses_gt=False; ground_truth_affects_training=False".format(
+                    cycle,
+                    int(strict_positions.numel()),
+                    selected_count,
+                    100.0 * selected_count / int(strict_positions.numel()),
+                    pseudo_choose_task,
+                    selected_count - pseudo_choose_task,
+                    float(multiview["confidence"][multiview_selected].mean().item()),
+                    float(
+                        multiview["task_reliability"][multiview_selected]
+                        .mean()
+                        .item()
+                    ),
+                    float(
+                        multiview["clip_reliability"][multiview_selected]
+                        .mean()
+                        .item()
+                    ),
+                    real_multiview_temperature,
+                    real_multiview_finetune_steps,
+                    real_multiview_synthetic_mix_fraction,
+                    float(real_multiview_loss),
+                )
+            )
 
         # Zero-intervention probe: reuse the trained strict-conflict comparator
         # on A=shared Top1 / B=shared Top2 pairs.  Results are logging-only.
@@ -4266,6 +4595,7 @@ def run_comparator_refinement(
             context_labels=context_labels,
             task_top1=task_top1,
             clip_top1=clip_top1,
+            duet_fallback_top1=(task_probs + clip_probs).argmax(dim=1),
             all_label=labels,
             anchor_mask=anchor_mask,
             weak_agreement_mask=weak_agreement_mask,
@@ -4377,6 +4707,7 @@ def _log_eval_only_metrics(
     context_labels: torch.Tensor,
     task_top1: torch.Tensor,
     clip_top1: torch.Tensor,
+    duet_fallback_top1: Optional[torch.Tensor] = None,
     all_label: torch.Tensor,
     anchor_mask: torch.Tensor,
     weak_agreement_mask: torch.Tensor,
@@ -4386,6 +4717,10 @@ def _log_eval_only_metrics(
 ) -> None:
     """Target labels are read here only; they never affect training."""
     all_label = all_label.long()
+    if duet_fallback_top1 is None:
+        # Backward-compatible fallback for direct diagnostic callers. The
+        # production pipeline always supplies the actual DUET mixed output.
+        duet_fallback_top1 = task_top1
 
     def acc(pred: torch.Tensor, mask: torch.Tensor) -> str:
         if int(mask.sum().item()) == 0:
@@ -4395,16 +4730,39 @@ def _log_eval_only_metrics(
     anchor_precision = acc(task_top1, anchor_mask)
     strict_task_acc = acc(task_top1, strict_conflict_mask)
     strict_clip_acc = acc(clip_top1, strict_conflict_mask)
-    # "Original mixed" on conflicts is ambiguous (task != clip); report the
-    # task-side proxy, consistent with the unresolved DUET path.
-    strict_mix_acc = acc(task_top1, strict_conflict_mask)
+    # Actual original DUET fallback before context intervention.
+    strict_mix_acc = acc(duet_fallback_top1, strict_conflict_mask)
     # Same-subset diagnostic: all four accuracies below are evaluated on the
     # exact same rows selected by the comparator (resolved_mask).  The older
     # strict_task_acc / strict_clip_acc use the full strict-conflict set and
     # therefore must not be compared directly with resolved_acc.
     resolved_subset_task_acc = acc(task_top1, resolved_mask)
     resolved_subset_clip_acc = acc(clip_top1, resolved_mask)
+    resolved_subset_duet_fallback_acc = acc(duet_fallback_top1, resolved_mask)
     resolved_comparator_acc = acc(context_labels, resolved_mask)
+    resolved_count_for_gain = int(resolved_mask.sum().item())
+    if resolved_count_for_gain == 0:
+        resolved_gain_over_duet_fallback = "nan"
+        coverage_weighted_gain_over_duet_fallback = "nan"
+    else:
+        comparator_value = float(
+            (context_labels[resolved_mask] == all_label[resolved_mask])
+            .float()
+            .mean()
+            .item()
+        )
+        fallback_value = float(
+            (duet_fallback_top1[resolved_mask] == all_label[resolved_mask])
+            .float()
+            .mean()
+            .item()
+        )
+        gain_pp = 100.0 * (comparator_value - fallback_value)
+        strict_count = max(1, int(strict_conflict_mask.sum().item()))
+        resolved_gain_over_duet_fallback = "{:+.2f}pp".format(gain_pp)
+        coverage_weighted_gain_over_duet_fallback = "{:+.3f}pp".format(
+            gain_pp * resolved_count_for_gain / strict_count
+        )
     if int(resolved_mask.sum().item()) == 0:
         resolved_candidate_oracle_acc = "nan"
         conditional_arbitration_acc = "nan"
@@ -4478,7 +4836,17 @@ def _log_eval_only_metrics(
     abstain_mask = strict_conflict_mask & ~resolved_mask
     abstain_sub = abstain_mask.sum().item() > 0
     abstain_orig_acc = (
-        _fmt_pct(float((all_label[abstain_mask] == task_top1[abstain_mask]).float().mean().item()))
+        _fmt_pct(
+            float(
+                (
+                    all_label[abstain_mask]
+                    == duet_fallback_top1[abstain_mask]
+                )
+                .float()
+                .mean()
+                .item()
+            )
+        )
         if abstain_sub
         else "nan"
     )
@@ -4500,7 +4868,9 @@ def _log_eval_only_metrics(
         "DUET context eval-only: cycle={}; anchor_precision={}; "
         "strict_task_acc={}; strict_clip_acc={}; strict_mix_acc={}; "
         "resolved_acc={}; resolved_subset_task_acc={}; "
-        "resolved_subset_clip_acc={}; resolved_comparator_acc={}; "
+        "resolved_subset_clip_acc={}; resolved_subset_duet_fallback_acc={}; "
+        "resolved_comparator_acc={}; resolved_gain_over_duet_fallback={}; "
+        "coverage_weighted_gain_over_duet_fallback={}; "
         "resolved_candidate_oracle_acc={}; conditional_arbitration_acc={}; "
         "support_task_acc={}; "
         "support_clip_acc={}; "
@@ -4515,7 +4885,10 @@ def _log_eval_only_metrics(
             resolved_acc,
             resolved_subset_task_acc,
             resolved_subset_clip_acc,
+            resolved_subset_duet_fallback_acc,
             resolved_comparator_acc,
+            resolved_gain_over_duet_fallback,
+            coverage_weighted_gain_over_duet_fallback,
             resolved_candidate_oracle_acc,
             conditional_arbitration_acc,
             support_task_acc,

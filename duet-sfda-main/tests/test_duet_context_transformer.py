@@ -23,11 +23,13 @@ from src.utils.duet_context import (
     apply_decision_rules,
     apply_weak_verification,
     build_comparator_features,
+    build_real_conflict_multiview_supervision,
     build_synthetic_conflicts,
     cosine_knn_refine,
     prototype_refine,
     run_context_refinement,
     train_pairwise_comparator,
+    train_pairwise_comparator_real_multiview,
     train_pairwise_comparator_early_stopping,
     train_pairwise_comparator_epochs,
     train_context_transformer,
@@ -108,6 +110,11 @@ def make_context_cfg(**overrides):
         REAL_CONFLICT_GT_PROBE_HIDDEN=16,
         REAL_CONFLICT_GT_PROBE_LR=0.02,
         REAL_CONFLICT_GT_PROBE_EXTENDED_20D_ENABLED=False,
+        REAL_MULTIVIEW_ENABLED=False,
+        REAL_MULTIVIEW_TRAIN_FRACTION=0.60,
+        REAL_MULTIVIEW_FINETUNE_STEPS=10,
+        REAL_MULTIVIEW_TEMPERATURE=0.50,
+        REAL_MULTIVIEW_SYNTHETIC_MIX_FRACTION=0.25,
         AGREEMENT_AMBIGUITY_EVAL_ENABLED=False,
         AGREEMENT_AMBIGUITY_FRACTIONS=[10, 25, 50, 100],
         AGREEMENT_COMPARATOR_PROBE_ENABLED=False,
@@ -458,6 +465,7 @@ class PipelineTest(unittest.TestCase):
             context_labels=context_labels,
             task_top1=task_top1,
             clip_top1=clip_top1,
+            duet_fallback_top1=torch.tensor([1, 1, 1, 0, 1]),
             all_label=labels,
             anchor_mask=torch.zeros(5, dtype=torch.bool),
             weak_agreement_mask=torch.zeros(5, dtype=torch.bool),
@@ -470,7 +478,12 @@ class PipelineTest(unittest.TestCase):
         )
         self.assertIn("resolved_subset_task_acc=66.67%", eval_line)
         self.assertIn("resolved_subset_clip_acc=33.33%", eval_line)
+        self.assertIn("resolved_subset_duet_fallback_acc=33.33%", eval_line)
         self.assertIn("resolved_comparator_acc=66.67%", eval_line)
+        self.assertIn("resolved_gain_over_duet_fallback=+33.33pp", eval_line)
+        self.assertIn(
+            "coverage_weighted_gain_over_duet_fallback=+20.000pp", eval_line
+        )
         self.assertIn("resolved_candidate_oracle_acc=100.00%", eval_line)
         self.assertIn("conditional_arbitration_acc=66.67%", eval_line)
 
@@ -504,6 +517,69 @@ class ComparatorTest(unittest.TestCase):
         task_bank = ClassBalancedAnchorBank(num_classes, 2, dim)
         clip_bank = ClassBalancedAnchorBank(num_classes, 2, dim)
         return task_bank, clip_bank
+
+    def test_real_multiview_supervision_is_gt_free_and_fixed_coverage(self):
+        weak_task = torch.tensor(
+            [[0.80, 0.20], [0.70, 0.30], [0.60, 0.40], [0.55, 0.45]]
+        )
+        weak_clip = torch.tensor(
+            [[0.45, 0.55], [0.40, 0.60], [0.30, 0.70], [0.20, 0.80]]
+        )
+        # Row 0 supports A across both branches/views; row 3 supports B.
+        strong_task = torch.tensor(
+            [[0.85, 0.15], [0.55, 0.45], [0.45, 0.55], [0.20, 0.80]]
+        )
+        strong_clip = torch.tensor(
+            [[0.70, 0.30], [0.45, 0.55], [0.40, 0.60], [0.15, 0.85]]
+        )
+        result = build_real_conflict_multiview_supervision(
+            weak_task,
+            weak_clip,
+            strong_task,
+            strong_clip,
+            torch.zeros(4, dtype=torch.long),
+            torch.ones(4, dtype=torch.long),
+            train_fraction=0.50,
+            temperature=0.50,
+        )
+        self.assertEqual(int(result["selected"].sum().item()), 2)
+        self.assertEqual(result["soft_targets"].shape, (2, 2))
+        self.assertTrue(torch.allclose(result["soft_targets"].sum(1), torch.ones(2)))
+        self.assertGreater(float(result["score"][0].item()), 0.0)
+        self.assertLess(float(result["score"][3].item()), 0.0)
+        self.assertAlmostEqual(float(result["weights"].mean().item()), 1.0, places=5)
+
+    def test_real_multiview_soft_finetune_updates_comparator(self):
+        torch.manual_seed(19)
+        comparator = PairwiseConflictComparator(
+            input_dim=4, hidden=8, layers=2, dropout=0.0
+        )
+        optimizer = torch.optim.Adam(comparator.parameters(), lr=1e-2)
+        features = torch.randn(12, 4)
+        soft_targets = torch.zeros(12, 2)
+        soft_targets[:6, 0] = 0.9
+        soft_targets[:6, 1] = 0.1
+        soft_targets[6:, 0] = 0.1
+        soft_targets[6:, 1] = 0.9
+        before = [parameter.detach().clone() for parameter in comparator.parameters()]
+        loss = train_pairwise_comparator_real_multiview(
+            comparator,
+            optimizer,
+            features,
+            soft_targets,
+            torch.ones(12),
+            steps=5,
+            batch_size=12,
+            seed=2020,
+            synthetic_mix_fraction=0.0,
+        )
+        self.assertIsNotNone(loss)
+        self.assertTrue(
+            any(
+                not torch.equal(old, new.detach())
+                for old, new in zip(before, comparator.parameters())
+            )
+        )
 
     def test_same_view_conflict_cases(self):
         """同 view：只有“一边保持 A、一边翻转”才造 synthetic 对；
@@ -713,6 +789,7 @@ class ComparatorTest(unittest.TestCase):
             trajectory,
             task_candidates=torch.tensor([0, 0, 1, 1]),
             clip_candidates=torch.tensor([1, 1, 0, 0]),
+            duet_fallback_candidates=torch.tensor([1, 1, 1, 1]),
             labels=torch.tensor([0, 1, 0, 1]),
             coverages=[50, 100],
             cycle=2,
@@ -722,9 +799,13 @@ class ComparatorTest(unittest.TestCase):
         self.assertIn("fixed_conflicts=4", logs[0])
         self.assertIn("task_acc=50.00%", logs[0])
         self.assertIn("clip_acc=50.00%", logs[0])
+        self.assertIn("duet_fallback_acc=50.00%", logs[0])
         self.assertIn("comparator_acc=100.00%", logs[0])
         self.assertIn("gate_used=False", logs[0])
         self.assertIn("coverage_50_n=2", logs[1])
+        self.assertIn("coverage_50_duet_fallback_acc=50.00%", logs[1])
+        self.assertIn("coverage_50_gain_over_duet_fallback=+50.00pp", logs[1])
+        self.assertIn("coverage_50_coverage_weighted_gain=+25.000pp", logs[1])
         self.assertIn("coverage_100_n=4", logs[1])
         self.assertIn("checkpoint_selected_by_gt=False", logs[1])
 
@@ -1588,6 +1669,9 @@ class ComparatorTest(unittest.TestCase):
             context_cfg=make_context_cfg(
                 REFINER_TYPE="comparator", TRAIN_STEPS_PER_CYCLE=30,
                 COMPARATOR_GATE=0.15,
+                REAL_MULTIVIEW_ENABLED=True,
+                REAL_MULTIVIEW_TRAIN_FRACTION=0.60,
+                REAL_MULTIVIEW_FINETUNE_STEPS=5,
             ),
             pre_prior_task_probs=task_prob, pre_prior_clip_probs=clip_prob,
             labels=true_label, sample_indices=torch.arange(n),
@@ -1612,6 +1696,13 @@ class ComparatorTest(unittest.TestCase):
                 ).all()
             )
         self.assertTrue(any("DUET comparator synthetic conflicts" in line for line in logs))
+        multiview_log = next(
+            line
+            for line in logs
+            if "DUET comparator real-multiview training" in line
+        )
+        self.assertIn("train_coverage=", multiview_log)
+        self.assertIn("construction_uses_gt=False", multiview_log)
         self.assertTrue(
             any("DUET comparator real-conflict distribution" in line for line in logs)
         )
