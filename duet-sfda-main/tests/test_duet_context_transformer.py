@@ -26,6 +26,7 @@ from src.utils.duet_context import (
     build_comparator_features,
     build_delayed_transition_supervision,
     build_reliability_gated_fusion,
+    build_reliability_gate_soft_teacher,
     build_real_conflict_multiview_supervision,
     build_synthetic_conflicts,
     cosine_knn_refine,
@@ -133,6 +134,7 @@ def make_context_cfg(**overrides):
         RELIABILITY_GATE_NEIGHBORS=5,
         RELIABILITY_GATE_NUM_VIEWS=1,
         RELIABILITY_GATE_LOSS_WEIGHT=0.10,
+        RELIABILITY_GATE_SOFT_TEACHER_REPLACEMENT_ENABLED=False,
         TRANSITION_SUPERVISION_ENABLED=False,
         TRANSITION_MIN_VIEW_AGREEMENT=0.75,
         TRANSITION_MIN_PER_DIRECTION=2,
@@ -392,6 +394,40 @@ class AnchorBankTest(unittest.TestCase):
             [1.0, 0.5, 0.0, 0.0],
         )
         self.assertEqual(float(weighted["weight"][2:].sum().item()), 0.0)
+
+    def test_reliability_gate_soft_teacher_replaces_only_weighted_rows(self):
+        clip = torch.tensor(
+            [
+                [0.70, 0.20, 0.10],
+                [0.20, 0.70, 0.10],
+                [0.10, 0.20, 0.70],
+            ]
+        )
+        fused = torch.tensor(
+            [
+                [0.10, 0.80, 0.10],
+                [0.80, 0.10, 0.10],
+                [0.70, 0.20, 0.10],
+            ]
+        )
+        result = build_reliability_gate_soft_teacher(
+            clip,
+            {
+                "active": torch.tensor([True, True, False]),
+                "target": fused,
+                "weight": torch.tensor([1.0, 0.5, 1.0]),
+            },
+        )
+        self.assertTrue(torch.allclose(result["teacher"][0], fused[0]))
+        self.assertTrue(
+            torch.allclose(result["teacher"][1], 0.5 * (clip[1] + fused[1]))
+        )
+        self.assertTrue(torch.equal(result["teacher"][2], clip[2]))
+        self.assertTrue(
+            torch.allclose(result["teacher"].sum(dim=1), torch.ones(3))
+        )
+        self.assertEqual(result["changed"].tolist(), [True, True, False])
+        self.assertAlmostEqual(result["effective_sample_equivalent"], 1.5)
 
     def test_transition_supervision_runs_before_current_committee(self):
         torch.manual_seed(44)
@@ -2467,6 +2503,21 @@ class MethodFileContractTest(unittest.TestCase):
         self.assertIn("q - baseline_q", source)
         self.assertIn("float(logits.size(0))", source)
         self.assertIn("clip_kl_residual", source)
+
+    def test_reliability_gate_can_replace_clip_teacher_without_auxiliary(self):
+        source = Path(
+            "src/methods/oh/duet_first_cycle_prior_context_transformer.py"
+        ).read_text()
+        self.assertIn(
+            "RELIABILITY_GATE_SOFT_TEACHER_REPLACEMENT_ENABLED",
+            source,
+        )
+        self.assertIn(
+            'kl_soft_output = teacher_replacement["teacher"]',
+            source,
+        )
+        self.assertIn("conflict_training_payload = None", source)
+        self.assertIn("only_soft_teacher_replacement=True", source)
 
     def test_transition_residual_matches_interpolated_clip_teacher_gradient(self):
         source = Path(

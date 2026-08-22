@@ -48,6 +48,7 @@ from src.utils.duet_context import (
     DuetContextConflictTransformer,
     PairwiseConflictComparator,
     PersistentConflictBeliefMemory,
+    build_reliability_gate_soft_teacher,
     run_context_refinement,
 )
 from src.utils.duet_cycle_checkpoint import (
@@ -689,6 +690,13 @@ def train_target(
     reliability_gate_enabled = bool(
         getattr(cfg.DUET_CONTEXT, "RELIABILITY_GATE_ENABLED", False)
     )
+    reliability_gate_soft_teacher_enabled = bool(
+        getattr(
+            cfg.DUET_CONTEXT,
+            "RELIABILITY_GATE_SOFT_TEACHER_REPLACEMENT_ENABLED",
+            False,
+        )
+    )
     transition_supervision_enabled = bool(
         getattr(cfg.DUET_CONTEXT, "TRANSITION_SUPERVISION_ENABLED", False)
     )
@@ -712,9 +720,13 @@ def train_target(
         raise ValueError(
             "RELIABILITY_GATE_ENABLED requires the enabled comparator refiner"
         )
-    if reliability_gate_enabled and float(
-        cfg.DUET_CONTEXT.RELIABILITY_GATE_LOSS_WEIGHT
-    ) <= 0.0:
+    if (
+        reliability_gate_enabled
+        and not reliability_gate_soft_teacher_enabled
+        and float(
+            cfg.DUET_CONTEXT.RELIABILITY_GATE_LOSS_WEIGHT
+        ) <= 0.0
+    ):
         raise ValueError("RELIABILITY_GATE_LOSS_WEIGHT must be positive")
     if transition_supervision_enabled and not reliability_gate_enabled:
         raise ValueError(
@@ -788,6 +800,7 @@ def train_target(
         "active_cycles={}; anchors_per_class_min={}; adaptive_anchors={}; "
         "anchors_per_class_max={}; anchor_task_conf={:.2f}; "
         "anchor_clip_conf={:.2f}; strict_conflict={}; weak_agreement={}; "
+        "soft_teacher_replacement={}; "
         "ground_truth_affects_training=False".format(
             context_requested,
             context_enabled,
@@ -802,6 +815,7 @@ def train_target(
             float(cfg.DUET_CONTEXT.ANCHOR_CLIP_CONF),
             bool(cfg.DUET_CONTEXT.USE_STRICT_CONFLICT),
             bool(cfg.DUET_CONTEXT.USE_WEAK_AGREEMENT),
+            reliability_gate_soft_teacher_enabled,
         )
     )
 
@@ -1571,6 +1585,14 @@ def obtain_label(
         context_payload is not None
         and getattr(context_cfg, "RELIABILITY_GATE_ENABLED", False)
     )
+    reliability_gate_soft_teacher_enabled = bool(
+        reliability_gate_enabled
+        and getattr(
+            context_cfg,
+            "RELIABILITY_GATE_SOFT_TEACHER_REPLACEMENT_ENABLED",
+            False,
+        )
+    )
     isolated_context_enabled = (
         conflict_memory_enabled or reliability_gate_enabled
     )
@@ -1583,7 +1605,34 @@ def obtain_label(
         residual_pairwise = bool(
             reliability_gate_training_payload.get("residual_pairwise", False)
         )
-        if residual_pairwise:
+        if reliability_gate_soft_teacher_enabled:
+            teacher_replacement = build_reliability_gate_soft_teacher(
+                clip_all_output,
+                reliability_gate_training_payload,
+            )
+            kl_soft_output = teacher_replacement["teacher"]
+            # The KL teacher itself now carries the Comparator decision. Do
+            # not add the old residual pairwise loss a second time.
+            conflict_training_payload = None
+            logging.info(
+                "DUET reliability-gate soft-teacher replacement: cycle={}; "
+                "fixed_coverage_pool={}; weighted_teacher_rows={}; "
+                "effective_sample_equivalent={:.2f}; "
+                "clip_teacher_argmax_changes={}; mean_l1_delta={:.4f}; "
+                "hard_admission=0; pseudo_labels_changed=False; "
+                "auxiliary_loss=False; selection_uses_gt=False; "
+                "ground_truth_affects_training=False".format(
+                    curr_cycle + 1,
+                    int(gate_active.sum().item()),
+                    int(teacher_replacement["changed"].sum().item()),
+                    teacher_replacement["effective_sample_equivalent"],
+                    int(
+                        teacher_replacement["argmax_changed"].sum().item()
+                    ),
+                    teacher_replacement["mean_l1_delta"],
+                )
+            )
+        elif residual_pairwise:
             residual_delta = (
                 reliability_gate_training_payload["q"]
                 - reliability_gate_training_payload["baseline_q"]
@@ -1595,32 +1644,33 @@ def obtain_label(
         else:
             residual_changed = gate_loss_active
             mean_abs_residual = float("nan")
-        logging.info(
-            "DUET candidate-committee auxiliary target: cycle={}; evaluated_pool={}; "
-            "breakpoint_crossings={}; hard_admission=0; "
-            "auxiliary_pairwise_pool={}; original_clip_kl_changed=False; "
-            "loss_weight={:.3f}; loss_mode={}; residual_changed={}; "
-            "mean_abs_delta_q={}; teacher_effect={}; "
-            "ground_truth_affects_training=False".format(
-                curr_cycle + 1,
-                int(gate_active.sum().item()),
-                int(gate_switch.sum().item()),
-                int(gate_loss_active.sum().item()),
-                float(context_cfg.RELIABILITY_GATE_LOSS_WEIGHT),
-                "clip_kl_residual" if residual_pairwise else "full_soft_ce",
-                int(residual_changed.sum().item()),
-                (
-                    "{:.4f}".format(mean_abs_residual)
-                    if residual_pairwise
-                    else "nan"
-                ),
-                (
-                    "reliability_weighted_A_B_interpolation"
-                    if residual_pairwise
-                    else "additional_soft_CE"
-                ),
+        if not reliability_gate_soft_teacher_enabled:
+            logging.info(
+                "DUET candidate-committee auxiliary target: cycle={}; evaluated_pool={}; "
+                "breakpoint_crossings={}; hard_admission=0; "
+                "auxiliary_pairwise_pool={}; original_clip_kl_changed=False; "
+                "loss_weight={:.3f}; loss_mode={}; residual_changed={}; "
+                "mean_abs_delta_q={}; teacher_effect={}; "
+                "ground_truth_affects_training=False".format(
+                    curr_cycle + 1,
+                    int(gate_active.sum().item()),
+                    int(gate_switch.sum().item()),
+                    int(gate_loss_active.sum().item()),
+                    float(context_cfg.RELIABILITY_GATE_LOSS_WEIGHT),
+                    "clip_kl_residual" if residual_pairwise else "full_soft_ce",
+                    int(residual_changed.sum().item()),
+                    (
+                        "{:.4f}".format(mean_abs_residual)
+                        if residual_pairwise
+                        else "nan"
+                    ),
+                    (
+                        "reliability_weighted_A_B_interpolation"
+                        if residual_pairwise
+                        else "additional_soft_CE"
+                    ),
+                )
             )
-        )
     if context_payload is not None and not isolated_context_enabled:
         soft_only_admission = bool(
             getattr(context_cfg, "SOFT_ONLY_ADMISSION", False)
@@ -1728,12 +1778,21 @@ def obtain_label(
             )
         )
     if reliability_gate_enabled:
-        logging.info(
-            "DUET reliability-gate isolation: cycle={}; label_mask=original_duet; "
-            "mem_label=original_duet; kl_soft=original_clip; "
-            "only_auxiliary_candidate_pair_loss=True; "
-            "ground_truth_affects_training=False".format(curr_cycle + 1)
-        )
+        if reliability_gate_soft_teacher_enabled:
+            logging.info(
+                "DUET reliability-gate isolation: cycle={}; "
+                "label_mask=original_duet; mem_label=original_duet; "
+                "kl_soft=reliability_weighted_fused_teacher; "
+                "only_soft_teacher_replacement=True; hard_admission=False; "
+                "ground_truth_affects_training=False".format(curr_cycle + 1)
+            )
+        else:
+            logging.info(
+                "DUET reliability-gate isolation: cycle={}; label_mask=original_duet; "
+                "mem_label=original_duet; kl_soft=original_clip; "
+                "only_auxiliary_candidate_pair_loss=True; "
+                "ground_truth_affects_training=False".format(curr_cycle + 1)
+            )
     return (
         all_mix_output_pred,
         label_mask,

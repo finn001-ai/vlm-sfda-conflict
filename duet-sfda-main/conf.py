@@ -442,6 +442,9 @@ _C.DUET_CONTEXT.RELIABILITY_GATE_TEMPERATURE = 0.25
 _C.DUET_CONTEXT.RELIABILITY_GATE_NEIGHBORS = 5
 _C.DUET_CONTEXT.RELIABILITY_GATE_NUM_VIEWS = 4
 _C.DUET_CONTEXT.RELIABILITY_GATE_LOSS_WEIGHT = 0.10
+# Replace CLIP KL targets on the fixed-coverage gate instead of adding the
+# auxiliary pairwise residual. Hard pseudo-label admission remains unchanged.
+_C.DUET_CONTEXT.RELIABILITY_GATE_SOFT_TEACHER_REPLACEMENT_ENABLED = False
 # Delayed real-conflict supervision. Reconstruct the pre-adaptation state,
 # then use conflicts that mature into stable A/B agreement after Cycle 1 as
 # GT-free training examples for the Cycle-2 comparator.

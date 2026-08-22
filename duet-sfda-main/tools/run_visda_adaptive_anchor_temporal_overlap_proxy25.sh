@@ -5,7 +5,7 @@ shopt -s nullglob
 seed=2020
 proxy_list="data/VISDA-C/validation_proxy25_seed2020_list.txt"
 cycle1_checkpoint="output/checkpoints/duet_fcp_context_visda_proxy25_seed2020_cycle1.pt"
-method="duet_first_cycle_prior_context_transformer_adaptive_anchor_overlap80_klmatch_visda_proxy25_seed${seed}"
+method="duet_first_cycle_prior_context_transformer_soft_teacher80_visda_proxy25_seed${seed}"
 run_dir="output/uda/VISDA-C/TV/${method}"
 
 for path in "$proxy_list" "$cycle1_checkpoint" \
@@ -19,7 +19,7 @@ for path in "$proxy_list" "$cycle1_checkpoint" \
 done
 
 case "$run_dir" in
-  output/uda/VISDA-C/TV/duet_first_cycle_prior_context_transformer_adaptive_anchor_overlap80_klmatch_visda_proxy25_seed2020) ;;
+  output/uda/VISDA-C/TV/duet_first_cycle_prior_context_transformer_soft_teacher80_visda_proxy25_seed2020) ;;
   *) echo "Refusing unexpected output path: $run_dir" >&2; exit 1 ;;
 esac
 rm -rf -- "$run_dir"
@@ -27,7 +27,7 @@ rm -rf -- "$run_dir"
 echo "==> Resume the exact Cycle-1 checkpoint; execute Cycle 2 only"
 echo "==> Adaptive per-class anchors: max(8, ceil(sqrt(reliable candidates))), capped at 128"
 echo "==> Temporal evidence: exact historical pair weight 1.0, one-candidate overlap weight 0.5"
-echo "==> Residual conflict loss matches the original DUET KL coefficient: 0.40"
+echo "==> Replace CLIP KL teacher on the fixed-coverage gate; no auxiliary loss or hard admission"
 python image_target_of_oh_vs.py \
   --cfg cfgs/visda/duet_first_cycle_prior_context_transformer.yaml \
   CKPT_DIR . SETTING.OUTPUT_SRC source \
@@ -50,7 +50,8 @@ python image_target_of_oh_vs.py \
   DUET_CONTEXT.RELIABILITY_GATE_TEMPERATURE 0.25 \
   DUET_CONTEXT.RELIABILITY_GATE_NEIGHBORS 5 \
   DUET_CONTEXT.RELIABILITY_GATE_NUM_VIEWS 4 \
-  DUET_CONTEXT.RELIABILITY_GATE_LOSS_WEIGHT 0.40 \
+  DUET_CONTEXT.RELIABILITY_GATE_LOSS_WEIGHT 0.0 \
+  DUET_CONTEXT.RELIABILITY_GATE_SOFT_TEACHER_REPLACEMENT_ENABLED True \
   DUET_CONTEXT.TRANSITION_SUPERVISION_ENABLED True \
   DUET_CONTEXT.TRANSITION_TEMPORAL_DELTA_ENABLED True \
   DUET_CONTEXT.TRANSITION_SINGLE_CANDIDATE_OVERLAP_WEIGHT 0.50 \
@@ -82,8 +83,12 @@ grep -q "DUET context refinement: cycle=2;.*anchor_capacities=\[" "$log_file"
 grep -q "DUET temporal transition eligibility: cycle=2;.*single_candidate_overlap=" "$log_file"
 grep -q "DUET transition-comparator fusion: cycle=2;.*valid_direction_agreement=" "$log_file"
 grep -q "DUET reliability-gated comparator: cycle=2;.*coverage=80" "$log_file"
-grep -q "DUET candidate-committee auxiliary target: cycle=2;.*loss_weight=0.400" "$log_file"
-grep -q "DUET reliability-gate isolation: cycle=2; label_mask=original_duet" "$log_file"
+grep -q "DUET reliability-gate soft-teacher replacement: cycle=2;.*auxiliary_loss=False" "$log_file"
+grep -q "DUET reliability-gate isolation: cycle=2;.*kl_soft=reliability_weighted_fused_teacher" "$log_file"
+if grep -q "DUET candidate-committee auxiliary target: cycle=2" "$log_file"; then
+  echo "Soft-teacher run unexpectedly enabled the old auxiliary loss" >&2
+  exit 1
+fi
 if grep -q "DUET context transformer admitted: cycle=2" "$log_file"; then
   echo "Adaptive temporal method unexpectedly changed hard admission" >&2
   exit 1
@@ -96,7 +101,6 @@ grep "DUET temporal transition eligibility:" "$log_file"
 grep "DUET transition comparator training:" "$log_file"
 grep "DUET transition-comparator fusion:" "$log_file"
 grep "DUET reliability-gated comparator eval-only:" "$log_file"
-grep "DUET candidate-committee auxiliary target:" "$log_file"
-grep "DUET conflict auxiliary training reach:" "$log_file"
+grep "DUET reliability-gate soft-teacher replacement:" "$log_file"
 grep "Task: TV" "$log_file" | tail -4
 echo "==> Full log: $log_file"
