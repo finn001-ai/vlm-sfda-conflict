@@ -395,7 +395,7 @@ class AnchorBankTest(unittest.TestCase):
         )
         self.assertEqual(float(weighted["weight"][2:].sum().item()), 0.0)
 
-    def test_reliability_gate_soft_teacher_replaces_only_weighted_rows(self):
+    def test_reliability_gate_soft_teacher_exactly_replaces_active_rows(self):
         clip = torch.tensor(
             [
                 [0.70, 0.20, 0.10],
@@ -419,15 +419,13 @@ class AnchorBankTest(unittest.TestCase):
             },
         )
         self.assertTrue(torch.allclose(result["teacher"][0], fused[0]))
-        self.assertTrue(
-            torch.allclose(result["teacher"][1], 0.5 * (clip[1] + fused[1]))
-        )
+        self.assertTrue(torch.allclose(result["teacher"][1], fused[1]))
         self.assertTrue(torch.equal(result["teacher"][2], clip[2]))
         self.assertTrue(
             torch.allclose(result["teacher"].sum(dim=1), torch.ones(3))
         )
         self.assertEqual(result["changed"].tolist(), [True, True, False])
-        self.assertAlmostEqual(result["effective_sample_equivalent"], 1.5)
+        self.assertAlmostEqual(result["effective_sample_equivalent"], 2.0)
 
     def test_transition_supervision_runs_before_current_committee(self):
         torch.manual_seed(44)
@@ -2516,8 +2514,18 @@ class MethodFileContractTest(unittest.TestCase):
             'kl_soft_output = teacher_replacement["teacher"]',
             source,
         )
+        self.assertIn(
+            "confi_dis[shared_active] = shared_target[shared_active]",
+            source,
+        )
+        self.assertLess(
+            source.index("_, all_mix_output_pred = torch.max"),
+            source.index(
+                "confi_dis[shared_active] = shared_target[shared_active]"
+            ),
+        )
         self.assertIn("conflict_training_payload = None", source)
-        self.assertIn("only_soft_teacher_replacement=True", source)
+        self.assertIn("shared_soft_teacher_replacement=True", source)
 
     def test_transition_residual_matches_interpolated_clip_teacher_gradient(self):
         source = Path(

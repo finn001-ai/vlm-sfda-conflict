@@ -1832,27 +1832,26 @@ def build_reliability_gate_soft_teacher(
     clip_teacher: torch.Tensor,
     gate_payload: dict,
 ) -> dict:
-    """Replace CLIP KL targets with reliability-weighted fused targets.
+    """Replace active CLIP KL targets with the exact fused targets.
 
     Hard admission and pseudo labels are deliberately outside this helper.
-    Rows outside the fixed-coverage gate remain exactly equal to CLIP. Within
-    the gate, the existing reliability/temporal-validity weight controls how
-    far the teacher moves from CLIP toward the fused candidate distribution.
+    Rows outside the fixed-coverage gate remain exactly equal to CLIP. Active
+    rows receive the same complete fused distribution whose argmax is used by
+    the same-subset gate evaluation; no second interpolation is applied.
     """
     clip = clip_teacher.detach().float()
     target = gate_payload["target"].detach().float().to(clip.device)
     active = gate_payload["active"].detach().bool().to(clip.device)
-    weight = gate_payload["weight"].detach().float().to(clip.device)
     if target.shape != clip.shape:
         raise ValueError("gate target and CLIP teacher must have equal shape")
-    if active.shape != (clip.size(0),) or weight.shape != (clip.size(0),):
-        raise ValueError("gate active/weight must have shape [N]")
-    if bool(((weight < 0.0) | (weight > 1.0)).any().item()):
-        raise ValueError("gate teacher weight must be in [0, 1]")
-    alpha = torch.where(active, weight, torch.zeros_like(weight))
-    teacher = clip + alpha.unsqueeze(1) * (target - clip)
+    if active.shape != (clip.size(0),):
+        raise ValueError("gate active must have shape [N]")
+    teacher = clip.clone()
+    teacher[active] = target[active]
     teacher = teacher / teacher.sum(dim=1, keepdim=True).clamp_min(_EPS)
-    changed = active & (alpha > 0.0)
+    changed = active & (
+        (teacher - clip).abs().sum(dim=1) > 1e-8
+    )
     argmax_changed = changed & (teacher.argmax(dim=1) != clip.argmax(dim=1))
     mean_l1_delta = (
         float((teacher[changed] - clip[changed]).abs().sum(dim=1).mean().item())
@@ -1864,8 +1863,7 @@ def build_reliability_gate_soft_teacher(
         "active": active,
         "changed": changed,
         "argmax_changed": argmax_changed,
-        "alpha": alpha,
-        "effective_sample_equivalent": float(alpha.sum().item()),
+        "effective_sample_equivalent": float(active.sum().item()),
         "mean_l1_delta": mean_l1_delta,
     }
 

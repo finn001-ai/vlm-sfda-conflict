@@ -1616,9 +1616,10 @@ def obtain_label(
             conflict_training_payload = None
             logging.info(
                 "DUET reliability-gate soft-teacher replacement: cycle={}; "
-                "fixed_coverage_pool={}; weighted_teacher_rows={}; "
+                "fixed_coverage_pool={}; exact_teacher_rows={}; "
                 "effective_sample_equivalent={:.2f}; "
                 "clip_teacher_argmax_changes={}; mean_l1_delta={:.4f}; "
+                "second_interpolation=False; "
                 "hard_admission=0; pseudo_labels_changed=False; "
                 "auxiliary_loss=False; selection_uses_gt=False; "
                 "ground_truth_affects_training=False".format(
@@ -1769,6 +1770,28 @@ def obtain_label(
 
     confi_imag = loader.dataset.imgs
     confi_dis = all_mix_output.detach()
+    if reliability_gate_soft_teacher_enabled:
+        shared_active = reliability_gate_training_payload["active"].bool()
+        shared_target = reliability_gate_training_payload["target"].float()
+        confi_dis = confi_dis.clone()
+        confi_dis[shared_active] = shared_target[shared_active]
+        fallback_argmax = all_mix_output.argmax(dim=1)
+        shared_argmax = confi_dis.argmax(dim=1)
+        fallback_changes = shared_active & (
+            shared_argmax != fallback_argmax
+        )
+        logging.info(
+            "DUET reliability-gate CLIP self-training target replacement: "
+            "cycle={}; fixed_coverage_pool={}; exact_teacher_rows={}; "
+            "duet_fallback_argmax_changes={}; hard_admission=0; "
+            "pseudo_labels_changed=False; second_interpolation=False; "
+            "selection_uses_gt=False; ground_truth_affects_training=False".format(
+                curr_cycle + 1,
+                int(shared_active.sum().item()),
+                int(shared_active.sum().item()),
+                int(fallback_changes.sum().item()),
+            )
+        )
     if conflict_memory_enabled:
         logging.info(
             "DUET conflict-memory isolation: cycle={}; label_mask=original_duet; "
@@ -1782,8 +1805,9 @@ def obtain_label(
             logging.info(
                 "DUET reliability-gate isolation: cycle={}; "
                 "label_mask=original_duet; mem_label=original_duet; "
-                "kl_soft=reliability_weighted_fused_teacher; "
-                "only_soft_teacher_replacement=True; hard_admission=False; "
+                "kl_soft=exact_fused_teacher; "
+                "confi_dis=exact_fused_teacher; "
+                "shared_soft_teacher_replacement=True; hard_admission=False; "
                 "ground_truth_affects_training=False".format(curr_cycle + 1)
             )
         else:

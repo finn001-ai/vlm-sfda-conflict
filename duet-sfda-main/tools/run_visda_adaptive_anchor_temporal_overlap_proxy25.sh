@@ -5,7 +5,7 @@ shopt -s nullglob
 seed=2020
 proxy_list="data/VISDA-C/validation_proxy25_seed2020_list.txt"
 cycle1_checkpoint="output/checkpoints/duet_fcp_context_visda_proxy25_seed2020_cycle1.pt"
-method="duet_first_cycle_prior_context_transformer_soft_teacher80_visda_proxy25_seed${seed}"
+method="duet_first_cycle_prior_context_transformer_shared_soft_teacher80_visda_proxy25_seed${seed}"
 run_dir="output/uda/VISDA-C/TV/${method}"
 
 for path in "$proxy_list" "$cycle1_checkpoint" \
@@ -19,7 +19,7 @@ for path in "$proxy_list" "$cycle1_checkpoint" \
 done
 
 case "$run_dir" in
-  output/uda/VISDA-C/TV/duet_first_cycle_prior_context_transformer_soft_teacher80_visda_proxy25_seed2020) ;;
+  output/uda/VISDA-C/TV/duet_first_cycle_prior_context_transformer_shared_soft_teacher80_visda_proxy25_seed2020) ;;
   *) echo "Refusing unexpected output path: $run_dir" >&2; exit 1 ;;
 esac
 rm -rf -- "$run_dir"
@@ -27,7 +27,7 @@ rm -rf -- "$run_dir"
 echo "==> Resume the exact Cycle-1 checkpoint; execute Cycle 2 only"
 echo "==> Adaptive per-class anchors: max(8, ceil(sqrt(reliable candidates))), capped at 128"
 echo "==> Temporal evidence: exact historical pair weight 1.0, one-candidate overlap weight 0.5"
-echo "==> Replace CLIP KL teacher on the fixed-coverage gate; no auxiliary loss or hard admission"
+echo "==> Write the exact fused target to Task KL and CLIP self-training; no auxiliary loss or hard admission"
 python image_target_of_oh_vs.py \
   --cfg cfgs/visda/duet_first_cycle_prior_context_transformer.yaml \
   CKPT_DIR . SETTING.OUTPUT_SRC source \
@@ -83,8 +83,9 @@ grep -q "DUET context refinement: cycle=2;.*anchor_capacities=\[" "$log_file"
 grep -q "DUET temporal transition eligibility: cycle=2;.*single_candidate_overlap=" "$log_file"
 grep -q "DUET transition-comparator fusion: cycle=2;.*valid_direction_agreement=" "$log_file"
 grep -q "DUET reliability-gated comparator: cycle=2;.*coverage=80" "$log_file"
-grep -q "DUET reliability-gate soft-teacher replacement: cycle=2;.*auxiliary_loss=False" "$log_file"
-grep -q "DUET reliability-gate isolation: cycle=2;.*kl_soft=reliability_weighted_fused_teacher" "$log_file"
+grep -q "DUET reliability-gate soft-teacher replacement: cycle=2;.*exact_teacher_rows=1900;.*second_interpolation=False;.*auxiliary_loss=False" "$log_file"
+grep -q "DUET reliability-gate CLIP self-training target replacement: cycle=2;.*exact_teacher_rows=1900;.*duet_fallback_argmax_changes=" "$log_file"
+grep -q "DUET reliability-gate isolation: cycle=2;.*kl_soft=exact_fused_teacher;.*confi_dis=exact_fused_teacher" "$log_file"
 if grep -q "DUET candidate-committee auxiliary target: cycle=2" "$log_file"; then
   echo "Soft-teacher run unexpectedly enabled the old auxiliary loss" >&2
   exit 1
@@ -102,5 +103,6 @@ grep "DUET transition comparator training:" "$log_file"
 grep "DUET transition-comparator fusion:" "$log_file"
 grep "DUET reliability-gated comparator eval-only:" "$log_file"
 grep "DUET reliability-gate soft-teacher replacement:" "$log_file"
+grep "DUET reliability-gate CLIP self-training target replacement:" "$log_file"
 grep "Task: TV" "$log_file" | tail -4
 echo "==> Full log: $log_file"
