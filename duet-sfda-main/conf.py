@@ -454,8 +454,16 @@ _C.DUET_CONTEXT.TRANSITION_MIN_PER_DIRECTION = 16
 _C.DUET_CONTEXT.TRANSITION_TRAIN_STEPS = 400
 _C.DUET_CONTEXT.TRANSITION_SYNTHETIC_MIX_FRACTION = 0.25
 _C.DUET_CONTEXT.TRANSITION_COMPARATOR_WEIGHT = 0.50
+# Learn and apply the transition Comparator in A=original DUET fallback,
+# B=strongest Task/CLIP challenger semantics. Mirrored training learns the
+# likelihood ratio; the empirical keep/switch frequency is restored at use.
+_C.DUET_CONTEXT.TRANSITION_RESIDUAL_FALLBACK_ENABLED = False
+_C.DUET_CONTEXT.TRANSITION_PRIOR_CALIBRATION_ENABLED = False
+_C.DUET_CONTEXT.TRANSITION_PRIOR_STRENGTH = 1.0
+_C.DUET_CONTEXT.TRANSITION_PRIOR_SMOOTHING = 1.0
 # Use the same sample before/after Cycle 1 and learn the change in pairwise
-# evidence. A/B mirroring removes the extreme transition-direction prior.
+# evidence. A/B mirroring removes the direction prior while fitting evidence;
+# prior calibration can add the label-free empirical prior back at inference.
 _C.DUET_CONTEXT.TRANSITION_TEMPORAL_DELTA_ENABLED = False
 # Optional extrapolation to a current pair sharing exactly one historical
 # candidate. Zero preserves exact-pair-only behavior; 0.5 is the first trial.

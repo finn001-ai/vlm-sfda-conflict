@@ -324,6 +324,32 @@ class AnchorBankTest(unittest.TestCase):
         self.assertEqual(int((result["targets"] == 1).sum()), 8)
         self.assertEqual(result["balanced_per_direction"], 2)
 
+        residual = build_delayed_transition_supervision(
+            snapshot,
+            current_task,
+            current_clip,
+            views_task,
+            views_clip,
+            num_classes=c,
+            anchors_per_class=2,
+            anchor_task_conf=0.90,
+            anchor_clip_conf=0.90,
+            anchor_task_entropy=0.40,
+            anchor_clip_entropy=0.40,
+            entropy_weight=1.0,
+            require_pre_post_prior_agreement=True,
+            sim_topk=2,
+            min_view_agreement=0.75,
+            min_per_direction=2,
+            residual_fallback=True,
+            prior_smoothing=1.0,
+            seed=2020,
+        )
+        self.assertTrue(residual["residual_fallback"])
+        self.assertEqual(residual["raw_choose_a"], 2)
+        self.assertEqual(residual["raw_choose_b"], 8)
+        self.assertAlmostEqual(residual["prior_choose_a"], 3.0 / 12.0)
+
     def test_transition_vote_fusion_preserves_fixed_coverage(self):
         weak_task = torch.tensor(
             [[0.70, 0.20, 0.10], [0.20, 0.70, 0.10], [0.60, 0.30, 0.10], [0.30, 0.60, 0.10]]
@@ -394,6 +420,45 @@ class AnchorBankTest(unittest.TestCase):
             [1.0, 0.5, 0.0, 0.0],
         )
         self.assertEqual(float(weighted["weight"][2:].sum().item()), 0.0)
+
+    def test_transition_residual_changes_only_challenger_wins(self):
+        weak_task = torch.tensor([[0.80, 0.20]] * 4)
+        weak_clip = torch.tensor([[0.40, 0.60]] * 4)
+        fallback = 0.5 * (weak_task + weak_clip)
+        committee = {
+            "q": torch.tensor([0.70, 0.70, 0.70, 0.70]),
+            "source_agreement": torch.ones(4),
+            "candidate_a": torch.zeros(4, dtype=torch.long),
+            "candidate_b": torch.ones(4, dtype=torch.long),
+            "active": torch.ones(4, dtype=torch.bool),
+            "target": fallback.clone(),
+            "weight": torch.ones(4),
+            "reliability": torch.ones(4) * 0.5,
+        }
+        fused = fuse_transition_comparator_vote(
+            committee,
+            torch.tensor([0.90, 0.10, 0.20, 0.80]),
+            weak_task,
+            weak_clip,
+            comparator_weight=1.0,
+            coverage_fraction=0.75,
+            comparator_valid_weight=torch.ones(4),
+            residual_fallback=True,
+        )
+        self.assertEqual(int(fused["active"].sum()), 3)
+        self.assertEqual(
+            fused["correction_active"].tolist(),
+            [False, True, True, False],
+        )
+        self.assertTrue(torch.allclose(fused["target"][0], fallback[0]))
+        self.assertTrue(torch.allclose(fused["target"][3], fallback[3]))
+        self.assertEqual(float(fused["weight"][~fused["correction_active"]].sum()), 0.0)
+        self.assertTrue(
+            (
+                fused["target"][fused["correction_active"]].argmax(dim=1)
+                == 1
+            ).all()
+        )
 
     def test_reliability_gate_soft_teacher_exactly_replaces_active_rows(self):
         clip = torch.tensor(

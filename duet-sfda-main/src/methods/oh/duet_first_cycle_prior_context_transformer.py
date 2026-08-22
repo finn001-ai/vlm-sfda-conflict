@@ -751,6 +751,26 @@ def train_target(
     transition_comparator_weight = float(
         getattr(cfg.DUET_CONTEXT, "TRANSITION_COMPARATOR_WEIGHT", 0.50)
     )
+    transition_residual_fallback = bool(
+        getattr(
+            cfg.DUET_CONTEXT,
+            "TRANSITION_RESIDUAL_FALLBACK_ENABLED",
+            False,
+        )
+    )
+    transition_prior_calibration = bool(
+        getattr(
+            cfg.DUET_CONTEXT,
+            "TRANSITION_PRIOR_CALIBRATION_ENABLED",
+            False,
+        )
+    )
+    transition_prior_strength = float(
+        getattr(cfg.DUET_CONTEXT, "TRANSITION_PRIOR_STRENGTH", 1.0)
+    )
+    transition_prior_smoothing = float(
+        getattr(cfg.DUET_CONTEXT, "TRANSITION_PRIOR_SMOOTHING", 1.0)
+    )
     if transition_supervision_enabled and not (
         0.5 <= transition_min_view_agreement <= 1.0
     ):
@@ -773,6 +793,20 @@ def train_target(
         raise ValueError(
             "TRANSITION_COMPARATOR_WEIGHT must satisfy 0 <= value <= 1"
         )
+    if transition_residual_fallback and not transition_supervision_enabled:
+        raise ValueError(
+            "TRANSITION_RESIDUAL_FALLBACK_ENABLED requires "
+            "TRANSITION_SUPERVISION_ENABLED"
+        )
+    if transition_prior_calibration and not transition_supervision_enabled:
+        raise ValueError(
+            "TRANSITION_PRIOR_CALIBRATION_ENABLED requires "
+            "TRANSITION_SUPERVISION_ENABLED"
+        )
+    if not 0.0 <= transition_prior_strength <= 1.0:
+        raise ValueError("TRANSITION_PRIOR_STRENGTH must be in [0, 1]")
+    if transition_prior_smoothing <= 0.0:
+        raise ValueError("TRANSITION_PRIOR_SMOOTHING must be positive")
     cycle_checkpoint_save_path = str(
         getattr(cfg.DUET_CONTEXT, "CYCLE_CHECKPOINT_SAVE_PATH", "")
     ).strip()
@@ -801,6 +835,7 @@ def train_target(
         "anchors_per_class_max={}; anchor_task_conf={:.2f}; "
         "anchor_clip_conf={:.2f}; strict_conflict={}; weak_agreement={}; "
         "soft_teacher_replacement={}; "
+        "transition_residual_fallback={}; transition_prior_calibration={}; "
         "ground_truth_affects_training=False".format(
             context_requested,
             context_enabled,
@@ -816,6 +851,8 @@ def train_target(
             bool(cfg.DUET_CONTEXT.USE_STRICT_CONFLICT),
             bool(cfg.DUET_CONTEXT.USE_WEAK_AGREEMENT),
             reliability_gate_soft_teacher_enabled,
+            transition_residual_fallback,
+            transition_prior_calibration,
         )
     )
 
@@ -1609,6 +1646,15 @@ def obtain_label(
             teacher_replacement = build_reliability_gate_soft_teacher(
                 clip_all_output,
                 reliability_gate_training_payload,
+                active_key=(
+                    "task_teacher_active"
+                    if bool(
+                        reliability_gate_training_payload.get(
+                            "residual_fallback", False
+                        )
+                    )
+                    else "active"
+                ),
             )
             kl_soft_output = teacher_replacement["teacher"]
             # The KL teacher itself now carries the Comparator decision. Do
@@ -1616,7 +1662,8 @@ def obtain_label(
             conflict_training_payload = None
             logging.info(
                 "DUET reliability-gate soft-teacher replacement: cycle={}; "
-                "fixed_coverage_pool={}; exact_teacher_rows={}; "
+                "fixed_coverage_pool={}; residual_correction_pool={}; "
+                "task_teacher_pool={}; exact_teacher_rows={}; "
                 "effective_sample_equivalent={:.2f}; "
                 "clip_teacher_argmax_changes={}; mean_l1_delta={:.4f}; "
                 "second_interpolation=False; "
@@ -1625,6 +1672,12 @@ def obtain_label(
                 "ground_truth_affects_training=False".format(
                     curr_cycle + 1,
                     int(gate_active.sum().item()),
+                    int(
+                        reliability_gate_training_payload.get(
+                            "correction_active", gate_active
+                        ).sum().item()
+                    ),
+                    int(teacher_replacement["active"].sum().item()),
                     int(teacher_replacement["changed"].sum().item()),
                     teacher_replacement["effective_sample_equivalent"],
                     int(
@@ -1771,7 +1824,14 @@ def obtain_label(
     confi_imag = loader.dataset.imgs
     confi_dis = all_mix_output.detach()
     if reliability_gate_soft_teacher_enabled:
-        shared_active = reliability_gate_training_payload["active"].bool()
+        if bool(
+            reliability_gate_training_payload.get("residual_fallback", False)
+        ):
+            shared_active = reliability_gate_training_payload[
+                "clip_teacher_active"
+            ].bool()
+        else:
+            shared_active = reliability_gate_training_payload["active"].bool()
         shared_target = reliability_gate_training_payload["target"].float()
         confi_dis = confi_dis.clone()
         confi_dis[shared_active] = shared_target[shared_active]
@@ -1787,7 +1847,7 @@ def obtain_label(
             "pseudo_labels_changed=False; second_interpolation=False; "
             "selection_uses_gt=False; ground_truth_affects_training=False".format(
                 curr_cycle + 1,
-                int(shared_active.sum().item()),
+                int(gate_active.sum().item()),
                 int(shared_active.sum().item()),
                 int(fallback_changes.sum().item()),
             )
@@ -1805,9 +1865,10 @@ def obtain_label(
             logging.info(
                 "DUET reliability-gate isolation: cycle={}; "
                 "label_mask=original_duet; mem_label=original_duet; "
-                "kl_soft=exact_fused_teacher; "
-                "confi_dis=exact_fused_teacher; "
-                "shared_soft_teacher_replacement=True; hard_admission=False; "
+                "kl_soft=residual_vs_clip_teacher; "
+                "confi_dis=residual_vs_duet_fallback; "
+                "shared_soft_teacher_replacement=True; "
+                "branch_specific_residual_teacher=True; hard_admission=False; "
                 "ground_truth_affects_training=False".format(curr_cycle + 1)
             )
         else:
