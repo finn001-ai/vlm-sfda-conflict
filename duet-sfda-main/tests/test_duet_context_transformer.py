@@ -39,6 +39,7 @@ from src.utils.duet_context import (
     train_context_transformer,
     _exclude_query_anchors,
     _build_extended_real_conflict_probe_features,
+    _adaptive_anchor_capacities,
     _log_agreement_ambiguity_eval_only,
     _log_agreement_candidate_probe_eval_only,
     _log_agreement_synthetic_feasibility_eval_only,
@@ -69,6 +70,8 @@ def make_context_cfg(**overrides):
         USE_STRICT_CONFLICT=True,
         USE_WEAK_AGREEMENT=True,
         ANCHORS_PER_CLASS=8,
+        ADAPTIVE_ANCHORS_ENABLED=False,
+        MAX_ANCHORS_PER_CLASS=128,
         ANCHOR_TASK_CONF=0.90,
         ANCHOR_CLIP_CONF=0.90,
         ANCHOR_TASK_ENTROPY=0.40,
@@ -137,6 +140,7 @@ def make_context_cfg(**overrides):
         TRANSITION_SYNTHETIC_MIX_FRACTION=0.25,
         TRANSITION_COMPARATOR_WEIGHT=0.50,
         TRANSITION_TEMPORAL_DELTA_ENABLED=False,
+        TRANSITION_SINGLE_CANDIDATE_OVERLAP_WEIGHT=0.0,
         AGREEMENT_AMBIGUITY_EVAL_ENABLED=False,
         AGREEMENT_AMBIGUITY_FRACTIONS=[10, 25, 50, 100],
         AGREEMENT_COMPARATOR_PROBE_ENABLED=False,
@@ -364,6 +368,31 @@ class AnchorBankTest(unittest.TestCase):
             torch.allclose(masked["q"][2:], committee["q"][2:])
         )
 
+        weighted = fuse_transition_comparator_vote(
+            committee,
+            torch.tensor([0.9, 0.1, 0.2, 0.8]),
+            weak_task,
+            weak_clip,
+            comparator_weight=0.5,
+            coverage_fraction=0.5,
+            comparator_valid_weight=torch.tensor([1.0, 0.5, 0.0, 0.0]),
+        )
+        self.assertEqual(
+            weighted["transition_valid"].tolist(),
+            [True, True, False, False],
+        )
+        self.assertTrue(
+            torch.allclose(
+                weighted["q"],
+                torch.tensor([0.85, 0.175, 0.6, 0.4]),
+            )
+        )
+        self.assertEqual(
+            weighted["transition_valid_weight"].tolist(),
+            [1.0, 0.5, 0.0, 0.0],
+        )
+        self.assertEqual(float(weighted["weight"][2:].sum().item()), 0.0)
+
     def test_transition_supervision_runs_before_current_committee(self):
         torch.manual_seed(44)
         n, c, d = 40, 3, 8
@@ -410,11 +439,14 @@ class AnchorBankTest(unittest.TestCase):
             num_classes=c,
             context_cfg=make_context_cfg(
                 REFINER_TYPE="comparator",
+                ADAPTIVE_ANCHORS_ENABLED=True,
+                MAX_ANCHORS_PER_CLASS=16,
                 RELIABILITY_GATE_ENABLED=True,
                 RELIABILITY_GATE_NUM_VIEWS=4,
                 RELIABILITY_GATE_COVERAGE_FRACTION=0.80,
                 TRANSITION_SUPERVISION_ENABLED=True,
                 TRANSITION_TEMPORAL_DELTA_ENABLED=True,
+                TRANSITION_SINGLE_CANDIDATE_OVERLAP_WEIGHT=0.5,
                 TRANSITION_TRAIN_STEPS=3,
                 TRANSITION_MIN_PER_DIRECTION=2,
                 TRAIN_STEPS_PER_CYCLE=0,
@@ -452,8 +484,20 @@ class AnchorBankTest(unittest.TestCase):
             )
         )
         self.assertTrue(any("DUET transition comparator training:" in line for line in logs))
-        self.assertTrue(any("DUET transition-comparator fusion:" in line for line in logs))
-        self.assertTrue(any("DUET temporal transition eligibility:" in line for line in logs))
+        fusion_log = next(
+            line
+            for line in logs
+            if "DUET transition-comparator fusion:" in line
+        )
+        self.assertIn("valid_direction_agreement=", fusion_log)
+        self.assertIn("weighted_direction_agreement=", fusion_log)
+        eligibility_log = next(
+            line
+            for line in logs
+            if "DUET temporal transition eligibility:" in line
+        )
+        self.assertIn("single_candidate_overlap=", eligibility_log)
+        self.assertIn("weighted_temporal_coverage=", eligibility_log)
         self.assertTrue(
             any("temporal_delta_16D_with_A_B_mirroring" in line for line in logs)
         )
@@ -531,6 +575,28 @@ class AnchorBankTest(unittest.TestCase):
         counts = bank.per_class_counts()
         self.assertEqual(counts.tolist(), [3, 3, 3, 3])
         self.assertEqual(int(counts.sum().item()), 12)
+
+    def test_01a_adaptive_anchor_capacity_has_floor_growth_and_cap(self):
+        labels = torch.tensor([0] + [1] * 64 + [2] * 200)
+        capacities = _adaptive_anchor_capacities(
+            labels,
+            num_classes=4,
+            minimum=8,
+            maximum=12,
+        )
+        self.assertEqual(capacities.tolist(), [8, 8, 12, 8])
+
+        bank = ClassBalancedAnchorBank(
+            num_classes=4,
+            anchors_per_class=12,
+            feature_dim=3,
+            per_class_capacities=capacities,
+        )
+        features = torch.randn(labels.numel(), 3)
+        scores = torch.linspace(0.0, 1.0, labels.numel())
+        bank.update(features, labels, scores)
+        self.assertEqual(bank.per_class_counts().tolist(), [1, 8, 12, 0])
+        self.assertEqual(bank.summary()["per_class_capacities"], [8, 8, 12, 8])
 
     def test_01b_top_k_by_reliability_and_deterministic(self):
         bank = ClassBalancedAnchorBank(num_classes=2, anchors_per_class=2, feature_dim=8)

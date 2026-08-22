@@ -673,6 +673,12 @@ def train_target(
         )
     if context_enabled and int(cfg.DUET_CONTEXT.ANCHORS_PER_CLASS) < 1:
         raise ValueError("DUET_CONTEXT.ANCHORS_PER_CLASS must be >= 1")
+    if context_enabled and int(
+        getattr(cfg.DUET_CONTEXT, "MAX_ANCHORS_PER_CLASS", 128)
+    ) < int(cfg.DUET_CONTEXT.ANCHORS_PER_CLASS):
+        raise ValueError(
+            "DUET_CONTEXT.MAX_ANCHORS_PER_CLASS must be >= ANCHORS_PER_CLASS"
+        )
     if context_enabled and int(cfg.DUET_CONTEXT.MODEL_DIM) % int(
         cfg.DUET_CONTEXT.NUM_HEADS
     ) != 0:
@@ -779,7 +785,8 @@ def train_target(
     )
     logging.info(
         "DUET context transformer: requested={}; enabled={}; refiner={}; "
-        "active_cycles={}; anchors_per_class={}; anchor_task_conf={:.2f}; "
+        "active_cycles={}; anchors_per_class_min={}; adaptive_anchors={}; "
+        "anchors_per_class_max={}; anchor_task_conf={:.2f}; "
         "anchor_clip_conf={:.2f}; strict_conflict={}; weak_agreement={}; "
         "ground_truth_affects_training=False".format(
             context_requested,
@@ -787,6 +794,10 @@ def train_target(
             context_refiner,
             list(context_active_cycles),
             int(cfg.DUET_CONTEXT.ANCHORS_PER_CLASS),
+            bool(
+                getattr(cfg.DUET_CONTEXT, "ADAPTIVE_ANCHORS_ENABLED", False)
+            ),
+            int(getattr(cfg.DUET_CONTEXT, "MAX_ANCHORS_PER_CLASS", 128)),
             float(cfg.DUET_CONTEXT.ANCHOR_TASK_CONF),
             float(cfg.DUET_CONTEXT.ANCHOR_CLIP_CONF),
             bool(cfg.DUET_CONTEXT.USE_STRICT_CONFLICT),

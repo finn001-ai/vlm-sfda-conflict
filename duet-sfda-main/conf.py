@@ -325,6 +325,10 @@ _C.DUET_CONTEXT.USE_STRICT_CONFLICT = True
 _C.DUET_CONTEXT.USE_WEAK_AGREEMENT = True
 # 每个类别最多保留的 anchor 数量（class-balanced）。
 _C.DUET_CONTEXT.ANCHORS_PER_CLASS = 8
+# When enabled, ANCHORS_PER_CLASS is a minimum. Per-class capacity grows as
+# ceil(sqrt(number of reliable candidates)) and is capped below.
+_C.DUET_CONTEXT.ADAPTIVE_ANCHORS_ENABLED = False
+_C.DUET_CONTEXT.MAX_ANCHORS_PER_CLASS = 128
 # anchor 准入条件：Task/CLIP 一致，且两路置信度均 >= 阈值、熵均 <= 阈值。
 _C.DUET_CONTEXT.ANCHOR_TASK_CONF = 0.90
 _C.DUET_CONTEXT.ANCHOR_CLIP_CONF = 0.90
@@ -450,6 +454,9 @@ _C.DUET_CONTEXT.TRANSITION_COMPARATOR_WEIGHT = 0.50
 # Use the same sample before/after Cycle 1 and learn the change in pairwise
 # evidence. A/B mirroring removes the extreme transition-direction prior.
 _C.DUET_CONTEXT.TRANSITION_TEMPORAL_DELTA_ENABLED = False
+# Optional extrapolation to a current pair sharing exactly one historical
+# candidate. Zero preserves exact-pair-only behavior; 0.5 is the first trial.
+_C.DUET_CONTEXT.TRANSITION_SINGLE_CANDIDATE_OVERLAP_WEIGHT = 0.0
 # Exact cycle-boundary cache for repeated eval-only diagnostics. Saving and
 # resuming are opt-in and mutually exclusive; an existing cache is never
 # overwritten by the training code.

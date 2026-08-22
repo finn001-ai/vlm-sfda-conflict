@@ -42,6 +42,31 @@ def _entropy(probabilities: torch.Tensor) -> torch.Tensor:
     return -(probabilities * torch.log(probabilities.clamp_min(_EPS))).sum(dim=1)
 
 
+def _adaptive_anchor_capacities(
+    labels: torch.Tensor,
+    *,
+    num_classes: int,
+    minimum: int,
+    maximum: int,
+) -> torch.Tensor:
+    """Dataset-adaptive per-class capacity without target ground-truth.
+
+    Capacity grows as ``ceil(sqrt(reliable_candidates_in_class))``. This uses
+    more representative anchors on large classes without making bank size
+    linear in the target set. ``minimum`` remains the configured K floor.
+    """
+    if minimum < 1 or maximum < minimum:
+        raise ValueError("adaptive anchor bounds must satisfy 1 <= min <= max")
+    labels = labels.detach().long().cpu()
+    if labels.numel() == 0:
+        return torch.full((num_classes,), minimum, dtype=torch.long)
+    if labels.min() < 0 or labels.max() >= num_classes:
+        raise ValueError("adaptive anchor labels must be in [0, num_classes)")
+    candidate_counts = torch.bincount(labels, minlength=num_classes)
+    capacities = torch.ceil(torch.sqrt(candidate_counts.float())).long()
+    return capacities.clamp(min=minimum, max=maximum)
+
+
 class ClassBalancedAnchorBank:
     """Per-class top-k anchor memory.
 
@@ -64,6 +89,7 @@ class ClassBalancedAnchorBank:
         feature_dim: int,
         seed: int = 0,
         device: Optional[torch.device] = None,
+        per_class_capacities: Optional[torch.Tensor] = None,
     ) -> None:
         if num_classes <= 0 or anchors_per_class <= 0 or feature_dim <= 0:
             raise ValueError("num_classes, anchors_per_class and feature_dim must be positive")
@@ -72,6 +98,24 @@ class ClassBalancedAnchorBank:
         self.feature_dim = int(feature_dim)
         self.seed = int(seed)
         self.device = device or torch.device("cpu")
+        if per_class_capacities is None:
+            self.class_capacities = torch.full(
+                (self.num_classes,),
+                self.anchors_per_class,
+                dtype=torch.long,
+                device=self.device,
+            )
+        else:
+            capacities = per_class_capacities.detach().long().to(self.device)
+            if capacities.shape != (self.num_classes,):
+                raise ValueError("per_class_capacities must have shape [C]")
+            if int(capacities.min().item()) < 1:
+                raise ValueError("per-class anchor capacities must be positive")
+            if int(capacities.max().item()) > self.anchors_per_class:
+                raise ValueError(
+                    "per-class capacity cannot exceed anchors_per_class"
+                )
+            self.class_capacities = capacities
         self.anchor_features = torch.zeros(
             self.num_classes, self.anchors_per_class, self.feature_dim,
             dtype=torch.float32, device=self.device,
@@ -133,7 +177,7 @@ class ClassBalancedAnchorBank:
             # = sample index (ascending).  Stable argsort keeps the original
             # ascending index order for ties.
             order = torch.argsort(cls_scores, descending=True, stable=True)
-            keep = order[: self.anchors_per_class]
+            keep = order[: int(self.class_capacities[cls].item())]
             count = keep.numel()
             self.anchor_features[cls, :count] = features[selected[keep]]
             self.anchor_labels[cls, :count] = labels[selected[keep]]
@@ -163,6 +207,7 @@ class ClassBalancedAnchorBank:
         counts = self.per_class_counts()
         return {
             "per_class_counts": counts.tolist(),
+            "per_class_capacities": self.class_capacities.tolist(),
             "total": int(counts.sum().item()),
             "classes_filled": self.num_classes_filled(),
             "seed": self.seed,
@@ -1411,6 +1456,8 @@ def build_delayed_transition_supervision(
     current_task_bank: Optional[ClassBalancedAnchorBank] = None,
     current_clip_bank: Optional[ClassBalancedAnchorBank] = None,
     temporal_delta: bool = False,
+    adaptive_anchors: bool = False,
+    max_anchors_per_class: int = 128,
     num_classes: int,
     anchors_per_class: int,
     anchor_task_conf: float,
@@ -1485,6 +1532,9 @@ def build_delayed_transition_supervision(
         anchor_mask &= (pre_task == pre_clip) & (pre_task == candidate_a)
 
     anchor_count = int(anchor_mask.sum().item())
+    anchor_candidate_counts = torch.bincount(
+        candidate_a[anchor_mask].long(), minlength=num_classes
+    ).tolist()
     empty = torch.zeros(0, 16, dtype=torch.float32)
     empty_target = torch.zeros(0, dtype=torch.long)
     if anchor_count < 2 or int(historical_conflict.sum().item()) == 0:
@@ -1499,6 +1549,8 @@ def build_delayed_transition_supervision(
             "raw_choose_b": 0,
             "balanced_per_direction": 0,
             "anchor_count": anchor_count,
+            "anchor_candidate_counts": anchor_candidate_counts,
+            "anchor_capacities": [anchors_per_class] * num_classes,
             "historical_task_bank": None,
             "historical_clip_bank": None,
             "temporal_delta": bool(temporal_delta),
@@ -1516,20 +1568,35 @@ def build_delayed_transition_supervision(
         )
     )
     anchor_labels = candidate_a[anchor_mask].long()
+    historical_capacities = (
+        _adaptive_anchor_capacities(
+            anchor_labels,
+            num_classes=num_classes,
+            minimum=anchors_per_class,
+            maximum=max_anchors_per_class,
+        )
+        if adaptive_anchors
+        else torch.full(
+            (num_classes,), anchors_per_class, dtype=torch.long
+        )
+    )
+    historical_bank_width = int(historical_capacities.max().item())
     pool_ids = torch.arange(anchor_count)
     task_bank = ClassBalancedAnchorBank(
         num_classes=num_classes,
-        anchors_per_class=anchors_per_class,
+        anchors_per_class=historical_bank_width,
         feature_dim=historical_task_feature.size(1),
         seed=seed,
         device=torch.device("cpu"),
+        per_class_capacities=historical_capacities,
     )
     clip_bank = ClassBalancedAnchorBank(
         num_classes=num_classes,
-        anchors_per_class=anchors_per_class,
+        anchors_per_class=historical_bank_width,
         feature_dim=historical_clip_feature.size(1),
         seed=seed,
         device=torch.device("cpu"),
+        per_class_capacities=historical_capacities,
     )
     task_bank.update(
         historical_task_feature[anchor_mask], anchor_labels, reliability, pool_ids
@@ -1652,6 +1719,8 @@ def build_delayed_transition_supervision(
         "raw_choose_b": raw_choose_b,
         "balanced_per_direction": int(balance_n if ready else 0),
         "anchor_count": anchor_count,
+        "anchor_candidate_counts": anchor_candidate_counts,
+        "anchor_capacities": historical_capacities.tolist(),
         "task_view_support": task_view_support,
         "clip_view_support": clip_view_support,
         "historical_task_bank": task_bank,
@@ -1672,6 +1741,7 @@ def fuse_transition_comparator_vote(
     comparator_weight: float,
     coverage_fraction: float,
     comparator_valid_mask: Optional[torch.Tensor] = None,
+    comparator_valid_weight: Optional[torch.Tensor] = None,
 ) -> dict:
     """Fuse historical real-conflict learning with the current committee."""
     if not 0.0 <= float(comparator_weight) <= 1.0:
@@ -1681,34 +1751,43 @@ def fuse_transition_comparator_vote(
         raise ValueError("transition comparator vote must match committee rows")
     committee_q = committee["q"].detach().float().cpu()
     comparator_q = comparator_prob_a.detach().float().cpu()
-    if comparator_valid_mask is None:
+    if comparator_valid_weight is not None:
+        valid_weight = comparator_valid_weight.detach().float().cpu()
+        if valid_weight.numel() != total:
+            raise ValueError(
+                "transition comparator validity weight must match committee rows"
+            )
+        if bool(((valid_weight < 0.0) | (valid_weight > 1.0)).any().item()):
+            raise ValueError("transition comparator validity weight must be in [0, 1]")
+        comparator_valid = valid_weight > 0.0
+    elif comparator_valid_mask is None:
         comparator_valid = torch.ones(total, dtype=torch.bool)
+        valid_weight = torch.ones(total, dtype=torch.float32)
     else:
         comparator_valid = comparator_valid_mask.detach().bool().cpu()
         if comparator_valid.numel() != total:
             raise ValueError(
                 "transition comparator validity mask must match committee rows"
             )
-    # Out-of-domain rows (changed historical candidate pair) remain on the
-    # current multi-view committee instead of receiving temporal extrapolation.
-    comparator_q = torch.where(comparator_valid, comparator_q, committee_q)
+        valid_weight = comparator_valid.float()
+    effective_comparator_weight = float(comparator_weight) * valid_weight
     q = (
-        (1.0 - float(comparator_weight)) * committee_q
-        + float(comparator_weight) * comparator_q
+        (1.0 - effective_comparator_weight) * committee_q
+        + effective_comparator_weight * comparator_q
     ).clamp(_EPS, 1.0 - _EPS)
     direction_agreement = (
         (committee_q - 0.5) * (comparator_q - 0.5) >= 0.0
     ).float()
     source_agreement = committee["source_agreement"].detach().float().cpu()
-    reliability = (
+    fused_reliability = (
         2.0 * (q - 0.5).abs()
         * source_agreement
         * (0.5 + 0.5 * direction_agreement)
     ).clamp(0.0, 1.0)
-    reliability = torch.where(
-        comparator_valid,
-        reliability,
-        committee["reliability"].detach().float().cpu(),
+    committee_reliability = committee["reliability"].detach().float().cpu()
+    reliability = (
+        valid_weight * fused_reliability
+        + (1.0 - valid_weight) * committee_reliability
     )
     selected_count = max(
         1, min(total, int(round(total * float(coverage_fraction))))
@@ -1717,7 +1796,11 @@ def fuse_transition_comparator_vote(
     active = torch.zeros(total, dtype=torch.bool)
     active[order[:selected_count]] = True
     weight = torch.zeros(total, dtype=torch.float32)
-    weight[active] = 0.25 + 0.75 * reliability[active]
+    # Partial candidate overlap is useful but less trustworthy than an exact
+    # historical pair, so it also scales the downstream residual-loss weight.
+    weight[active] = (
+        0.25 + 0.75 * reliability[active]
+    ) * valid_weight[active]
     task = weak_task_probs.detach().float().cpu()
     clip = weak_clip_probs.detach().float().cpu()
     candidate_a = committee["candidate_a"].detach().long().cpu()
@@ -1738,6 +1821,7 @@ def fuse_transition_comparator_vote(
             "transition_q": comparator_q,
             "transition_committee_agreement": direction_agreement,
             "transition_valid": comparator_valid,
+            "transition_valid_weight": valid_weight,
         }
     )
     return fused
@@ -4047,6 +4131,16 @@ def run_context_refinement(
     use_strict_conflict = bool(context_cfg.USE_STRICT_CONFLICT)
     use_weak_agreement = bool(context_cfg.USE_WEAK_AGREEMENT)
     anchors_per_class = int(context_cfg.ANCHORS_PER_CLASS)
+    adaptive_anchors_enabled = bool(
+        getattr(context_cfg, "ADAPTIVE_ANCHORS_ENABLED", False)
+    )
+    max_anchors_per_class = int(
+        getattr(context_cfg, "MAX_ANCHORS_PER_CLASS", 128)
+    )
+    if max_anchors_per_class < anchors_per_class:
+        raise ValueError(
+            "MAX_ANCHORS_PER_CLASS must be >= ANCHORS_PER_CLASS"
+        )
     anchor_task_conf = float(context_cfg.ANCHOR_TASK_CONF)
     anchor_clip_conf = float(context_cfg.ANCHOR_CLIP_CONF)
     anchor_task_entropy = float(context_cfg.ANCHOR_TASK_ENTROPY)
@@ -4131,7 +4225,9 @@ def run_context_refinement(
         "query_count": query_count,
         "anchor_count": anchor_count,
         "anchor_bank_total": 0,
+        "anchor_candidate_per_class_counts": [],
         "anchor_per_class_counts": [],
+        "anchor_per_class_capacities": [],
         "anchor_mean_task_conf": float("nan"),
         "anchor_mean_clip_conf": float("nan"),
         "train_loss": None,
@@ -4149,12 +4245,29 @@ def run_context_refinement(
     }
 
     if query_count > 0 and anchor_count >= 2:
+        generic_anchor_labels = task_top1[anchor_mask].detach().long()
+        stats["anchor_candidate_per_class_counts"] = torch.bincount(
+            generic_anchor_labels.cpu(), minlength=num_classes
+        ).tolist()
+        generic_anchor_capacities = (
+            _adaptive_anchor_capacities(
+                generic_anchor_labels,
+                num_classes=num_classes,
+                minimum=anchors_per_class,
+                maximum=max_anchors_per_class,
+            )
+            if adaptive_anchors_enabled
+            else torch.full(
+                (num_classes,), anchors_per_class, dtype=torch.long
+            )
+        )
         anchor_bank = ClassBalancedAnchorBank(
             num_classes=num_classes,
-            anchors_per_class=anchors_per_class,
+            anchors_per_class=int(generic_anchor_capacities.max().item()),
             feature_dim=task_features.size(1),
             seed=seed,
             device=device,
+            per_class_capacities=generic_anchor_capacities,
         )
         reliability = (
             task_conf[anchor_mask]
@@ -4183,6 +4296,9 @@ def run_context_refinement(
         if anchor_sample_indices is not None:
             anchor_sample_indices = anchor_sample_indices.detach().long().to(device)
         stats["anchor_per_class_counts"] = anchor_bank.per_class_counts().tolist()
+        stats["anchor_per_class_capacities"] = (
+            anchor_bank.class_capacities.detach().cpu().tolist()
+        )
         stats["anchor_bank_total"] = int(
             anchor_bank.per_class_counts().sum().item()
         )
@@ -4424,6 +4540,16 @@ def run_comparator_refinement(
     """
     use_strict_conflict = bool(context_cfg.USE_STRICT_CONFLICT)
     anchors_per_class = int(context_cfg.ANCHORS_PER_CLASS)
+    adaptive_anchors_enabled = bool(
+        getattr(context_cfg, "ADAPTIVE_ANCHORS_ENABLED", False)
+    )
+    max_anchors_per_class = int(
+        getattr(context_cfg, "MAX_ANCHORS_PER_CLASS", 128)
+    )
+    if max_anchors_per_class < anchors_per_class:
+        raise ValueError(
+            "MAX_ANCHORS_PER_CLASS must be >= ANCHORS_PER_CLASS"
+        )
     anchor_task_conf = float(context_cfg.ANCHOR_TASK_CONF)
     anchor_clip_conf = float(context_cfg.ANCHOR_CLIP_CONF)
     anchor_task_entropy = float(context_cfg.ANCHOR_TASK_ENTROPY)
@@ -4591,6 +4717,13 @@ def run_comparator_refinement(
             False,
         )
     )
+    transition_single_overlap_weight = float(
+        getattr(
+            context_cfg,
+            "TRANSITION_SINGLE_CANDIDATE_OVERLAP_WEIGHT",
+            0.0,
+        )
+    )
     if reliability_gate_enabled and conflict_memory_enabled:
         raise ValueError(
             "RELIABILITY_GATE_ENABLED and CONFLICT_MEMORY_ENABLED are exclusive"
@@ -4643,6 +4776,15 @@ def run_comparator_refinement(
         raise ValueError(
             "TRANSITION_TEMPORAL_DELTA_ENABLED requires "
             "TRANSITION_SUPERVISION_ENABLED"
+        )
+    if not 0.0 <= transition_single_overlap_weight <= 1.0:
+        raise ValueError(
+            "TRANSITION_SINGLE_CANDIDATE_OVERLAP_WEIGHT must be in [0, 1]"
+        )
+    if transition_single_overlap_weight > 0.0 and not transition_temporal_delta_enabled:
+        raise ValueError(
+            "TRANSITION_SINGLE_CANDIDATE_OVERLAP_WEIGHT requires "
+            "TRANSITION_TEMPORAL_DELTA_ENABLED"
         )
     if conflict_memory_enabled and not 0.0 < conflict_memory_coverage <= 1.0:
         raise ValueError(
@@ -4824,7 +4966,9 @@ def run_comparator_refinement(
         "query_count": int(query_mask.sum().item()),
         "anchor_count": anchor_count,
         "anchor_bank_total": 0,
+        "anchor_candidate_per_class_counts": [],
         "anchor_per_class_counts": [],
+        "anchor_per_class_capacities": [],
         "anchor_mean_task_conf": float("nan"),
         "anchor_mean_clip_conf": float("nan"),
         "train_loss": None,
@@ -4862,6 +5006,22 @@ def run_comparator_refinement(
         pool_task_features = task_features[anchor_mask].detach().to(device)
         pool_clip_features = clip_features[anchor_mask].detach().to(device)
         pool_labels = task_top1[anchor_mask].detach().long().to(device)
+        stats["anchor_candidate_per_class_counts"] = torch.bincount(
+            pool_labels.cpu(), minlength=num_classes
+        ).tolist()
+        current_anchor_capacities = (
+            _adaptive_anchor_capacities(
+                pool_labels,
+                num_classes=num_classes,
+                minimum=anchors_per_class,
+                maximum=max_anchors_per_class,
+            )
+            if adaptive_anchors_enabled
+            else torch.full(
+                (num_classes,), anchors_per_class, dtype=torch.long
+            )
+        )
+        current_bank_width = int(current_anchor_capacities.max().item())
         pool_strong_task = (
             strong_task_probs[anchor_mask].detach().to(device)
             if strong_task_probs is not None
@@ -4885,10 +5045,11 @@ def run_comparator_refinement(
 
         task_bank = ClassBalancedAnchorBank(
             num_classes=num_classes,
-            anchors_per_class=anchors_per_class,
+            anchors_per_class=current_bank_width,
             feature_dim=task_features.size(1),
             seed=seed,
             device=device,
+            per_class_capacities=current_anchor_capacities,
         )
         task_bank.update(
             features=pool_task_features,
@@ -4898,10 +5059,11 @@ def run_comparator_refinement(
         )
         clip_bank = ClassBalancedAnchorBank(
             num_classes=num_classes,
-            anchors_per_class=anchors_per_class,
+            anchors_per_class=current_bank_width,
             feature_dim=clip_features.size(1),
             seed=seed,
             device=device,
+            per_class_capacities=current_anchor_capacities,
         )
         clip_bank.update(
             features=pool_clip_features,
@@ -4911,6 +5073,9 @@ def run_comparator_refinement(
         )
         stats["anchor_bank_total"] = int(task_bank.per_class_counts().sum().item())
         stats["anchor_per_class_counts"] = task_bank.per_class_counts().tolist()
+        stats["anchor_per_class_capacities"] = (
+            task_bank.class_capacities.detach().cpu().tolist()
+        )
         stats["anchor_mean_task_conf"] = float(task_conf[anchor_mask].mean().item())
         stats["anchor_mean_clip_conf"] = float(clip_conf[anchor_mask].mean().item())
 
@@ -4993,6 +5158,7 @@ def run_comparator_refinement(
         transition_comparator_trained = False
         transition_real_features = None
         transition_valid_mask = None
+        transition_valid_weight = None
         real_candidate_a = task_top1[strict_positions]
         real_candidate_b = clip_top1[strict_positions]
         if strict_positions.numel() > 0:
@@ -5090,6 +5256,8 @@ def run_comparator_refinement(
                     current_task_bank=task_bank,
                     current_clip_bank=clip_bank,
                     temporal_delta=transition_temporal_delta_enabled,
+                    adaptive_anchors=adaptive_anchors_enabled,
+                    max_anchors_per_class=max_anchors_per_class,
                     num_classes=num_classes,
                     anchors_per_class=anchors_per_class,
                     anchor_task_conf=anchor_task_conf,
@@ -5108,6 +5276,9 @@ def run_comparator_refinement(
                 transition_real_features = real_features
                 transition_valid_mask = torch.ones(
                     strict_positions.numel(), dtype=torch.bool
+                )
+                transition_valid_weight = torch.ones(
+                    strict_positions.numel(), dtype=torch.float32
                 )
                 if (
                     transition_temporal_delta_enabled
@@ -5136,6 +5307,17 @@ def run_comparator_refinement(
                             & (historical_b == current_a)
                         )
                     )
+                    current_a_seen = (current_a == historical_a) | (
+                        current_a == historical_b
+                    )
+                    current_b_seen = (current_b == historical_a) | (
+                        current_b == historical_b
+                    )
+                    single_candidate_overlap = (
+                        historical_conflict
+                        & ~stable_pair
+                        & (current_a_seen | current_b_seen)
+                    )
                     historical_real_features = build_comparator_features(
                         historical_task[strict_positions],
                         historical_clip[strict_positions],
@@ -5155,19 +5337,35 @@ def run_comparator_refinement(
                         real_features.detach().float().cpu()
                         - historical_real_features
                     ).to(device)
-                    transition_valid_mask = stable_pair
+                    transition_valid_weight = torch.zeros(
+                        strict_positions.numel(), dtype=torch.float32
+                    )
+                    transition_valid_weight[stable_pair] = 1.0
+                    transition_valid_weight[
+                        single_candidate_overlap
+                    ] = transition_single_overlap_weight
+                    transition_valid_mask = transition_valid_weight > 0.0
                     log_fn(
                         "DUET temporal transition eligibility: cycle={}; "
                         "current_conflicts={}; historical_conflicts={}; "
-                        "stable_candidate_pairs={}; stable_pair_coverage={:.2f}%; "
+                        "stable_candidate_pairs={}; single_candidate_overlap={}; "
+                        "single_candidate_overlap_weight={:.2f}; "
+                        "temporal_valid={}; temporal_valid_coverage={:.2f}%; "
+                        "weighted_temporal_coverage={:.2f}%; "
                         "feature=post_cycle1_minus_pre_cycle1_16D; "
                         "selection_uses_gt=False; ground_truth_affects_training=False".format(
                             cycle,
                             int(strict_positions.numel()),
                             int(historical_conflict.sum().item()),
                             int(stable_pair.sum().item()),
+                            int(single_candidate_overlap.sum().item()),
+                            transition_single_overlap_weight,
+                            int(transition_valid_mask.sum().item()),
                             100.0
-                            * int(stable_pair.sum().item())
+                            * int(transition_valid_mask.sum().item())
+                            / max(int(strict_positions.numel()), 1),
+                            100.0
+                            * float(transition_valid_weight.sum().item())
                             / max(int(strict_positions.numel()), 1),
                         )
                     )
@@ -5177,6 +5375,8 @@ def run_comparator_refinement(
                     "raw_choose_a={}; raw_choose_b={}; "
                     "minority_direction_samples={}; train_samples={}; "
                     "historical_anchor_count={}; min_view_agreement={:.2f}; "
+                    "historical_anchor_candidates_per_class=[{}]; "
+                    "historical_anchor_capacities=[{}]; "
                     "feature_mode={}; base_training_samples={}; "
                     "construction=pre_cycle1_conflict_to_post_cycle1_stable_agreement; "
                     "uses_current_conflict_gt=False; ground_truth_affects_training=False".format(
@@ -5192,6 +5392,16 @@ def run_comparator_refinement(
                         transition_result["features"].size(0),
                         transition_result["anchor_count"],
                         transition_min_view_agreement,
+                        ",".join(
+                            str(value)
+                            for value in transition_result[
+                                "anchor_candidate_counts"
+                            ]
+                        ),
+                        ",".join(
+                            str(value)
+                            for value in transition_result["anchor_capacities"]
+                        ),
                         (
                             "temporal_delta_16D_with_A_B_mirroring"
                             if transition_result["temporal_delta"]
@@ -5350,18 +5560,36 @@ def run_comparator_refinement(
                         comparator_weight=transition_comparator_weight,
                         coverage_fraction=reliability_gate_coverage,
                         comparator_valid_mask=transition_valid_mask,
+                        comparator_valid_weight=transition_valid_weight,
                     )
                     gate_method = (
                         "candidate_committee_plus_delayed_real_conflict_comparator"
                     )
+                    valid_transition = gate_local["transition_valid"]
                     transition_agreement = float(
-                        gate_local["transition_committee_agreement"].mean().item()
+                        gate_local["transition_committee_agreement"][
+                            valid_transition
+                        ].mean().item()
+                    )
+                    weighted_transition_agreement = float(
+                        (
+                            gate_local["transition_committee_agreement"]
+                            * gate_local["transition_valid_weight"]
+                        ).sum().item()
+                        / max(
+                            float(
+                                gate_local["transition_valid_weight"].sum().item()
+                            ),
+                            _EPS,
+                        )
                     )
                     log_fn(
                         "DUET transition-comparator fusion: cycle={}; "
                         "current_conflicts={}; comparator_weight={:.2f}; "
-                        "committee_weight={:.2f}; direction_agreement={:.2f}%; "
+                        "committee_weight={:.2f}; valid_direction_agreement={:.2f}%; "
+                        "weighted_direction_agreement={:.2f}%; "
                         "temporal_valid={}; temporal_valid_rate={:.2f}%; "
+                        "weighted_temporal_rate={:.2f}%; "
                         "coverage={:.2f}%; labels_used_for_fusion=False; "
                         "ground_truth_affects_training=False".format(
                             cycle,
@@ -5369,10 +5597,14 @@ def run_comparator_refinement(
                             transition_comparator_weight,
                             1.0 - transition_comparator_weight,
                             100.0 * transition_agreement,
+                            100.0 * weighted_transition_agreement,
                             int(transition_valid_mask.sum().item()),
                             100.0
                             * int(transition_valid_mask.sum().item())
                             / max(int(transition_valid_mask.numel()), 1),
+                            100.0
+                            * float(transition_valid_weight.sum().item())
+                            / max(int(transition_valid_weight.numel()), 1),
                             100.0 * reliability_gate_coverage,
                         )
                     )
@@ -6431,7 +6663,9 @@ def _log_context_stats(
     log_fn(
         "DUET context refinement: cycle={}; active=True; refiner={}; "
         "post_prior_agreement={}; strict_conflicts={}; weak_agreement={}; "
-        "anchor_candidates={}; anchors_total={}; anchors_per_class=[{}]; "
+        "anchor_candidates={}; anchor_candidates_per_class=[{}]; "
+        "anchors_total={}; anchors_per_class=[{}]; "
+        "anchor_capacities=[{}]; "
         "anchor_task_conf={:.4f}; "
         "anchor_clip_conf={:.4f}; train_loss={}; resolved_strict={}; "
         "support_task={}; support_clip={}; third_class={}; abstain={}; "
@@ -6443,8 +6677,18 @@ def _log_context_stats(
             stats["strict_conflicts"],
             stats["weak_agreement"],
             stats["anchor_count"],
+            ",".join(
+                str(v)
+                for v in stats.get(
+                    "anchor_candidate_per_class_counts", []
+                )
+            ),
             stats["anchor_bank_total"],
             ",".join(str(v) for v in stats["anchor_per_class_counts"]),
+            ",".join(
+                str(v)
+                for v in stats.get("anchor_per_class_capacities", [])
+            ),
             stats["anchor_mean_task_conf"],
             stats["anchor_mean_clip_conf"],
             loss_str,
