@@ -95,7 +95,7 @@ def _load_classnames(path: str) -> list[str]:
     return [name.replace("_", " ") for name in classnames]
 
 
-def _build_loaders(cfg):
+def _build_loaders(cfg, log_prefix="DUET anchored consensus"):
     adaptation_override = str(cfg.ACTIVE.ADAPTATION_LIST).strip()
     adaptation_rows, evaluation_rows, adaptation_path = (
         load_adaptation_and_evaluation_rows(
@@ -106,8 +106,9 @@ def _build_loaders(cfg):
     )
     if adaptation_override:
         logging.info(
-            "DUET anchored consensus adaptation list: {}; adaptation_samples={}; "
+            "{} adaptation list: {}; adaptation_samples={}; "
             "full_evaluation_samples={}".format(
+                log_prefix,
                 adaptation_path,
                 len(adaptation_rows),
                 len(evaluation_rows),

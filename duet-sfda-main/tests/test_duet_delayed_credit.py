@@ -1,0 +1,110 @@
+import unittest
+from pathlib import Path
+
+import torch
+
+from src.utils.duet_delayed_credit import (
+    initialize_delayed_credit,
+    normalized_js_divergence,
+    update_delayed_credit,
+)
+
+
+class DuetDelayedCreditTest(unittest.TestCase):
+    def test_normalized_js_is_symmetric_and_bounded(self):
+        left = torch.tensor([[0.9, 0.1], [0.4, 0.6]])
+        right = torch.tensor([[0.1, 0.9], [0.4, 0.6]])
+        forward = normalized_js_divergence(left, right)
+        reverse = normalized_js_divergence(right, left)
+        self.assertTrue(torch.allclose(forward, reverse, atol=1e-7))
+        self.assertGreaterEqual(float(forward.min().item()), 0.0)
+        self.assertLessEqual(float(forward.max().item()), 1.0)
+        self.assertAlmostEqual(float(forward[1].item()), 0.0, places=7)
+
+    def test_identical_experts_remain_equal_fixed_point(self):
+        probability = torch.tensor([[0.8, 0.2], [0.3, 0.7]])
+        state = initialize_delayed_credit(probability, probability)
+        updated, diagnostics = update_delayed_credit(
+            state,
+            probability,
+            probability,
+        )
+        self.assertTrue(
+            torch.allclose(updated["memory"], probability, atol=1e-6)
+        )
+        self.assertTrue(
+            torch.allclose(updated["task_weight"], torch.full((2,), 0.5))
+        )
+        self.assertTrue(
+            torch.allclose(diagnostics["memory_shift_l1"], torch.zeros(2))
+        )
+
+    def test_future_outcome_rewards_better_previous_expert(self):
+        previous_task = torch.tensor([[0.9, 0.1]])
+        previous_clip = torch.tensor([[0.2, 0.8]])
+        state = initialize_delayed_credit(previous_task, previous_clip)
+        current_outcome = torch.tensor([[0.82, 0.18]])
+        updated, diagnostics = update_delayed_credit(
+            state,
+            current_outcome,
+            current_outcome,
+            credit_eta=4.0,
+        )
+        self.assertLess(
+            float(diagnostics["task_delayed_loss"].item()),
+            float(diagnostics["clip_delayed_loss"].item()),
+        )
+        self.assertGreater(
+            float(updated["task_weight"].item()),
+            float(updated["clip_weight"].item()),
+        )
+
+    def test_every_sample_has_positive_continuous_memory_update_rate(self):
+        task = torch.tensor([[0.999, 0.001], [0.6, 0.4]])
+        clip = torch.tensor([[0.001, 0.999], [0.4, 0.6]])
+        state = initialize_delayed_credit(task, clip)
+        state["memory"] = torch.tensor([[0.8, 0.2], [0.8, 0.2]])
+        updated, diagnostics = update_delayed_credit(
+            state,
+            task,
+            clip,
+            memory_update_rate=0.5,
+        )
+        self.assertTrue((diagnostics["update_rate"] >= 0.25).all())
+        self.assertTrue((diagnostics["update_rate"] <= 0.5).all())
+        self.assertTrue((diagnostics["memory_shift_l1"] > 0.0).all())
+        self.assertTrue(
+            torch.allclose(
+                updated["memory"].sum(dim=1),
+                torch.ones(2),
+                atol=1e-6,
+            )
+        )
+
+    def test_method_contract_excludes_cosmo_teacher_primitives(self):
+        source = Path(
+            "src/methods/oh/duet_delayed_agreement_credit.py"
+        ).read_text()
+        self.assertNotIn("entropy_weighted_poe", source)
+        self.assertNotIn("consensus_shift_factors", source)
+        self.assertNotIn("modulate_anchored_consensus", source)
+        self.assertNotIn("PairwiseConflictComparator", source)
+        self.assertIn("soft_coverage=100.00%", source)
+        self.assertIn("sample_self_history_only=True", source)
+
+    def test_visda_entry_and_config_are_wired(self):
+        entry = Path("image_target_of_oh_vs.py").read_text()
+        config = Path(
+            "cfgs/visda/duet_delayed_agreement_credit.yaml"
+        ).read_text()
+        script = Path(
+            "tools/run_visda_duet_delayed_agreement_credit_proxy25.sh"
+        ).read_text()
+        self.assertIn("DUET_DELAYED_CREDIT.train_target(cfg)", entry)
+        self.assertIn("METHOD: duet_delayed_agreement_credit", config)
+        self.assertIn("--ratio 0.25", script)
+        self.assertIn("full_evaluation_samples=${full_samples}", script)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -534,6 +534,11 @@ _C.DUET_CONSENSUS.CONFLICT_BETA = 0.4
 _C.DUET_CONSENSUS.DIVERSITY_DELTA = 1.0
 _C.DUET_CONSENSUS.EPSILON = 1e-5
 _C.DUET_CONSENSUS.CSM_STRENGTH = 0.5
+# Delayed Agreement Credit (DAC) settings.  DAC is a separate method path:
+# it uses neither entropy PoE, the frozen initial anchor, nor CSM.
+_C.DUET_CONSENSUS.CREDIT_DECAY = 0.9
+_C.DUET_CONSENSUS.CREDIT_ETA = 4.0
+_C.DUET_CONSENSUS.MEMORY_UPDATE_RATE = 0.5
 # consensus = the faithful shared-consensus hard label on all rows.
 # duet_agreement = retain DUET's high-precision agreement decision and use the
 # anchored consensus decision on every conflict; soft IIC still covers all rows.
