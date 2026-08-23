@@ -512,6 +512,36 @@ _C.DUET_CONTEXT.SEED = 2020
 # 是否打印 evaluation-only 指标（target label 只进日志，不进训练）。
 _C.DUET_CONTEXT.EVAL_ONLY_LOGGING = True
 
+# -------- Full-coverage anchored Task/CLIP consensus adaptation --------- #
+# This is a separate method path. It does not instantiate DUET_CONTEXT's
+# Comparator, synthetic-conflict trainer, sample anchors, or coverage gate.
+_C.DUET_CONSENSUS = CfgNode()
+_C.DUET_CONSENSUS.ENABLED = False
+# Fixed adaptation budget. Final-epoch target accuracy is reported; target
+# labels never select a checkpoint or any training setting.
+_C.DUET_CONSENSUS.EPOCHS = 30
+_C.DUET_CONSENSUS.EVAL_INTERVAL = 1
+# Target/prompt optimization follows the anchored-consensus protocol.
+_C.DUET_CONSENSUS.TARGET_LR = 5e-3
+_C.DUET_CONSENSUS.PROMPT_LR = 5e-4
+_C.DUET_CONSENSUS.FEATURE_LR_SCALE = 0.1
+_C.DUET_CONSENSUS.BOTTLENECK_LR_SCALE = 1.0
+_C.DUET_CONSENSUS.CLASSIFIER_LR_SCALE = 0.1
+# Target IIC, hard consolidation, and batch-diversity weights.
+_C.DUET_CONSENSUS.ALPHA = 1.3
+_C.DUET_CONSENSUS.AGREEMENT_BETA = 0.4
+_C.DUET_CONSENSUS.CONFLICT_BETA = 0.4
+_C.DUET_CONSENSUS.DIVERSITY_DELTA = 1.0
+_C.DUET_CONSENSUS.EPSILON = 1e-5
+_C.DUET_CONSENSUS.CSM_STRENGTH = 0.5
+# consensus = the faithful shared-consensus hard label on all rows.
+# duet_agreement = retain DUET's high-precision agreement decision and use the
+# anchored consensus decision on every conflict; soft IIC still covers all rows.
+_C.DUET_CONSENSUS.HARD_LABEL_MODE = "duet_agreement"
+# Preserve first-cycle prior semantics for agreement labels only. The cached
+# full-distribution consensus anchor always uses raw initial predictions.
+_C.DUET_CONSENSUS.FIRST_PRIOR_EPOCHS = 4
+
 # --------------------- DUET swap-conflict hard-label selection ---------- #
 _C.DUET_SWAP = CfgNode()
 # 独立配置开关：默认关闭，必须显式置 True 才启用 swap 选边规则。

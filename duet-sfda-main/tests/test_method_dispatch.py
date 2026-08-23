@@ -3,6 +3,18 @@ from pathlib import Path
 
 
 class MethodDispatchTest(unittest.TestCase):
+    def test_anchored_consensus_has_separate_dispatch(self):
+        entrypoint = Path("image_target_of_oh_vs.py").read_text()
+        self.assertIn(
+            "import src.methods.oh.duet_anchored_consensus as "
+            "DUET_ANCHORED_CONSENSUS",
+            entrypoint,
+        )
+        self.assertIn(
+            'cfg.MODEL.METHOD.startswith("duet_anchored_consensus_")',
+            entrypoint,
+        )
+
     def test_duet_fcp_uses_dedicated_thin_wrapper(self):
         entrypoint = Path("image_target_of_oh_vs.py").read_text()
 
