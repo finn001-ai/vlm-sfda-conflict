@@ -1,0 +1,14 @@
+variant,target_passes_total,cycle4_iteration,cycle4_fraction,accuracy,is_fixed_final
+dac15_duet16_all_fbc,31,866,0.25,91.38,false
+dac15_duet16_all_fbc,31,1732,0.50,91.47,false
+dac15_duet16_all_fbc,31,2598,0.75,91.52,false
+dac15_duet16_all_fbc,31,3464,1.00,91.54,true
+dac15_duet17_all_fbc,32,866,0.20,91.38,false
+dac15_duet17_all_fbc,32,1732,0.40,91.47,false
+dac15_duet17_all_fbc,32,2598,0.60,91.58,false
+dac15_duet17_all_fbc,32,3464,0.80,91.56,false
+dac15_duet17_all_fbc,32,4330,1.00,91.70,true
+dac15_duet16_fb_sourcec,31,866,0.25,91.37,false
+dac15_duet16_fb_sourcec,31,1732,0.50,91.47,false
+dac15_duet16_fb_sourcec,31,2598,0.75,91.53,false
+dac15_duet16_fb_sourcec,31,3464,1.00,91.51,true

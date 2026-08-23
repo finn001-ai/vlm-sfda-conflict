@@ -1,0 +1,394 @@
+[26/08/23 14:45:31] [conf.py:  724]: PyTorch Version: torch=2.8.0+cu128, cuda=12.8
+[26/08/23 14:45:31] [conf.py:  725]: ACTIVE:
+  ADAPTATION_LIST: 
+  ARCH: ViT-B/32
+  BETA: 0.99
+  CLS_PAR: 0.4
+  CON_PAR: 0.2
+  CTX_INIT: a_photo_of_a
+  CYCLE: 4
+  ENT: True
+  EPSILON: 1e-05
+  FINE_LR: 1e-07
+  GENT: True
+  GENT_PAR: 0.1
+  IIC_PAR: 1.0
+  KL_PAR: 0.4
+  LOAD: None
+  N_CTX: 4
+  Q_VALUE: 1.05
+  TTA_STEPS: 1
+ADACONTRAST:
+  ALPHA: 1.0
+  BETA: 1.0
+  CE_SUP_TYPE: weak_strong
+  CE_TYPE: standard
+  CONTRAST_TYPE: class_aware
+  DIST_TYPE: cosine
+  ETA: 1.0
+  FULL_PROGRESS: 0
+  GAMMA: 0.2
+  NUM_NEIGHBORS: 10
+  OPTIM_COS: True
+  OPTIM_EXP: False
+  REFINE_METHOD: nearest_neighbors
+  SCHEDULE: [10, 20]
+CKPT_DIR: .
+CKPT_PATH: 
+CONFLICT_PROBE:
+  DUMP_DIR: 
+COWA:
+  ALPHA: 0.2
+  COEFF: JMDS
+  DISTANCE: cosine
+  EPSILON: 1e-05
+  EPSILON2: 1e-06
+  PICKLE: False
+  WARM: 0.0
+CUDNN:
+  BENCHMARK: True
+DA: uda
+DATA_DIR: /home/sfda/data/
+DESC: 
+DIFO:
+  ARCH: ViT-B/32
+  CLS_PAR: 0.4
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 1.0
+  IIC_PAR: 1.0
+  LOAD: None
+  N_CTX: 4
+  TTA_STEPS: 1
+DUET_BOUNDARY:
+  TOP_FRACTION: 0.2
+DUET_CLIP_DELAY:
+  FRACTION: 0.1
+DUET_CONSENSUS:
+  AGREEMENT_BETA: 0.4
+  ALPHA: 1.3
+  BOTTLENECK_LR_SCALE: 1.0
+  CLASSIFIER_LR_SCALE: 0.1
+  CONFLICT_BETA: 0.4
+  CREDIT_DECAY: 0.9
+  CREDIT_ETA: 4.0
+  CSM_STRENGTH: 0.5
+  DIVERSITY_DELTA: 1.0
+  ENABLED: False
+  EPOCHS: 30
+  EPSILON: 1e-05
+  EVAL_INTERVAL: 1
+  FEATURE_LR_SCALE: 0.1
+  FIRST_PRIOR_EPOCHS: 4
+  HARD_LABEL_MODE: duet_agreement
+  MEMORY_UPDATE_RATE: 0.5
+  PROMPT_LR: 0.0005
+  TARGET_LR: 0.005
+DUET_CONTEXT:
+  ABSTAIN_WHEN_UNCERTAIN: True
+  ACCEPT_CONF: 0.75
+  ACCEPT_MARGIN: 0.2
+  ACTIVE_CYCLES: [1]
+  ADAPTIVE_ANCHORS_ENABLED: False
+  AGREEMENT_AMBIGUITY_EVAL_ENABLED: False
+  AGREEMENT_AMBIGUITY_FRACTIONS: [10, 25, 50, 100]
+  AGREEMENT_COMPARATOR_PROBE_ENABLED: False
+  AGREEMENT_SYNTHETIC_FEASIBILITY_ENABLED: False
+  ALLOW_THIRD_CLASS: True
+  ANCHORS_PER_CLASS: 8
+  ANCHOR_CLIP_CONF: 0.9
+  ANCHOR_CLIP_ENTROPY: 0.4
+  ANCHOR_TASK_CONF: 0.9
+  ANCHOR_TASK_ENTROPY: 0.4
+  COMPARATOR_COVERAGE_FRACTION: 0.0
+  COMPARATOR_EPOCHS: 20
+  COMPARATOR_GATE: 0.2
+  COMPARATOR_HIDDEN: 64
+  COMPARATOR_LAYERS: 2
+  CONFLICT_MEMORY_COVERAGE_FRACTION: 0.8
+  CONFLICT_MEMORY_ENABLED: False
+  CONFLICT_MEMORY_LOSS_WEIGHT: 0.1
+  CONFLICT_MEMORY_TEMPERATURE: 0.5
+  CYCLE_CHECKPOINT_RESUME_PATH: 
+  CYCLE_CHECKPOINT_SAVE_AFTER: 1
+  CYCLE_CHECKPOINT_SAVE_PATH: 
+  DIST_MATCH_DIMS: [4, 5, 6, 7]
+  DIST_MATCH_SYNTHETIC: True
+  DIST_MATCH_Z_MAX: 1.5
+  DROPOUT: 0.1
+  EARLY_STOP_CHECK_INTERVAL: 10
+  EARLY_STOP_ENABLED: False
+  EARLY_STOP_MIN_VAL_PER_DIRECTION: 6
+  EARLY_STOP_PATIENCE: 3
+  EARLY_STOP_VAL_FRACTION: 0.2
+  ENABLED: False
+  ENTROPY_WEIGHT: 1.0
+  EVAL_ONLY_LOGGING: True
+  EVAL_TRAJECTORY_COVERAGES: [10, 20, 40, 60, 80]
+  EVAL_TRAJECTORY_ENABLED: False
+  EVAL_TRAJECTORY_INTERVAL: 10
+  FFN_DIM: 512
+  KNN_K: 5
+  LR: 0.0001
+  MAX_ANCHORS_PER_CLASS: 128
+  MAX_TOP1_MARGIN: 0.6
+  MIN_DIST_MATCH_KEPT: 16
+  MIN_RUNNER_PROB: 0.1
+  MODEL_DIM: 256
+  NUM_HEADS: 4
+  REAL_CONFLICT_GT_PROBE_ENABLED: False
+  REAL_CONFLICT_GT_PROBE_EXTENDED_20D_ENABLED: False
+  REAL_CONFLICT_GT_PROBE_FOLDS: 5
+  REAL_CONFLICT_GT_PROBE_HIDDEN: 64
+  REAL_CONFLICT_GT_PROBE_LR: 0.01
+  REAL_CONFLICT_GT_PROBE_STEPS: 300
+  REAL_MULTIVIEW_ENABLED: False
+  REAL_MULTIVIEW_FINETUNE_STEPS: 100
+  REAL_MULTIVIEW_RESIDUAL_FALLBACK: False
+  REAL_MULTIVIEW_SYNTHETIC_MIX_FRACTION: 0.25
+  REAL_MULTIVIEW_TEMPERATURE: 0.5
+  REAL_MULTIVIEW_TRAIN_FRACTION: 0.6
+  REFINER_TYPE: transformer
+  RELIABILITY_GATE_COVERAGE_FRACTION: 0.8
+  RELIABILITY_GATE_ENABLED: False
+  RELIABILITY_GATE_LOSS_WEIGHT: 0.1
+  RELIABILITY_GATE_NEIGHBORS: 5
+  RELIABILITY_GATE_NUM_VIEWS: 4
+  RELIABILITY_GATE_SOFT_TEACHER_REPLACEMENT_ENABLED: False
+  RELIABILITY_GATE_TEMPERATURE: 0.25
+  REPLAY_MIX_FRACTION: 0.25
+  REPLAY_PER_DIRECTION: 64
+  REQUIRE_PRE_POST_PRIOR_AGREEMENT: True
+  SEED: 2020
+  SIM_TOPK: 3
+  SOFT_ONLY_ADMISSION: False
+  THIRD_CLASS_CONF: 0.85
+  THIRD_CLASS_MARGIN: 0.3
+  TRAIN_BATCH_SIZE: 64
+  TRAIN_STEPS_PER_CYCLE: 100
+  TRANSITION_COMPARATOR_WEIGHT: 0.5
+  TRANSITION_MIN_PER_DIRECTION: 16
+  TRANSITION_MIN_VIEW_AGREEMENT: 0.75
+  TRANSITION_PRIOR_CALIBRATION_ENABLED: False
+  TRANSITION_PRIOR_SMOOTHING: 1.0
+  TRANSITION_PRIOR_STRENGTH: 1.0
+  TRANSITION_RESIDUAL_FALLBACK_ENABLED: False
+  TRANSITION_SINGLE_CANDIDATE_OVERLAP_WEIGHT: 0.0
+  TRANSITION_SUPERVISION_ENABLED: False
+  TRANSITION_SYNTHETIC_MIX_FRACTION: 0.25
+  TRANSITION_TEMPORAL_DELTA_ENABLED: False
+  TRANSITION_TRAIN_STEPS: 400
+  USE_STRICT_CONFLICT: True
+  USE_WEAK_AGREEMENT: True
+  WEAK_ACCEPT_CONF: 0.75
+  WEAK_ACCEPT_MARGIN: 0.2
+  WEAK_CONF_THRESHOLD: 0.7
+  WEAK_ENTROPY_THRESHOLD: 1.0
+  WEIGHT_DECAY: 0.0001
+DUET_FCP:
+  POWER: 0.5
+DUET_HANDOFF:
+  FINAL_EXTRA_EPOCHS: 1
+DUET_SWAP:
+  ENABLED: False
+  GATE_D: 4.0
+  LAST_ACTIVE_CYCLE: 8
+  MIN_DIRECTION_ACCURACY: 0.0
+DUET_SWAP_AUDIT:
+  ENABLED: False
+FAILURE_AUDIT:
+  DIR: failure_audit
+  ENABLED: False
+  FEATURE_DTYPE: float16
+  STOP_AFTER_PRE_CYCLE: 0
+FOLDER: ./data/
+GKD:
+  CLS_PAR: 0.3
+  DISTANCE: cosine
+  ENT: True
+  ENT_PAR: 1.0
+  EPSILON: 1e-05
+  GENT: True
+  THRESHOLD: 0.0
+GPU_ID: 0
+ISSAVE: False
+LCFD:
+  ARCH: ViT-B/32
+  CLS_PAR: 0.4
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 1.0
+  LOSS_FUNC: sce
+  N_CTX: 4
+  TTA_STEPS: 1
+LOG_DEST: plmatch_260823_144531.txt
+LOG_TIME: 260823_144531
+MODEL:
+  ADAPTATION: source
+  ARCH: resnet101
+  EPISODIC: False
+  METHOD: plmatch_dac_handoff_full32_seed2020
+  WEIGHTS: IMAGENET1K_V1
+NRC:
+  EPSILON: 1e-05
+  K: 5
+  KK: 4
+NUM_WORKERS: 4
+OPTIM:
+  DAMPENING: 0.0
+  LR: 0.001
+  LR_DECAY1: 0.1
+  LR_DECAY2: 1
+  LR_DECAY3: 0.01
+  METHOD: SGD
+  MOMENTUM: 0.9
+  NESTEROV: True
+  WD: 0.001
+PCGRAD_PARAMETER_AUDIT:
+  DIR: conflict_pcgrad_parameter_audit
+  ENABLED: False
+PLUE:
+  CTR: True
+  EPSILON: 1e-05
+  LABEL_REFINEMENT: True
+  NEG_L: True
+  NUM_NEIGHBORS: 10
+  REWEIGHTING: True
+  TEMPORAL_LENGTH: 5
+ProDe:
+  ARCH: ViT-B/32
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 0.1
+  IIC_PAR: 1.3
+  LOAD: None
+  N_CTX: 4
+  TTA_STEPS: 1
+SAVE_DIR: ./output
+SCLM:
+  CLS_PAR: 0.3
+  CLS_SNT: 0.1
+  CONFI_PAR: 0.3
+  DISTANCE: cosine
+  ENT: True
+  ENT_PAR: 1.0
+  EPSILON: 1e-05
+  GENT: True
+  INITC_PAR: 0.3
+  NEW_ENT_PAR: 0.3
+  THRESHOLD: 0.0
+SETTING:
+  DATASET: VISDA-C
+  OUTPUT_SRC: output/dac_duet_handoff_source_seed2020
+  S: 0
+  SEED: 2020
+  T: 1
+SHOT:
+  CLS_PAR: 0.3
+  DISTANCE: cosine
+  ENT: True
+  ENT_PAR: 1.0
+  EPSILON: 1e-05
+  GENT: True
+  THRESHOLD: 0.0
+SOURCE:
+  EPSILON: 1e-05
+  TRTE: val
+TEST:
+  BATCH_SIZE: 64
+  INTERVAL: 4
+  MAX_EPOCH: 4
+TPDS:
+  DISTANCE: cosine
+  EPSILON: 1e-05
+  THRESHOLD: 0.0
+TSD:
+  ARCH: ViT-B/32
+  CLS_PAR: 0.4
+  CTX_INIT: a_photo_of_a
+  ENT: True
+  EPSILON: 1e-05
+  GENT: True
+  GENT_PAR: 1.0
+  IIC_PAR: 1.0
+  LENT_PAR: 0.05
+  LOAD: None
+  N_CTX: 4
+  TTA_STEPS: 1
+bottleneck: 512
+class_num: 12
+domain: ['train', 'validation']
+name: TV
+name_file: ./data/VISDA-C/classname.txt
+name_src: T
+output_dir: ./output/uda/VISDA-C/TV/plmatch_dac_handoff_full32_seed2020
+output_dir_src: ./output/dac_duet_handoff_source_seed2020/uda/VISDA-C/T
+[26/08/23 14:45:31] [plmatch.py:  593]: DUET first-cycle prior: enabled=False; power=0.000
+[26/08/23 14:45:31] [plmatch.py:  599]: DUET boundary router: enabled=False; first_cycle_only=True; top_fraction=0.200
+[26/08/23 14:45:31] [plmatch.py:  605]: DUET attribute reliability KL: enabled=False; first_cycle_only=True; target=unresolved_conflicts
+[26/08/23 14:45:31] [plmatch.py:  609]: DUET support-conditioned CLIP: enabled=False; first_cycle_only=True; support=task_clip_top2_union; target=unresolved_conflicts
+[26/08/23 14:45:31] [plmatch.py:  615]: DUET support-conditioned CLIP memory: enabled=False; memory=cycle1_task_clip_conflicts; target=currently_unresolved; support=task_clip_top2_union
+[26/08/23 14:45:31] [plmatch.py:  622]: DUET CLIP-confidence delay: enabled=False; first_cycle_only=True; per_pseudo_class_fraction=0.100
+[26/08/23 14:45:31] [plmatch.py:  629]: DUET exact PCGrad parameter audit: enabled=False; cycle=2; pure_arithmetic_duet=True; optimizer_updates_in_audit=0
+[26/08/23 14:45:31] [plmatch.py:  635]: DUET PCGrad compatibility: enabled=False; active_cycle=2; fraction=clip(dot(full_duet_grad,pcgrad_correction)/norm2(pcgrad_correction),0,1); target_labels=False; fitted_thresholds=False
+[26/08/23 14:45:31] [plmatch.py:  641]: DUET Top-k conflict probe: enabled=False; probability_stage=pre_first_cycle_prior; target_labels=oracle_diagnostic_only
+[26/08/23 14:45:31] [plmatch.py:  645]: DUET swap-conflict selection: enabled=False; scope=bidirectional_cross_support; gate_D=4.00; min_direction_accuracy=0.00; last_active_cycle=8; cycle0=always_clip_top1; abstain=not_in_loss; probability_stage=pre_first_cycle_prior
+[26/08/23 14:45:31] [plmatch.py:  656]: DUET swap-intervention audit: enabled=False; cycles=2,3; read_only=True; ground_truth=diagnostic_only
+[26/08/23 14:46:55] [plmatch.py: 1521]: Number of valid pseudo-labeled samples: 47997/55388; Accuracy = 92.30%
+[26/08/23 14:46:55] [plmatch.py: 1606]: Mixed output with valid mask: 92.30%
+[26/08/23 14:46:55] [plmatch.py: 1616]: all_mix_output Accuracy = 88.60%; clip_output_accuracy = 82.87%; pure_output_accuracy = 88.46%;
+[26/08/23 14:47:45] [plmatch.py:  378]: CLIP visual Accuracy = 86.72%;
+[26/08/23 14:51:02] [plmatch.py: 1005]: Task: TV, Iter:866/3464; Cycle: 1/4; Accuracy = 89.99%; classifier_loss = 0.5721386075019836
+98.68 91.57 90.23 75.48 97.57 95.76 94.25 83.35 90.53 96.84 94.62 70.96
+[26/08/23 14:54:17] [plmatch.py: 1005]: Task: TV, Iter:1732/3464; Cycle: 1/4; Accuracy = 90.17%; classifier_loss = 0.5420873165130615
+98.63 89.78 90.9 74.53 97.55 97.45 94.69 83.88 91.71 96.62 94.43 71.94
+[26/08/23 14:57:34] [plmatch.py: 1005]: Task: TV, Iter:2598/3464; Cycle: 1/4; Accuracy = 90.39%; classifier_loss = 0.21273808181285858
+98.74 91.08 90.15 77.42 96.87 96.87 94.27 83.58 92.26 96.84 94.38 72.17
+[26/08/23 15:00:50] [plmatch.py: 1005]: Task: TV, Iter:3464/3464; Cycle: 1/4; Accuracy = 90.48%; classifier_loss = 0.21462589502334595
+98.71 91.77 89.4 77.11 97.7 97.4 93.46 84.12 91.78 96.67 94.57 73.11
+[26/08/23 15:02:13] [plmatch.py: 1521]: Number of valid pseudo-labeled samples: 52185/55388; Accuracy = 90.79%
+[26/08/23 15:02:13] [plmatch.py: 1606]: Mixed output with valid mask: 91.13%
+[26/08/23 15:02:13] [plmatch.py: 1616]: all_mix_output Accuracy = 88.68%; clip_output_accuracy = 87.59%; pure_output_accuracy = 88.12%;
+[26/08/23 15:03:04] [plmatch.py:  378]: CLIP visual Accuracy = 88.20%;
+[26/08/23 15:06:21] [plmatch.py: 1005]: Task: TV, Iter:866/3464; Cycle: 2/4; Accuracy = 90.91%; classifier_loss = 0.0930621325969696
+98.71 90.68 89.45 78.58 97.48 98.22 94.96 84.0 93.87 96.32 94.05 74.59
+[26/08/23 15:09:36] [plmatch.py: 1005]: Task: TV, Iter:1732/3464; Cycle: 2/4; Accuracy = 90.99%; classifier_loss = 0.28045913577079773
+98.71 92.63 89.74 77.52 97.89 98.07 94.13 84.6 93.8 96.76 94.33 73.72
+[26/08/23 15:12:53] [plmatch.py: 1005]: Task: TV, Iter:2598/3464; Cycle: 2/4; Accuracy = 91.10%; classifier_loss = 0.10061289370059967
+98.57 92.03 90.0 79.19 97.72 97.83 94.25 85.12 94.02 96.93 94.62 72.96
+[26/08/23 15:16:10] [plmatch.py: 1005]: Task: TV, Iter:3464/3464; Cycle: 2/4; Accuracy = 91.09%; classifier_loss = 0.2284415364265442
+98.77 91.48 89.15 78.37 97.51 98.07 94.2 85.58 94.11 96.54 94.69 74.64
+[26/08/23 15:17:29] [plmatch.py: 1521]: Number of valid pseudo-labeled samples: 53376/55388; Accuracy = 90.69%
+[26/08/23 15:17:29] [plmatch.py: 1606]: Mixed output with valid mask: 90.81%
+[26/08/23 15:17:29] [plmatch.py: 1616]: all_mix_output Accuracy = 89.22%; clip_output_accuracy = 88.23%; pure_output_accuracy = 88.95%;
+[26/08/23 15:18:20] [plmatch.py:  378]: CLIP visual Accuracy = 88.73%;
+[26/08/23 15:21:36] [plmatch.py: 1005]: Task: TV, Iter:866/3464; Cycle: 3/4; Accuracy = 91.18%; classifier_loss = 0.3289310038089752
+98.71 91.71 90.11 77.32 97.36 98.07 94.93 85.58 94.17 96.54 94.74 74.87
+[26/08/23 15:24:54] [plmatch.py: 1005]: Task: TV, Iter:1732/3464; Cycle: 3/4; Accuracy = 91.35%; classifier_loss = 0.18469791114330292
+98.66 91.42 89.19 79.78 97.66 98.12 94.94 84.8 94.7 96.27 95.09 75.58
+[26/08/23 15:28:12] [plmatch.py: 1005]: Task: TV, Iter:2598/3464; Cycle: 3/4; Accuracy = 91.32%; classifier_loss = 0.2210763692855835
+98.77 93.06 90.49 77.96 97.95 98.12 93.69 85.85 94.9 96.62 94.69 73.68
+[26/08/23 15:31:28] [plmatch.py: 1005]: Task: TV, Iter:3464/3464; Cycle: 3/4; Accuracy = 91.40%; classifier_loss = 0.2122817039489746
+98.88 91.94 90.34 80.67 97.59 97.78 94.77 84.72 94.09 96.84 94.41 74.71
+[26/08/23 15:31:28] [plmatch.py:  788]: DUET DAC handoff final-cycle budget: cycle=4; base_epochs=4; extra_epochs=1; optimizer_steps=4330; total_handoff_passes=17; target_gt_affects_training=False
+[26/08/23 15:32:50] [plmatch.py: 1521]: Number of valid pseudo-labeled samples: 54033/55388; Accuracy = 90.74%
+[26/08/23 15:32:50] [plmatch.py: 1606]: Mixed output with valid mask: 90.63%
+[26/08/23 15:32:50] [plmatch.py: 1616]: all_mix_output Accuracy = 89.56%; clip_output_accuracy = 88.65%; pure_output_accuracy = 89.51%;
+[26/08/23 15:33:41] [plmatch.py:  378]: CLIP visual Accuracy = 89.11%;
+[26/08/23 15:36:58] [plmatch.py: 1005]: Task: TV, Iter:866/4330; Cycle: 4/4; Accuracy = 91.38%; classifier_loss = 0.17686142027378082
+98.85 91.88 89.06 77.97 97.8 97.98 94.36 85.65 94.61 97.06 95.35 76.03
+[26/08/23 15:40:16] [plmatch.py: 1005]: Task: TV, Iter:1732/4330; Cycle: 4/4; Accuracy = 91.47%; classifier_loss = 0.09390008449554443
+98.63 91.05 89.74 80.39 98.0 98.02 95.53 85.45 94.88 96.54 94.85 74.53
+[26/08/23 15:43:34] [plmatch.py: 1005]: Task: TV, Iter:2598/4330; Cycle: 4/4; Accuracy = 91.58%; classifier_loss = 0.2293052077293396
+98.9 92.4 89.83 79.83 98.04 98.31 94.72 85.95 94.59 96.54 95.3 74.51
+[26/08/23 15:46:53] [plmatch.py: 1005]: Task: TV, Iter:3464/4330; Cycle: 4/4; Accuracy = 91.56%; classifier_loss = 0.11237649619579315
+98.79 92.26 89.89 79.84 97.91 98.41 94.84 86.22 94.7 96.23 94.69 74.87
+[26/08/23 15:50:11] [plmatch.py: 1005]: Task: TV, Iter:4330/4330; Cycle: 4/4; Accuracy = 91.70%; classifier_loss = 0.21129901707172394
+98.82 92.66 89.96 78.92 97.91 98.22 94.19 85.5 95.54 97.02 95.02 76.62
+[26/08/23 15:50:11] [plmatch.py: 1047]: DUET DAC handoff completed: saved_dir=./output/uda/VISDA-C/TV/plmatch_dac_handoff_full32_seed2020; handoff_target_passes=17; final_checkpoint_fixed=True; target_gt_affects_training=False

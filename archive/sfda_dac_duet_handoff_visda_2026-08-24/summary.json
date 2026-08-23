@@ -1,0 +1,41 @@
+{
+  "dataset": "VISDA-C",
+  "task": "T->V",
+  "adaptation_samples": 55388,
+  "metric": "mean per-class accuracy",
+  "seed": 2020,
+  "target_gt_affects_training": false,
+  "checkpoint_selection": "fixed final",
+  "baseline_duet": {
+    "target_passes": 32,
+    "final_accuracy": 91.50,
+    "oracle_peak_accuracy": 91.52,
+    "archive": "../sfda_conflict_visda_full_duet_control_2026-07-24"
+  },
+  "dac15_duet16_all_fbc": {
+    "target_passes": 31,
+    "final_accuracy": 91.54,
+    "delta_vs_baseline_final": 0.04,
+    "log": "raw/dac15_duet16_all_fbc_seed2020_final_91.54.txt"
+  },
+  "dac15_duet17_all_fbc_exact_budget": {
+    "status": "primary_candidate",
+    "target_passes": 32,
+    "final_accuracy": 91.70,
+    "delta_vs_baseline_final": 0.20,
+    "git_commit_used": "d1002f0",
+    "log": "raw/dac15_duet17_all_fbc_seed2020_final_91.70.txt",
+    "cloud_checkpoint_dir": "output/uda/VISDA-C/TV/plmatch_dac_handoff_full32_seed2020"
+  },
+  "dac15_duet16_fb_sourcec": {
+    "status": "negative_ablation",
+    "target_passes": 31,
+    "final_accuracy": 91.51,
+    "oracle_peak_accuracy": 91.53,
+    "delta_vs_baseline_final": 0.01,
+    "delta_vs_equal_budget_all_fbc": -0.03,
+    "log": "raw/dac15_duet16_fb_sourcec_seed2020_final_91.51.txt"
+  },
+  "decision": "keep all-F/B/C exact-budget handoff as the primary candidate; retain F/B plus source-C only as an ablation",
+  "warning": "single-seed gain; multi-seed validation is required"
+}

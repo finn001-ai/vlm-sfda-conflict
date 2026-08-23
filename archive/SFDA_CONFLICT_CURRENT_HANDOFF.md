@@ -1,5 +1,11 @@
 # SFDA Conflict Project: Current Handoff
 
+> 2026-08-24 更新：VisDA 全量 DAC→DUET exact-budget handoff 在 seed 2020
+> 得到固定最终 `91.70%`，相同32-pass预算下高于原始 DUET 的 `91.50%`。
+> 当前正式候选、原始日志、代码入口和 source-C 负消融统一归档到
+> `archive/sfda_dac_duet_handoff_visda_2026-08-24/`。这是单 seed 候选，
+> 尚需多 seed 验证；下方旧状态只作为历史记录。
+
 > 2026-08-03 更新：CT-DUET 之后的 VisDA 冲突审计、proxy 候选、代码提交链
 > 和当前可取得的数据已统一归档到
 > `archive/sfda_conflict_visda_audit_campaign_2026-08-03/`。该轮没有候选

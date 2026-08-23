@@ -547,6 +547,12 @@ _C.DUET_CONSENSUS.HARD_LABEL_MODE = "duet_agreement"
 # full-distribution consensus anchor always uses raw initial predictions.
 _C.DUET_CONSENSUS.FIRST_PRIOR_EPOCHS = 4
 
+# ---------------- DAC -> released-DUET checkpoint handoff --------------- #
+# Disabled by default.  The exact-budget handoff enables one additional
+# epoch only in its last DUET cycle: 15 DAC passes + 17 DUET passes = 32.
+_C.DUET_HANDOFF = CfgNode()
+_C.DUET_HANDOFF.FINAL_EXTRA_EPOCHS = 0
+
 # --------------------- DUET swap-conflict hard-label selection ---------- #
 _C.DUET_SWAP = CfgNode()
 # 独立配置开关：默认关闭，必须显式置 True 才启用 swap 选边规则。

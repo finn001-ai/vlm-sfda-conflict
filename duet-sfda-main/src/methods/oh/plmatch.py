@@ -460,6 +460,17 @@ def train_target(
     handoff_mode = str(getattr(model_cfg, "METHOD", "")).startswith(
         "plmatch_dac_handoff_"
     )
+    handoff_cfg = getattr(cfg, "DUET_HANDOFF", None)
+    handoff_final_extra_epochs = int(
+        getattr(handoff_cfg, "FINAL_EXTRA_EPOCHS", 0)
+    )
+    if handoff_final_extra_epochs < 0:
+        raise ValueError("DUET_HANDOFF.FINAL_EXTRA_EPOCHS must be non-negative")
+    if handoff_final_extra_epochs and not handoff_mode:
+        raise ValueError(
+            "DUET_HANDOFF.FINAL_EXTRA_EPOCHS is only valid for the "
+            "plmatch_dac_handoff method"
+        )
     parameter_audit = bool(cfg.PCGRAD_PARAMETER_AUDIT.ENABLED)
     if parameter_audit and candidate_count:
         raise ValueError("PCGrad parameter audit requires pure arithmetic DUET")
@@ -724,8 +735,8 @@ def train_target(
     clip_optimizer = optim.Adam(vision_params, lr=cfg.ACTIVE.FINE_LR, betas=(0.9, 0.999), eps=1e-8)
     clip_optimizer = op_copy(clip_optimizer)
 
-    max_iter = cfg.TEST.MAX_EPOCH * len(dset_loaders["target"])
-    interval_iter = max_iter // cfg.TEST.INTERVAL
+    base_max_iter = cfg.TEST.MAX_EPOCH * len(dset_loaders["target"])
+    interval_iter = base_max_iter // cfg.TEST.INTERVAL
 
     prev_label_mask = None
     text_features = None
@@ -768,6 +779,24 @@ def train_target(
     print(f"train_clip")
     while curr_cycle < cfg.ACTIVE.CYCLE:
         iter_num = 0
+        cycle_max_iter = base_max_iter
+        if handoff_mode and curr_cycle + 1 == int(cfg.ACTIVE.CYCLE):
+            cycle_max_iter += (
+                handoff_final_extra_epochs * len(dset_loaders["target"])
+            )
+            if handoff_final_extra_epochs:
+                logging.info(
+                    "DUET DAC handoff final-cycle budget: cycle={}; "
+                    "base_epochs={}; extra_epochs={}; optimizer_steps={}; "
+                    "total_handoff_passes={}; target_gt_affects_training=False".format(
+                        curr_cycle + 1,
+                        int(cfg.TEST.MAX_EPOCH),
+                        handoff_final_extra_epochs,
+                        cycle_max_iter,
+                        int(cfg.ACTIVE.CYCLE) * int(cfg.TEST.MAX_EPOCH)
+                        + handoff_final_extra_epochs,
+                    )
+                )
 
         netF.eval()
         netB.eval()
@@ -868,7 +897,7 @@ def train_target(
         compatibility_unresolved = 0
         compatibility_output_active = 0
         compatibility_fraction_sum = 0.0
-        while iter_num < max_iter:
+        while iter_num < cycle_max_iter:
             try:
                 inputs_test, _, tar_idx = next(iter_test)
             except:
@@ -882,7 +911,12 @@ def train_target(
             strong_x = inputs_test[2].cuda()
 
             iter_num += 1
-            optimizer = cosine_scheduler(cfg, optimizer, iter_num=iter_num, max_iter=max_iter)
+            optimizer = cosine_scheduler(
+                cfg,
+                optimizer,
+                iter_num=iter_num,
+                max_iter=cycle_max_iter,
+            )
 
             weak_feas = netB(netF(weak_x))
             strong_feas = netB(netF(strong_x))
@@ -947,21 +981,21 @@ def train_target(
                 compatibility_fraction_sum += compatibility["fraction"]
             optimizer.step()
 
-            if iter_num % interval_iter == 0 or iter_num == max_iter:
+            if iter_num % interval_iter == 0 or iter_num == cycle_max_iter:
                 netF.eval()
                 netB.eval()
                 # netC.eval()
                 if cfg.SETTING.DATASET == 'VISDA-C':
                     acc_s_te, acc_list = cal_acc(dset_loaders['test'], netF, netB, netC, True)
                     log_str = ('Task: {}, Iter:{}/{}; Cycle: {}/{}; '
-                               'Accuracy = {:.2f}%; classifier_loss = {}').format(cfg.name, iter_num, max_iter,
+                               'Accuracy = {:.2f}%; classifier_loss = {}').format(cfg.name, iter_num, cycle_max_iter,
                                                                                   curr_cycle + 1, cfg.ACTIVE.CYCLE,
                                                                                   acc_s_te,
                                                                                   classifier_loss) + '\n' + acc_list
                 else:
                     acc_s_te, _ = cal_acc(dset_loaders['test'], netF, netB, netC, False)
                     log_str = ('Task: {}, Iter:{}/{}; Cycle: {}/{}; '
-                               'Accuracy = {:.2f}%; classifier_loss = {}').format(cfg.name, iter_num, max_iter,
+                               'Accuracy = {:.2f}%; classifier_loss = {}').format(cfg.name, iter_num, cycle_max_iter,
                                                                                   curr_cycle + 1, cfg.ACTIVE.CYCLE,
                                                                                   acc_s_te, classifier_loss)
 
@@ -1015,7 +1049,8 @@ def train_target(
             "handoff_target_passes={}; final_checkpoint_fixed=True; "
             "target_gt_affects_training=False".format(
                 cfg.output_dir,
-                int(cfg.ACTIVE.CYCLE) * int(cfg.TEST.MAX_EPOCH),
+                int(cfg.ACTIVE.CYCLE) * int(cfg.TEST.MAX_EPOCH)
+                + handoff_final_extra_epochs,
             )
         )
 
