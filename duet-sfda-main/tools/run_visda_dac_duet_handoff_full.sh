@@ -4,15 +4,16 @@ shopt -s nullglob
 
 # Two-stage full-data rescue:
 #   1. reuse the fixed final checkpoint of the completed 15-epoch DAC run;
-#   2. hand its Task F/B/C state to the released DUET path for four cycles.
-# This gives 15 + 4*4 = 31 target passes, close to DUET's 8*4 = 32.
+#   2. hand its Task F/B/C state to the released DUET path for four cycles;
+#   3. give only the final cycle one extra epoch.
+# This gives 15 + (4*4+1) = 32 target passes, exactly matching DUET's 8*4.
 experiment_seed="${1:-2020}"
 dac_method="duet_delayed_agreement_credit_visda_full_seed${experiment_seed}"
 dac_run_dir="output/uda/VISDA-C/TV/${dac_method}"
 dac_state="${dac_run_dir}/delayed_credit_state.pt"
 handoff_source="output/dac_duet_handoff_source_seed${experiment_seed}"
 handoff_source_dir="${handoff_source}/uda/VISDA-C/T"
-method_name="plmatch_dac_handoff_full_seed${experiment_seed}"
+method_name="plmatch_dac_handoff_full32_seed${experiment_seed}"
 run_dir="output/uda/VISDA-C/TV/${method_name}"
 
 for required_path in \
@@ -67,15 +68,16 @@ cp -f "${dac_run_dir}/target_B.pt" "${handoff_source_dir}/source_B.pt"
 cp -f "${dac_run_dir}/target_C.pt" "${handoff_source_dir}/source_C.pt"
 
 echo "==> Stage 1 reused: DAC final checkpoint, 15 target passes"
-echo "==> Stage 2 starting: released DUET, 4 cycles x 4 passes"
-echo "==> Total target passes: 31; target GT affects training: False"
+echo "==> Stage 2 starting: released DUET, 4 cycles; final cycle gets one extra epoch"
+echo "==> Total target passes: 32; target GT affects training: False"
 
 python image_target_of_oh_vs.py \
   --cfg cfgs/visda/plmatch.yaml \
   CKPT_DIR . SETTING.OUTPUT_SRC "$handoff_source" \
   MODEL.METHOD "$method_name" \
   SETTING.S 0 SETTING.T 1 SETTING.SEED "$experiment_seed" \
-  ACTIVE.CYCLE 4 ACTIVE.ADAPTATION_LIST ""
+  ACTIVE.CYCLE 4 ACTIVE.ADAPTATION_LIST "" \
+  DUET_HANDOFF.FINAL_EXTRA_EPOCHS 1
 
 logs=("$run_dir"/*.txt)
 if [ "${#logs[@]}" -lt 1 ]; then
@@ -83,12 +85,22 @@ if [ "${#logs[@]}" -lt 1 ]; then
   exit 1
 fi
 latest_log=$(printf '%s\n' "${logs[@]}" | sort | tail -n 1)
-if ! grep -q "Cycle: 4/4" "$latest_log"; then
-  echo "Handoff run did not complete all four DUET cycles" >&2
+if ! grep -q "Iter:4330/4330; Cycle: 4/4" "$latest_log"; then
+  echo "Handoff run did not complete the exact 32-pass budget" >&2
+  exit 1
+fi
+for checkpoint in target_F.pt target_B.pt target_C.pt; do
+  if [ ! -f "${run_dir}/${checkpoint}" ]; then
+    echo "Missing final handoff checkpoint: ${run_dir}/${checkpoint}" >&2
+    exit 1
+  fi
+done
+if ! grep -q "handoff_target_passes=17; final_checkpoint_fixed=True" "$latest_log"; then
+  echo "Handoff run did not save the fixed final checkpoint contract" >&2
   exit 1
 fi
 
-echo "==> Final DUET-handoff checkpoint"
+echo "==> Final exact-budget DUET-handoff checkpoint"
 grep "Cycle: 4/4" "$latest_log" | tail -n 1
 echo "==> Reference full-data DUET final: 91.50%"
 echo "==> Full log: ${latest_log}"

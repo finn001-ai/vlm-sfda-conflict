@@ -115,7 +115,12 @@ class DuetDelayedCreditTest(unittest.TestCase):
         self.assertIn("memory_rows=", script)
         self.assertIn("ACTIVE.CYCLE 4", script)
         self.assertIn("cfgs/visda/plmatch.yaml", script)
-        self.assertIn("Total target passes: 31", script)
+        self.assertIn("DUET_HANDOFF.FINAL_EXTRA_EPOCHS 1", script)
+        self.assertIn("Total target passes: 32", script)
+        plmatch = Path("src/methods/oh/plmatch.py").read_text()
+        self.assertIn("cycle_max_iter = base_max_iter", plmatch)
+        self.assertIn("DUET DAC handoff final-cycle budget:", plmatch)
+        self.assertIn('osp.join(cfg.output_dir, "target_F.pt")', plmatch)
 
 
 if __name__ == "__main__":
