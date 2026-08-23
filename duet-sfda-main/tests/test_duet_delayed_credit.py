@@ -135,6 +135,30 @@ class DuetDelayedCreditTest(unittest.TestCase):
         self.assertNotIn('"${dac_run_dir}/target_C.pt"', script)
         self.assertIn("Total target passes: 31", script)
 
+    def test_uniform5_visda_handoff_has_no_special_final_cycle(self):
+        script = Path(
+            "tools/run_visda_dac_duet_handoff_uniform5_full.sh"
+        ).read_text()
+        self.assertIn("TEST.MAX_EPOCH 5 TEST.INTERVAL 5", script)
+        self.assertIn("DUET_HANDOFF.FINAL_EXTRA_EPOCHS 0", script)
+        self.assertIn("Uniform DUET schedule: 5/5/5/5", script)
+        self.assertIn("handoff_target_passes=20", script)
+
+    def test_office_home_uniform5_handoff_covers_all_tasks(self):
+        config = Path(
+            "cfgs/office-home/duet_delayed_agreement_credit.yaml"
+        ).read_text()
+        script = Path(
+            "tools/run_office_home_dac_duet_handoff_uniform5_all.sh"
+        ).read_text()
+        self.assertIn("DATASET: office-home", config)
+        self.assertIn("EPOCHS: 15", config)
+        self.assertIn("for s in 0 1 2 3", script)
+        self.assertIn("for t in 0 1 2 3", script)
+        self.assertIn("TEST.MAX_EPOCH 5 TEST.INTERVAL 5", script)
+        self.assertIn("DUET_HANDOFF.FINAL_EXTRA_EPOCHS 0", script)
+        self.assertIn("handoff_target_passes=20", script)
+
 
 if __name__ == "__main__":
     unittest.main()
