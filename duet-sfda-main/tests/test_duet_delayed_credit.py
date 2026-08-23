@@ -105,6 +105,18 @@ class DuetDelayedCreditTest(unittest.TestCase):
         self.assertIn("--ratio 0.25", script)
         self.assertIn("full_evaluation_samples=${full_samples}", script)
 
+    def test_full_handoff_reuses_dac_and_preserves_duet_budget(self):
+        script = Path(
+            "tools/run_visda_dac_duet_handoff_full.sh"
+        ).read_text()
+        self.assertIn("delayed_credit_state.pt", script)
+        self.assertIn('"${dac_run_dir}/target_F.pt"', script)
+        self.assertIn('"${handoff_source_dir}/source_F.pt"', script)
+        self.assertIn("memory_rows=", script)
+        self.assertIn("ACTIVE.CYCLE 4", script)
+        self.assertIn("cfgs/visda/plmatch.yaml", script)
+        self.assertIn("Total target passes: 31", script)
+
 
 if __name__ == "__main__":
     unittest.main()
