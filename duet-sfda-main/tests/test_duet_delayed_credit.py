@@ -143,6 +143,12 @@ class DuetDelayedCreditTest(unittest.TestCase):
         self.assertIn("DUET_HANDOFF.FINAL_EXTRA_EPOCHS 0", script)
         self.assertIn("Uniform DUET schedule: 5/5/5/5", script)
         self.assertIn("handoff_target_passes=20", script)
+        self.assertIn(
+            "cfgs/visda/duet_delayed_agreement_credit.yaml",
+            script,
+        )
+        self.assertIn('if [ "$dac_complete" = false ]', script)
+        self.assertIn("Stage 1/2: full-data DAC, 15 epochs", script)
 
     def test_office_home_uniform5_handoff_covers_all_tasks(self):
         config = Path(

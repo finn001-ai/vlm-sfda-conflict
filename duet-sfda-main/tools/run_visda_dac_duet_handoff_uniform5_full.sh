@@ -3,7 +3,7 @@ set -euo pipefail
 shopt -s nullglob
 
 # Uniform-budget VisDA experiment:
-#   Stage 1: reuse the fixed final DAC F/B/C checkpoint (15 passes).
+#   Stage 1: train DAC for 15 passes, or reuse its fixed final checkpoint.
 #   Stage 2: released DUET for 4 cycles x 5 epochs (20 passes).
 # Every DUET cycle has the same length; total target passes = 35.
 experiment_seed="${1:-2020}"
@@ -19,13 +19,11 @@ for required_path in \
   data/VISDA-C/train_list.txt \
   data/VISDA-C/validation_list.txt \
   data/VISDA-C/classname.txt \
-  "${dac_run_dir}/target_F.pt" \
-  "${dac_run_dir}/target_B.pt" \
-  "${dac_run_dir}/target_C.pt" \
-  "${dac_state}"; do
+  source/uda/VISDA-C/T/source_F.pt \
+  source/uda/VISDA-C/T/source_B.pt \
+  source/uda/VISDA-C/T/source_C.pt; do
   if [ ! -f "$required_path" ]; then
-    echo "Missing full-data DAC handoff input: $required_path" >&2
-    echo "Finish the 15-epoch full DAC run before starting this script" >&2
+    echo "Missing VisDA-C input: $required_path" >&2
     exit 1
   fi
 done
@@ -35,6 +33,37 @@ if [ "$full_samples" -ne 55388 ]; then
   echo "Unexpected VisDA-C full target size: ${full_samples}; expected 55388" >&2
   exit 1
 fi
+
+dac_complete=true
+for checkpoint in target_F.pt target_B.pt target_C.pt delayed_credit_state.pt; do
+  if [ ! -f "${dac_run_dir}/${checkpoint}" ]; then
+    dac_complete=false
+  fi
+done
+
+if [ "$dac_complete" = false ]; then
+  if [ -d "$dac_run_dir" ] && compgen -G "$dac_run_dir/*.txt" > /dev/null; then
+    echo "Partial DAC directory exists: $dac_run_dir" >&2
+    echo "Move it aside before rerunning the complete two-stage experiment" >&2
+    exit 1
+  fi
+  echo "==> Stage 1/2: full-data DAC, 15 epochs"
+  python image_target_of_oh_vs.py \
+    --cfg cfgs/visda/duet_delayed_agreement_credit.yaml \
+    CKPT_DIR . SETTING.OUTPUT_SRC source \
+    MODEL.METHOD "$dac_method" \
+    SETTING.S 0 SETTING.T 1 SETTING.SEED "$experiment_seed" \
+    ACTIVE.ADAPTATION_LIST ""
+else
+  echo "==> Stage 1/2: reusing completed 15-epoch DAC checkpoint"
+fi
+
+for checkpoint in target_F.pt target_B.pt target_C.pt delayed_credit_state.pt; do
+  if [ ! -f "${dac_run_dir}/${checkpoint}" ]; then
+    echo "DAC stage did not produce ${dac_run_dir}/${checkpoint}" >&2
+    exit 1
+  fi
+done
 
 python - "$dac_state" "$full_samples" <<'PY'
 import sys
@@ -65,8 +94,8 @@ cp -f "${dac_run_dir}/target_F.pt" "${handoff_source_dir}/source_F.pt"
 cp -f "${dac_run_dir}/target_B.pt" "${handoff_source_dir}/source_B.pt"
 cp -f "${dac_run_dir}/target_C.pt" "${handoff_source_dir}/source_C.pt"
 
-echo "==> Stage 1 reused: DAC F/B/C final checkpoint, 15 target passes"
-echo "==> Stage 2: released DUET, 4 cycles x 5 epochs"
+echo "==> Stage 1 complete: DAC F/B/C final checkpoint, 15 target passes"
+echo "==> Stage 2/2: released DUET, 4 cycles x 5 epochs"
 echo "==> Uniform DUET schedule: 5/5/5/5; total target passes: 35"
 echo "==> Target GT affects training: False"
 
