@@ -82,6 +82,20 @@ class DacCreditPreservingRefinementTest(unittest.TestCase):
         self.assertIn("ACTIVE.CYCLE 4", script)
         self.assertIn("Total target passes: 31", script)
 
+    def test_office_home_entry_reuses_one_task_dac_checkpoint(self):
+        script = Path(
+            "tools/run_office_home_dac_credit_preserving_refinement.sh"
+        ).read_text()
+        self.assertIn('task="${2:-AC}"', script)
+        self.assertIn("AC) source_index=0; target_index=1", script)
+        self.assertIn("duet_delayed_agreement_credit_office_home_full_seed", script)
+        self.assertIn("DUET_HANDOFF.CREDIT_PRESERVING True", script)
+        self.assertIn('DUET_HANDOFF.STATE_PATH "$dac_state"', script)
+        self.assertIn("DUET_HANDOFF.CONFLICT_HARD_FRACTION 0.8", script)
+        self.assertIn("TEST.MAX_EPOCH 4 TEST.INTERVAL 4", script)
+        self.assertIn("ACTIVE.CYCLE 4", script)
+        self.assertIn("Total target passes: 31", script)
+
 
 if __name__ == "__main__":
     unittest.main()
