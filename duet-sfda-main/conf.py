@@ -552,6 +552,18 @@ _C.DUET_CONSENSUS.FIRST_PRIOR_EPOCHS = 4
 # epoch only in its last DUET cycle: 15 DAC passes + 17 DUET passes = 32.
 _C.DUET_HANDOFF = CfgNode()
 _C.DUET_HANDOFF.FINAL_EXTRA_EPOCHS = 0
+# Credit-preserving refinement keeps DAC's per-sample state active during the
+# second stage instead of using DAC only as an F/B/C initialization.  It is
+# opt-in so every released-DUET control keeps its historical behavior.
+_C.DUET_HANDOFF.CREDIT_PRESERVING = False
+_C.DUET_HANDOFF.STATE_PATH = ""
+# Fixed, GT-free rank coverage among the current Task/CLIP conflicts.
+_C.DUET_HANDOFF.CONFLICT_HARD_FRACTION = 0.8
+# Preserve CLIP as an independent semantic expert in the refinement stage.
+_C.DUET_HANDOFF.FREEZE_CLIP = True
+_C.DUET_HANDOFF.CREDIT_DECAY = 0.9
+_C.DUET_HANDOFF.CREDIT_ETA = 4.0
+_C.DUET_HANDOFF.MEMORY_UPDATE_RATE = 0.5
 
 # --------------------- DUET swap-conflict hard-label selection ---------- #
 _C.DUET_SWAP = CfgNode()

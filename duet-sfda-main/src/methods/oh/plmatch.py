@@ -65,6 +65,10 @@ from src.utils.pcgrad_compatibility import (
     build_pcgrad_parameter_correction,
     merge_compatible_parameter_correction_,
 )
+from src.utils.dac_credit_preserving_refinement import (
+    credit_preserving_refinement_step,
+    validate_credit_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -464,12 +468,55 @@ def train_target(
     handoff_final_extra_epochs = int(
         getattr(handoff_cfg, "FINAL_EXTRA_EPOCHS", 0)
     )
+    credit_preserving = bool(
+        getattr(handoff_cfg, "CREDIT_PRESERVING", False)
+    )
+    credit_state_path = str(
+        getattr(handoff_cfg, "STATE_PATH", "")
+    ).strip()
+    credit_conflict_fraction = float(
+        getattr(handoff_cfg, "CONFLICT_HARD_FRACTION", 0.8)
+    )
+    credit_freeze_clip = bool(
+        getattr(handoff_cfg, "FREEZE_CLIP", True)
+    )
+    credit_decay = float(getattr(handoff_cfg, "CREDIT_DECAY", 0.9))
+    credit_eta = float(getattr(handoff_cfg, "CREDIT_ETA", 4.0))
+    credit_memory_update_rate = float(
+        getattr(handoff_cfg, "MEMORY_UPDATE_RATE", 0.5)
+    )
     if handoff_final_extra_epochs < 0:
         raise ValueError("DUET_HANDOFF.FINAL_EXTRA_EPOCHS must be non-negative")
     if handoff_final_extra_epochs and not handoff_mode:
         raise ValueError(
             "DUET_HANDOFF.FINAL_EXTRA_EPOCHS is only valid for the "
             "plmatch_dac_handoff method"
+        )
+    if credit_preserving and not handoff_mode:
+        raise ValueError(
+            "DUET_HANDOFF.CREDIT_PRESERVING requires a "
+            "plmatch_dac_handoff method"
+        )
+    if credit_preserving and candidate_count:
+        raise ValueError(
+            "DAC credit-preserving refinement cannot be combined with "
+            "other DUET candidate interventions"
+        )
+    if credit_preserving and not credit_state_path:
+        raise ValueError(
+            "DUET_HANDOFF.STATE_PATH is required for credit preservation"
+        )
+    if not 0.0 <= credit_conflict_fraction <= 1.0:
+        raise ValueError(
+            "DUET_HANDOFF.CONFLICT_HARD_FRACTION must be in [0, 1]"
+        )
+    if not 0.0 <= credit_decay < 1.0:
+        raise ValueError("DUET_HANDOFF.CREDIT_DECAY must be in [0, 1)")
+    if credit_eta <= 0.0:
+        raise ValueError("DUET_HANDOFF.CREDIT_ETA must be positive")
+    if not 0.0 < credit_memory_update_rate <= 1.0:
+        raise ValueError(
+            "DUET_HANDOFF.MEMORY_UPDATE_RATE must be in (0, 1]"
         )
     parameter_audit = bool(cfg.PCGRAD_PARAMETER_AUDIT.ENABLED)
     if parameter_audit and candidate_count:
@@ -659,11 +706,53 @@ def train_target(
             bool(swap_audit_enabled)
         )
     )
+    logging.info(
+        "DAC credit-preserving refinement: enabled={}; "
+        "conflict_hard_fraction={:.3f}; freeze_clip={}; "
+        "agreement_memory_writable=True; conflict_memory_writable=False; "
+        "cumulative_agreement_mask=False; target_gt_affects_training=False".format(
+            credit_preserving,
+            credit_conflict_fraction,
+            credit_freeze_clip if credit_preserving else False,
+        )
+    )
     clip_model, preprocess, _ = clip.load(cfg.ACTIVE.ARCH)
     clip_model.float()
     text_inputs = clip_pre_text(cfg)
 
     dset_loaders = data_load(cfg)
+    credit_runtime = None
+    if credit_preserving:
+        if not osp.isfile(credit_state_path):
+            raise FileNotFoundError(
+                "DAC credit state does not exist: {}".format(
+                    credit_state_path
+                )
+            )
+        credit_state = torch.load(
+            credit_state_path,
+            map_location="cpu",
+            weights_only=True,
+        )
+        validate_credit_state(
+            credit_state,
+            sample_count=len(dset_loaders["test_aug"].dataset),
+            class_count=int(cfg.class_num),
+        )
+        credit_runtime = {
+            "state": {
+                key: value.detach().float().cpu()
+                for key, value in credit_state.items()
+            }
+        }
+        logging.info(
+            "DAC credit state loaded: path={}; samples={}; classes={}; "
+            "state_affects_training=True; target_gt_affects_training=False".format(
+                credit_state_path,
+                len(dset_loaders["test_aug"].dataset),
+                int(cfg.class_num),
+            )
+        )
     swap_auditor = None
     if swap_audit_enabled:
         with open(cfg.name_file) as handle:
@@ -831,6 +920,11 @@ def train_target(
             swap_audit_enabled=swap_audit_enabled,
             swap_auditor=swap_auditor,
             swap_audit_probe_cfg=cfg,
+            credit_runtime=credit_runtime,
+            credit_conflict_fraction=credit_conflict_fraction,
+            credit_decay=credit_decay,
+            credit_eta=credit_eta,
+            credit_memory_update_rate=credit_memory_update_rate,
         )
         if diagnostic_payload_requested:
             (
@@ -884,8 +978,22 @@ def train_target(
         prev_label_mask = label_mask
 
         # clip_optimizer = train_clip_lr(cfg, clip_model, confi_imag, confi_dis, text_inputs, clip_optimizer, curr_cycle)
-        clip_optimizer, q_value = train_clip(cfg, clip_model, confi_imag, confi_dis, text_inputs, clip_optimizer,
-                                             q_value)
+        if credit_preserving and credit_freeze_clip:
+            logging.info(
+                "DAC credit-preserving CLIP update: cycle={}; skipped=True; "
+                "reason=preserve_independent_semantic_expert; "
+                "target_gt_affects_training=False".format(curr_cycle + 1)
+            )
+        else:
+            clip_optimizer, q_value = train_clip(
+                cfg,
+                clip_model,
+                confi_imag,
+                confi_dis,
+                text_inputs,
+                clip_optimizer,
+                q_value,
+            )
 
         cfg.load = 'prompt_model.pt'
         # mem_label = torch.from_numpy(mem_label).cuda()
@@ -1044,6 +1152,14 @@ def train_target(
         torch.save(netF.state_dict(), osp.join(cfg.output_dir, "target_F.pt"))
         torch.save(netB.state_dict(), osp.join(cfg.output_dir, "target_B.pt"))
         torch.save(netC.state_dict(), osp.join(cfg.output_dir, "target_C.pt"))
+        if credit_runtime is not None:
+            torch.save(
+                {
+                    key: value.detach().cpu()
+                    for key, value in credit_runtime["state"].items()
+                },
+                osp.join(cfg.output_dir, "refined_credit_state.pt"),
+            )
         logging.info(
             "DUET DAC handoff completed: saved_dir={}; "
             "handoff_target_passes={}; final_checkpoint_fixed=True; "
@@ -1113,6 +1229,11 @@ def obtain_label(
     swap_audit_enabled=False,
     swap_auditor=None,
     swap_audit_probe_cfg=None,
+    credit_runtime=None,
+    credit_conflict_fraction=0.8,
+    credit_decay=0.9,
+    credit_eta=4.0,
+    credit_memory_update_rate=0.5,
 ):
     # class_logit_bias = get_class_bias(netF, netB, netC)
     start_test = True
@@ -1371,6 +1492,47 @@ def obtain_label(
     _, all_output_pred = torch.max(all_output, dim=1)
     _, clip_all_output_pred = torch.max(clip_all_output, dim=1)
 
+    credit_payload = None
+    if credit_runtime is not None:
+        refined_state, credit_payload = credit_preserving_refinement_step(
+            credit_runtime["state"],
+            all_output.detach(),
+            clip_all_output.detach(),
+            conflict_hard_fraction=float(credit_conflict_fraction),
+            decay=float(credit_decay),
+            credit_eta=float(credit_eta),
+            memory_update_rate=float(credit_memory_update_rate),
+            epsilon=float(prior_epsilon),
+        )
+        credit_runtime["state"] = refined_state
+        conflict_count = int(credit_payload["conflict_mask"].sum().item())
+        selected_count = int(credit_payload["hard_selected"].sum().item())
+        realized_coverage = (
+            float(selected_count) / float(conflict_count)
+            if conflict_count
+            else 0.0
+        )
+        preserved_shift = credit_payload["memory_shift_l1"][
+            credit_payload["conflict_mask"]
+        ]
+        logging.info(
+            "DAC credit-preserving teacher: cycle={}; agreements={}; "
+            "conflicts={}; hard_selected={}; conflict_hard_coverage={:.2f}%; "
+            "conflict_memory_shift_mean={:.8f}; "
+            "soft_conflict_coverage=100.00%; target_gt_affects_training=False".format(
+                curr_cycle + 1,
+                int(credit_payload["agreement_mask"].sum().item()),
+                conflict_count,
+                selected_count,
+                100.0 * realized_coverage,
+                (
+                    float(preserved_shift.mean().item())
+                    if preserved_shift.numel()
+                    else 0.0
+                ),
+            )
+        )
+
     # Find indices where predictions match
     matching_indices = all_output_pred == clip_all_output_pred
 
@@ -1405,7 +1567,11 @@ def obtain_label(
         )
 
     # Update label mask based on previous label mask
-    if prev_label_mask is not None:
+    if credit_payload is not None:
+        # Do not carry stale agreements across cycles.  Current agreements and
+        # the fixed-coverage DAC decisions define this cycle's hard set.
+        label_mask = admission_matching | credit_payload["hard_selected"]
+    elif prev_label_mask is not None:
         label_mask = prev_label_mask | (~prev_label_mask & admission_matching)
     else:
         label_mask = admission_matching
@@ -1420,7 +1586,10 @@ def obtain_label(
     elif swap_audit_enabled:
         base_label_mask = label_mask
 
-    kl_soft_output = clip_all_output
+    if credit_payload is not None:
+        kl_soft_output = credit_payload["soft_target"]
+    else:
+        kl_soft_output = clip_all_output
     if collect_attribute:
         active_conflict = (~label_mask) & (~matching_indices)
         conflict_count = int(active_conflict.sum().item())
@@ -1563,6 +1732,9 @@ def obtain_label(
 
     _, all_mix_output_pred = torch.max(all_mix_output, dim=1)
     base_mix_label = all_mix_output_pred.clone()
+    if credit_payload is not None:
+        selected = credit_payload["hard_selected"]
+        all_mix_output_pred[selected] = credit_payload["hard_label"][selected]
     if swap_selection_payload is not None:
         # Override the mixed argmax with the swap rule's chosen side so the
         # hard pseudo labels (mem_label) equal A or B for admitted swaps.

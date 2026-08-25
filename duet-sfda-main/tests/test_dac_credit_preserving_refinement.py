@@ -1,0 +1,87 @@
+import math
+import unittest
+from pathlib import Path
+
+import torch
+
+from src.utils.dac_credit_preserving_refinement import (
+    credit_preserving_refinement_step,
+)
+from src.utils.duet_delayed_credit import initialize_delayed_credit
+
+
+class DacCreditPreservingRefinementTest(unittest.TestCase):
+    def test_conflict_memory_is_not_rewritten(self):
+        previous_task = torch.tensor([[0.90, 0.10], [0.80, 0.20]])
+        previous_clip = torch.tensor([[0.10, 0.90], [0.20, 0.80]])
+        state = initialize_delayed_credit(previous_task, previous_clip)
+        state["memory"] = torch.tensor([[0.75, 0.25], [0.25, 0.75]])
+        memory_before = state["memory"].clone()
+
+        updated, payload = credit_preserving_refinement_step(
+            state,
+            task_probability=torch.tensor([[0.95, 0.05], [0.10, 0.90]]),
+            clip_probability=torch.tensor([[0.05, 0.95], [0.90, 0.10]]),
+            conflict_hard_fraction=1.0,
+        )
+
+        self.assertTrue(payload["conflict_mask"].all())
+        self.assertTrue(torch.equal(updated["memory"], memory_before))
+        self.assertTrue(
+            torch.equal(payload["soft_target"], memory_before)
+        )
+
+    def test_agreement_can_refresh_memory(self):
+        task = torch.tensor([[0.90, 0.10]])
+        clip = torch.tensor([[0.80, 0.20]])
+        state = initialize_delayed_credit(task, clip)
+        state["memory"] = torch.tensor([[0.55, 0.45]])
+        memory_before = state["memory"].clone()
+
+        updated, payload = credit_preserving_refinement_step(
+            state,
+            task,
+            clip,
+        )
+
+        self.assertTrue(payload["agreement_mask"].all())
+        self.assertFalse(torch.equal(updated["memory"], memory_before))
+        self.assertTrue(torch.equal(payload["soft_target"], clip))
+
+    def test_hard_conflict_rank_has_fixed_coverage(self):
+        task = torch.tensor(
+            [[0.9, 0.1], [0.8, 0.2], [0.7, 0.3], [0.6, 0.4], [0.55, 0.45]]
+        )
+        clip = torch.flip(task, dims=(1,))
+        state = initialize_delayed_credit(task, clip)
+        state["memory"] = torch.tensor(
+            [[0.99, 0.01], [0.90, 0.10], [0.70, 0.30], [0.55, 0.45], [0.51, 0.49]]
+        )
+
+        _, payload = credit_preserving_refinement_step(
+            state,
+            task,
+            clip,
+            conflict_hard_fraction=0.8,
+        )
+
+        expected = math.ceil(5 * 0.8)
+        self.assertEqual(int(payload["hard_selected"].sum().item()), expected)
+        self.assertTrue(payload["hard_selected"][:expected].all())
+        self.assertFalse(bool(payload["hard_selected"][-1].item()))
+
+    def test_cloud_entry_uses_dac_state_and_uniform_four_cycles(self):
+        script = Path(
+            "tools/run_visda_dac_credit_preserving_refinement_full.sh"
+        ).read_text()
+        self.assertIn("DUET_HANDOFF.CREDIT_PRESERVING True", script)
+        self.assertIn('DUET_HANDOFF.STATE_PATH "$dac_state"', script)
+        self.assertIn("DUET_HANDOFF.CONFLICT_HARD_FRACTION 0.8", script)
+        self.assertIn("DUET_HANDOFF.FREEZE_CLIP True", script)
+        self.assertIn("TEST.MAX_EPOCH 4 TEST.INTERVAL 4", script)
+        self.assertIn("ACTIVE.CYCLE 4", script)
+        self.assertIn("Total target passes: 31", script)
+
+
+if __name__ == "__main__":
+    unittest.main()
