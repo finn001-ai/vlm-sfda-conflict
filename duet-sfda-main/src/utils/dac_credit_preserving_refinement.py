@@ -88,6 +88,7 @@ def credit_preserving_refinement_step(
     clip_probability: torch.Tensor,
     *,
     conflict_hard_fraction: float = 0.8,
+    soft_replacement_mode: str = "all_conflicts",
     decay: float = 0.9,
     credit_eta: float = 4.0,
     memory_update_rate: float = 0.5,
@@ -103,6 +104,10 @@ def credit_preserving_refinement_step(
     """
     if not 0.0 <= conflict_hard_fraction <= 1.0:
         raise ValueError("conflict_hard_fraction must be in [0, 1]")
+    if soft_replacement_mode not in {"all_conflicts", "task_supported"}:
+        raise ValueError(
+            "soft_replacement_mode must be all_conflicts or task_supported"
+        )
     task_probability = _normalize(task_probability, epsilon)
     clip_probability = _normalize(clip_probability, epsilon)
     if task_probability.shape != clip_probability.shape:
@@ -162,10 +167,16 @@ def credit_preserving_refinement_step(
         )
         selected[conflict_indices[order[:requested]]] = True
 
-    # Agreements keep the independent CLIP target.  Only the rows on which
-    # CLIP would erase DAC history are replaced by the persistent memory.
+    if soft_replacement_mode == "task_supported":
+        soft_replaced = conflict & choose_task
+    else:
+        soft_replaced = conflict
+
+    # Agreements keep the current CLIP target.  The residual mode also keeps
+    # CLIP whenever DAC history supports CLIP; only the opposite historical
+    # direction receives an anti-erasure correction.
     soft_target = clip_probability.clone()
-    soft_target[conflict] = memory[conflict]
+    soft_target[soft_replaced] = memory[soft_replaced]
 
     diagnostics = dict(diagnostics)
     diagnostics.update(
@@ -176,6 +187,7 @@ def credit_preserving_refinement_step(
             "hard_label": hard_label,
             "pair_log_odds": pair_log_odds,
             "soft_target": soft_target,
+            "soft_replaced": soft_replaced,
             "memory_preserved": conflict,
             "memory_shift_l1": (memory - memory_before).abs().sum(dim=1),
         }

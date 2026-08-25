@@ -70,6 +70,33 @@ class DacCreditPreservingRefinementTest(unittest.TestCase):
         self.assertTrue(payload["hard_selected"][:expected].all())
         self.assertFalse(bool(payload["hard_selected"][-1].item()))
 
+    def test_task_supported_mode_replaces_only_task_direction(self):
+        task = torch.tensor([[0.9, 0.1], [0.8, 0.2], [0.9, 0.1]])
+        clip = torch.tensor([[0.1, 0.9], [0.2, 0.8], [0.1, 0.9]])
+        state = initialize_delayed_credit(task, clip)
+        state["memory"] = torch.tensor(
+            [[0.8, 0.2], [0.2, 0.8], [0.6, 0.4]]
+        )
+
+        _, payload = credit_preserving_refinement_step(
+            state,
+            task,
+            clip,
+            conflict_hard_fraction=0.0,
+            soft_replacement_mode="task_supported",
+        )
+
+        self.assertTrue(
+            torch.equal(
+                payload["soft_replaced"],
+                torch.tensor([True, False, True]),
+            )
+        )
+        self.assertEqual(int(payload["hard_selected"].sum().item()), 0)
+        self.assertTrue(
+            torch.equal(payload["soft_target"][1], clip[1])
+        )
+
     def test_cloud_entry_uses_dac_state_and_uniform_four_cycles(self):
         script = Path(
             "tools/run_visda_dac_credit_preserving_refinement_full.sh"
@@ -95,6 +122,23 @@ class DacCreditPreservingRefinementTest(unittest.TestCase):
         self.assertIn("TEST.MAX_EPOCH 4 TEST.INTERVAL 4", script)
         self.assertIn("ACTIVE.CYCLE 4", script)
         self.assertIn("Total target passes: 31", script)
+
+    def test_office_home_residual_keeps_released_duet_curriculum(self):
+        script = Path(
+            "tools/run_office_home_dac_credit_residual_refinement.sh"
+        ).read_text()
+        self.assertIn("DUET_HANDOFF.CONFLICT_HARD_FRACTION 0.0", script)
+        self.assertIn("DUET_HANDOFF.FREEZE_CLIP False", script)
+        self.assertIn(
+            "DUET_HANDOFF.SOFT_REPLACEMENT_MODE task_supported",
+            script,
+        )
+        self.assertIn(
+            "DUET_HANDOFF.CUMULATIVE_AGREEMENT_MASK True",
+            script,
+        )
+        self.assertIn("TEST.MAX_EPOCH 4 TEST.INTERVAL 4", script)
+        self.assertIn("ACTIVE.CYCLE 4", script)
 
 
 if __name__ == "__main__":

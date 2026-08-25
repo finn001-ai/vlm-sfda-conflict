@@ -561,6 +561,13 @@ _C.DUET_HANDOFF.STATE_PATH = ""
 _C.DUET_HANDOFF.CONFLICT_HARD_FRACTION = 0.8
 # Preserve CLIP as an independent semantic expert in the refinement stage.
 _C.DUET_HANDOFF.FREEZE_CLIP = True
+# all_conflicts = replace every conflict KL target with DAC memory.
+# task_supported = replace only conflicts for which DAC pair evidence prefers
+# the current Task candidate over the current CLIP candidate.
+_C.DUET_HANDOFF.SOFT_REPLACEMENT_MODE = "all_conflicts"
+# False is the aggressive negative ablation.  True retains released DUET's
+# useful monotonic agreement curriculum.
+_C.DUET_HANDOFF.CUMULATIVE_AGREEMENT_MASK = False
 _C.DUET_HANDOFF.CREDIT_DECAY = 0.9
 _C.DUET_HANDOFF.CREDIT_ETA = 4.0
 _C.DUET_HANDOFF.MEMORY_UPDATE_RATE = 0.5

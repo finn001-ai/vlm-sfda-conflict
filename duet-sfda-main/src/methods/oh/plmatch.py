@@ -480,6 +480,12 @@ def train_target(
     credit_freeze_clip = bool(
         getattr(handoff_cfg, "FREEZE_CLIP", True)
     )
+    credit_soft_replacement_mode = str(
+        getattr(handoff_cfg, "SOFT_REPLACEMENT_MODE", "all_conflicts")
+    )
+    credit_cumulative_agreement_mask = bool(
+        getattr(handoff_cfg, "CUMULATIVE_AGREEMENT_MASK", False)
+    )
     credit_decay = float(getattr(handoff_cfg, "CREDIT_DECAY", 0.9))
     credit_eta = float(getattr(handoff_cfg, "CREDIT_ETA", 4.0))
     credit_memory_update_rate = float(
@@ -509,6 +515,14 @@ def train_target(
     if not 0.0 <= credit_conflict_fraction <= 1.0:
         raise ValueError(
             "DUET_HANDOFF.CONFLICT_HARD_FRACTION must be in [0, 1]"
+        )
+    if credit_soft_replacement_mode not in {
+        "all_conflicts",
+        "task_supported",
+    }:
+        raise ValueError(
+            "DUET_HANDOFF.SOFT_REPLACEMENT_MODE must be all_conflicts "
+            "or task_supported"
         )
     if not 0.0 <= credit_decay < 1.0:
         raise ValueError("DUET_HANDOFF.CREDIT_DECAY must be in [0, 1)")
@@ -709,11 +723,14 @@ def train_target(
     logging.info(
         "DAC credit-preserving refinement: enabled={}; "
         "conflict_hard_fraction={:.3f}; freeze_clip={}; "
+        "soft_replacement_mode={}; cumulative_agreement_mask={}; "
         "agreement_memory_writable=True; conflict_memory_writable=False; "
-        "cumulative_agreement_mask=False; target_gt_affects_training=False".format(
+        "target_gt_affects_training=False".format(
             credit_preserving,
             credit_conflict_fraction,
             credit_freeze_clip if credit_preserving else False,
+            credit_soft_replacement_mode,
+            credit_cumulative_agreement_mask,
         )
     )
     clip_model, preprocess, _ = clip.load(cfg.ACTIVE.ARCH)
@@ -922,6 +939,8 @@ def train_target(
             swap_audit_probe_cfg=cfg,
             credit_runtime=credit_runtime,
             credit_conflict_fraction=credit_conflict_fraction,
+            credit_soft_replacement_mode=credit_soft_replacement_mode,
+            credit_cumulative_agreement_mask=credit_cumulative_agreement_mask,
             credit_decay=credit_decay,
             credit_eta=credit_eta,
             credit_memory_update_rate=credit_memory_update_rate,
@@ -1231,6 +1250,8 @@ def obtain_label(
     swap_audit_probe_cfg=None,
     credit_runtime=None,
     credit_conflict_fraction=0.8,
+    credit_soft_replacement_mode="all_conflicts",
+    credit_cumulative_agreement_mask=False,
     credit_decay=0.9,
     credit_eta=4.0,
     credit_memory_update_rate=0.5,
@@ -1499,6 +1520,7 @@ def obtain_label(
             all_output.detach(),
             clip_all_output.detach(),
             conflict_hard_fraction=float(credit_conflict_fraction),
+            soft_replacement_mode=str(credit_soft_replacement_mode),
             decay=float(credit_decay),
             credit_eta=float(credit_eta),
             memory_update_rate=float(credit_memory_update_rate),
@@ -1507,6 +1529,9 @@ def obtain_label(
         credit_runtime["state"] = refined_state
         conflict_count = int(credit_payload["conflict_mask"].sum().item())
         selected_count = int(credit_payload["hard_selected"].sum().item())
+        soft_replaced_count = int(
+            credit_payload["soft_replaced"].sum().item()
+        )
         realized_coverage = (
             float(selected_count) / float(conflict_count)
             if conflict_count
@@ -1518,13 +1543,16 @@ def obtain_label(
         logging.info(
             "DAC credit-preserving teacher: cycle={}; agreements={}; "
             "conflicts={}; hard_selected={}; conflict_hard_coverage={:.2f}%; "
+            "soft_replaced={}; soft_replacement_mode={}; "
             "conflict_memory_shift_mean={:.8f}; "
-            "soft_conflict_coverage=100.00%; target_gt_affects_training=False".format(
+            "target_gt_affects_training=False".format(
                 curr_cycle + 1,
                 int(credit_payload["agreement_mask"].sum().item()),
                 conflict_count,
                 selected_count,
                 100.0 * realized_coverage,
+                soft_replaced_count,
+                str(credit_soft_replacement_mode),
                 (
                     float(preserved_shift.mean().item())
                     if preserved_shift.numel()
@@ -1567,7 +1595,15 @@ def obtain_label(
         )
 
     # Update label mask based on previous label mask
-    if credit_payload is not None:
+    if credit_payload is not None and credit_cumulative_agreement_mask:
+        if prev_label_mask is not None:
+            label_mask = prev_label_mask | (
+                ~prev_label_mask & admission_matching
+            )
+        else:
+            label_mask = admission_matching
+        label_mask = label_mask | credit_payload["hard_selected"]
+    elif credit_payload is not None:
         # Do not carry stale agreements across cycles.  Current agreements and
         # the fixed-coverage DAC decisions define this cycle's hard set.
         label_mask = admission_matching | credit_payload["hard_selected"]
@@ -1587,7 +1623,21 @@ def obtain_label(
         base_label_mask = label_mask
 
     if credit_payload is not None:
-        kl_soft_output = credit_payload["soft_target"]
+        # In residual mode, only unresolved conflicts receive the historical
+        # correction.  This avoids opposing an already admitted hard label.
+        soft_replaced = credit_payload["soft_replaced"] & ~label_mask
+        kl_soft_output = clip_all_output.clone()
+        kl_soft_output[soft_replaced] = credit_payload["soft_target"][
+            soft_replaced
+        ]
+        logging.info(
+            "DAC credit residual KL: cycle={}; unresolved_replaced={}; "
+            "current_conflicts={}; target_gt_affects_training=False".format(
+                curr_cycle + 1,
+                int(soft_replaced.sum().item()),
+                int(credit_payload["conflict_mask"].sum().item()),
+            )
+        )
     else:
         kl_soft_output = clip_all_output
     if collect_attribute:
