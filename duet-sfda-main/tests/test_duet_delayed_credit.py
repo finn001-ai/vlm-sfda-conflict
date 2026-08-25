@@ -161,9 +161,34 @@ class DuetDelayedCreditTest(unittest.TestCase):
         self.assertIn("EPOCHS: 15", config)
         self.assertIn("for s in 0 1 2 3", script)
         self.assertIn("for t in 0 1 2 3", script)
-        self.assertIn("TEST.MAX_EPOCH 5 TEST.INTERVAL 5", script)
+        self.assertIn("TEST.MAX_EPOCH 4 TEST.INTERVAL 4", script)
+        self.assertIn("ACTIVE.CYCLE 5", script)
         self.assertIn("DUET_HANDOFF.FINAL_EXTRA_EPOCHS 0", script)
         self.assertIn("handoff_target_passes=20", script)
+
+    def test_office_home_single_stage_control_matches_35_task_passes(self):
+        script = Path(
+            "tools/run_office_home_single_stage_refinement35_all.sh"
+        ).read_text()
+        self.assertIn("cycles=7", script)
+        self.assertIn("epochs_per_cycle=5", script)
+        self.assertIn(
+            "expected_passes=$((cycles * epochs_per_cycle))", script
+        )
+        self.assertIn(
+            'TEST.MAX_EPOCH "$epochs_per_cycle" '
+            'TEST.INTERVAL "$epochs_per_cycle"',
+            script,
+        )
+        self.assertIn('ACTIVE.CYCLE "$cycles"', script)
+        self.assertIn(
+            'SETTING.OUTPUT_SRC source', script
+        )
+        self.assertIn(
+            "DUET first-cycle prior: enabled=False; power=0.000", script
+        )
+        self.assertIn("Running time:", script)
+        self.assertIn("task_model_passes", script)
 
 
 if __name__ == "__main__":

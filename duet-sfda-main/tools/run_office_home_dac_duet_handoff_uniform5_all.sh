@@ -7,7 +7,7 @@ shopt -s nullglob
 #   one task:     bash tools/run_office_home_dac_duet_handoff_uniform5_all.sh 2020 AC
 #
 # Each task uses the same schedule as VisDA:
-#   DAC 15 epochs -> complete F/B/C handoff -> DUET 4 cycles x 5 epochs.
+#   DAC 15 epochs -> complete F/B/C handoff -> cyclic refinement 5 cycles x 4 epochs.
 experiment_seed="${1:-2020}"
 task_filter="${2:-all}"
 domain_keys=(A C P R)
@@ -123,7 +123,8 @@ PY
     completed_log=""
     duet_logs=("$duet_run_dir"/*.txt)
     for candidate_log in "${duet_logs[@]}"; do
-      if grep -q "handoff_target_passes=20; final_checkpoint_fixed=True" "$candidate_log"; then
+      if grep -q "handoff_target_passes=20; final_checkpoint_fixed=True" "$candidate_log" \
+        && grep -q "Cycle: 5/5" "$candidate_log"; then
         completed_log="$candidate_log"
       fi
     done
@@ -138,14 +139,14 @@ PY
       exit 1
     fi
 
-    echo "==> [${task}] Stage 2/2: DUET 4 cycles x 5 epochs"
+    echo "==> [${task}] Stage 2/2: cyclic refinement 5 cycles x 4 epochs"
     python image_target_of_oh_vs.py \
       --cfg cfgs/office-home/plmatch.yaml \
       CKPT_DIR . SETTING.OUTPUT_SRC "$handoff_source" \
       MODEL.METHOD "$duet_method" \
       SETTING.S "$s" SETTING.T "$t" SETTING.SEED "$experiment_seed" \
-      TEST.MAX_EPOCH 5 TEST.INTERVAL 5 \
-      ACTIVE.CYCLE 4 ACTIVE.ADAPTATION_LIST "" \
+      TEST.MAX_EPOCH 4 TEST.INTERVAL 4 \
+      ACTIVE.CYCLE 5 ACTIVE.ADAPTATION_LIST "" \
       DUET_HANDOFF.FINAL_EXTRA_EPOCHS 0
 
     duet_logs=("$duet_run_dir"/*.txt)
@@ -154,7 +155,11 @@ PY
       exit 1
     fi
     if [ "$(grep -c "Task: ${task}" "${duet_logs[0]}")" -ne 20 ]; then
-      echo "${task} did not complete 4 cycles x 5 logged epochs" >&2
+      echo "${task} did not complete 5 cycles x 4 logged epochs" >&2
+      exit 1
+    fi
+    if ! grep -q "Cycle: 5/5" "${duet_logs[0]}"; then
+      echo "${task} did not reach Cycle 5/5" >&2
       exit 1
     fi
     if ! grep -q "handoff_target_passes=20; final_checkpoint_fixed=True" "${duet_logs[0]}"; then
