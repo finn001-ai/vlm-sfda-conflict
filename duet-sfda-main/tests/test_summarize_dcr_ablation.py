@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 
-SCRIPT_PATH = Path("tools/summarize_office_home_dcr_sfda_ablation.py")
+SCRIPT_PATH = Path("tools/summarize_office_home_dcr_ablation.py")
 SPEC = importlib.util.spec_from_file_location("dcr_ablation_summary", SCRIPT_PATH)
 SUMMARY = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None

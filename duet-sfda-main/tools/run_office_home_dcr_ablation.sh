@@ -3,7 +3,7 @@ set -euo pipefail
 shopt -s nullglob
 
 # Office-Home component ablations for DCR-SFDA.
-# Usage: bash tools/run_office_home_dcr_sfda_ablation.sh SEED TASK VARIANT
+# Usage: bash tools/run_office_home_dcr_ablation.sh SEED TASK VARIANT
 # Core variants: full, dcm_uniform, clm_writable, arg_none.
 # Focused variants: dcm_no_history, dcm_no_temporal, clm_frozen,
 # arg_all_conflicts, no_cumulative, freeze_vlm.
@@ -87,16 +87,20 @@ case "$variant" in
 esac
 
 if [ "$dcm_tag" = "full" ]; then
-  dcm_method="duet_delayed_agreement_credit_office_home_full_seed${experiment_seed}"
+  dcm_method="dcr_memory_office_home_full_seed${experiment_seed}"
+  legacy_dcm_method="duet_delayed_agreement_credit_office_home_full_seed${experiment_seed}"
 else
-  dcm_method="duet_delayed_agreement_credit_dcr_ablation_${dcm_tag}_office_home_seed${experiment_seed}"
+  dcm_method="dcr_memory_ablation_${dcm_tag}_office_home_seed${experiment_seed}"
+  legacy_dcm_method=""
 fi
 dcm_run_dir="output/uda/office-home/${task}/${dcm_method}"
-dcm_state="${dcm_run_dir}/delayed_credit_state.pt"
+dcm_state="${dcm_run_dir}/dcr_memory_state.pt"
+legacy_dcm_run_dir="output/uda/office-home/${task}/${legacy_dcm_method}"
+legacy_dcm_state="${legacy_dcm_run_dir}/delayed_credit_state.pt"
 legacy_handoff_dir="output/dac_duet_handoff_uniform5_office_home_seed${experiment_seed}_${task}/uda/office-home/${domain_keys[$source_index]}"
-handoff_source="output/dcr_sfda_ablation_${variant}_office_home_seed${experiment_seed}_${task}"
+handoff_source="output/dcr_ablation_${variant}_office_home_seed${experiment_seed}_${task}"
 handoff_source_dir="${handoff_source}/uda/office-home/${domain_keys[$source_index]}"
-method_name="plmatch_dac_handoff_dcr_sfda_ablation_${variant}_office_home_seed${experiment_seed}"
+method_name="dcr_ablation_${variant}_office_home_seed${experiment_seed}"
 run_dir="output/uda/office-home/${task}/${method_name}"
 target_list="data/office-home/${domain_names[$target_index]}_list.txt"
 
@@ -112,7 +116,13 @@ for required_path in \
   fi
 done
 
-if [ ! -f "$dcm_state" ]; then
+if [ -f "$dcm_state" ]; then
+  echo "==> [${task}/${variant}] Reusing DCR memory: ${dcm_state}"
+elif [ -n "$legacy_dcm_method" ] && [ -f "$legacy_dcm_state" ]; then
+  dcm_run_dir="$legacy_dcm_run_dir"
+  dcm_state="$legacy_dcm_state"
+  echo "==> [${task}/${variant}] Reusing legacy memory artifact: ${dcm_state}"
+else
   if [ -d "$dcm_run_dir" ] && compgen -G "$dcm_run_dir/*.txt" > /dev/null; then
     echo "Partial DCM run exists but state is missing: $dcm_run_dir" >&2
     echo "Move that partial directory aside before rebuilding" >&2
@@ -120,15 +130,15 @@ if [ ! -f "$dcm_state" ]; then
   fi
   echo "==> [${task}/${variant}] Building 15-epoch DCM stage: ${dcm_tag}"
   python image_target_of_oh_vs.py \
-    --cfg cfgs/office-home/duet_delayed_agreement_credit.yaml \
+    --cfg cfgs/office-home/dcr.yaml \
     CKPT_DIR . SETTING.OUTPUT_SRC source \
     MODEL.METHOD "$dcm_method" \
     SETTING.S "$source_index" SETTING.T "$target_index" \
     SETTING.SEED "$experiment_seed" \
     ACTIVE.ADAPTATION_LIST "" \
-    DUET_CONSENSUS.CREDIT_MODE "$dcm_credit_mode" \
-    DUET_CONSENSUS.FEEDBACK_MODE "$dcm_feedback_mode" \
-    DUET_CONSENSUS.CREDIT_DECAY "$dcm_decay"
+    DCR_MEMORY.CREDIT_MODE "$dcm_credit_mode" \
+    DCR_MEMORY.FEEDBACK_MODE "$dcm_feedback_mode" \
+    DCR_MEMORY.CREDIT_DECAY "$dcm_decay"
 fi
 
 if [ ! -f "$dcm_state" ]; then
@@ -156,7 +166,7 @@ else
   exit 1
 fi
 
-target_samples=$(wc -l < "$target_list" | tr -d ' ')
+target_samples=$(awk 'END {print NR}' "$target_list")
 python - "$dcm_state" "$target_samples" "$task" "$variant" <<'PY'
 import sys
 
@@ -194,24 +204,24 @@ echo "==> ARG: soft_replacement_mode=${soft_replacement_mode}"
 echo "==> Controls: conflict_hard=0; cumulative_agreement=${cumulative_agreement}; freeze_vlm=${freeze_vlm}; passes=31; target_gt_affects_training=False"
 
 python image_target_of_oh_vs.py \
-  --cfg cfgs/office-home/plmatch.yaml \
+  --cfg cfgs/office-home/dcr.yaml \
   CKPT_DIR . SETTING.OUTPUT_SRC "$handoff_source" \
   MODEL.METHOD "$method_name" \
   SETTING.S "$source_index" SETTING.T "$target_index" \
   SETTING.SEED "$experiment_seed" \
   TEST.MAX_EPOCH 4 TEST.INTERVAL 4 \
   ACTIVE.CYCLE 4 ACTIVE.ADAPTATION_LIST "" \
-  DUET_HANDOFF.FINAL_EXTRA_EPOCHS 0 \
-  DUET_HANDOFF.CREDIT_PRESERVING True \
-  DUET_HANDOFF.STATE_PATH "$dcm_state" \
-  DUET_HANDOFF.CONFLICT_HARD_FRACTION 0.0 \
-  DUET_HANDOFF.FREEZE_CLIP "$freeze_vlm" \
-  DUET_HANDOFF.SOFT_REPLACEMENT_MODE "$soft_replacement_mode" \
-  DUET_HANDOFF.MEMORY_WRITE_MODE "$memory_write_mode" \
-  DUET_HANDOFF.CUMULATIVE_AGREEMENT_MASK "$cumulative_agreement" \
-  DUET_HANDOFF.CREDIT_MODE "$dcm_credit_mode" \
-  DUET_HANDOFF.FEEDBACK_MODE "$dcm_feedback_mode" \
-  DUET_HANDOFF.CREDIT_DECAY "$dcm_decay"
+  DCR.FINAL_EXTRA_EPOCHS 0 \
+  DCR.CREDIT_PRESERVING True \
+  DCR.STATE_PATH "$dcm_state" \
+  DCR.CONFLICT_HARD_FRACTION 0.0 \
+  DCR.FREEZE_CLIP "$freeze_vlm" \
+  DCR.SOFT_REPLACEMENT_MODE "$soft_replacement_mode" \
+  DCR.MEMORY_WRITE_MODE "$memory_write_mode" \
+  DCR.CUMULATIVE_AGREEMENT_MASK "$cumulative_agreement" \
+  DCR.CREDIT_MODE "$dcm_credit_mode" \
+  DCR.FEEDBACK_MODE "$dcm_feedback_mode" \
+  DCR.CREDIT_DECAY "$dcm_decay"
 
 logs=("$run_dir"/*.txt)
 if [ "${#logs[@]}" -ne 1 ]; then
@@ -223,7 +233,7 @@ if [ "$(grep -c "Task: ${task}" "$latest_log")" -ne 16 ]; then
   echo "${task}/${variant} did not complete 4 cycles x 4 epochs" >&2
   exit 1
 fi
-if ! grep -q "DAC credit residual KL: cycle=4" "$latest_log"; then
+if ! grep -q "DCR asymmetric residual guidance: cycle=4" "$latest_log"; then
   echo "${task}/${variant} did not execute the ablation path through cycle 4" >&2
   exit 1
 fi

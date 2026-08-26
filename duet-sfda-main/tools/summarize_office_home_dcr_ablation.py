@@ -34,13 +34,22 @@ def parse_args() -> argparse.Namespace:
 def candidate_run_dirs(task: str, variant: str, seed: int) -> list[Path]:
     ablation = Path(
         "output/uda/office-home"
-    ) / task / f"plmatch_dac_handoff_dcr_sfda_ablation_{variant}_office_home_seed{seed}"
+    ) / task / f"dcr_ablation_{variant}_office_home_seed{seed}"
     if variant != "full":
-        return [ablation]
+        legacy_ablation = Path(
+            "output/uda/office-home"
+        ) / task / f"plmatch_dac_handoff_dcr_sfda_ablation_{variant}_office_home_seed{seed}"
+        return [ablation, legacy_ablation]
     official = Path(
         "output/uda/office-home"
+    ) / task / f"dcr_office_home_full_seed{seed}"
+    legacy_official = Path(
+        "output/uda/office-home"
     ) / task / f"plmatch_dac_handoff_credit_residual_office_home_full_seed{seed}"
-    return [ablation, official]
+    legacy_ablation = Path(
+        "output/uda/office-home"
+    ) / task / f"plmatch_dac_handoff_dcr_sfda_ablation_{variant}_office_home_seed{seed}"
+    return [ablation, official, legacy_ablation, legacy_official]
 
 
 def locate_log(task: str, variant: str, seed: int) -> Path | None:

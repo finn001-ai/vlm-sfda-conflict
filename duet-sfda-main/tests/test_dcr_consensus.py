@@ -3,7 +3,7 @@ from pathlib import Path
 
 import torch
 
-from src.utils.duet_anchored_consensus import (
+from src.utils.dcr_consensus import (
     average_rank,
     centered_log_probability,
     consensus_shift_factors,
@@ -14,7 +14,7 @@ from src.utils.duet_anchored_consensus import (
 )
 
 
-class DuetAnchoredConsensusTest(unittest.TestCase):
+class DcrConsensusTest(unittest.TestCase):
     def test_centered_coordinate_preserves_distribution(self):
         probability = torch.tensor([[0.7, 0.2, 0.1], [0.1, 0.4, 0.5]])
         centered = centered_log_probability(probability, epsilon=1e-8)
@@ -107,7 +107,7 @@ class DuetAnchoredConsensusTest(unittest.TestCase):
 
     def test_training_path_only_optimizes_prompt_context(self):
         source = Path(
-            "src/methods/oh/duet_anchored_consensus.py"
+            "src/methods/oh/dcr_common.py"
         ).read_text()
         self.assertIn(
             "prompt_parameters = [prompt_model.prompt_learner.ctx]",
@@ -121,7 +121,7 @@ class DuetAnchoredConsensusTest(unittest.TestCase):
 
     def test_training_path_has_no_comparator_or_coverage_gate(self):
         source = Path(
-            "src/methods/oh/duet_anchored_consensus.py"
+            "src/methods/oh/dcr_common.py"
         ).read_text()
         self.assertNotIn("PairwiseConflictComparator", source)
         self.assertNotIn("COMPARATOR_COVERAGE_FRACTION", source)

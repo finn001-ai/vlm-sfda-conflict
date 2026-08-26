@@ -1,33 +1,21 @@
-# VisDA 当前研究入口
+# VisDA-C 当前入口
 
-当前保留两个严格匹配的 YAML：
+当前只保留两份正式配置：
 
-- `plmatch.yaml`：原始 DUET；
-- `duet_first_cycle_prior.yaml`：原始 DUET 加且仅加首轮 prior。
+- `dcr.yaml`：DCR（DCM + CLM + ARG）。
+- `plmatch.yaml`：干净的 PLMatch 对照。
 
-先运行一次 25% DUET control，再运行候选：
-
-```bash
-bash tools/run_visda_plmatch_proxy25_control.sh
-bash tools/run_visda_duet_first_cycle_prior_proxy25.sh
-```
-
-直接运行完整 8-cycle DUET-FCP：
+运行完整 VisDA-C DCR：
 
 ```bash
-bash tools/run_visda_duet_first_cycle_prior_full8.sh
+bash tools/run_visda_dcr.sh 2020
 ```
 
-Office-Home 12 任务纯 DUET 完成后，统一表格写入
-`output/uda/benchmark_tables/`：
+运行相同 8-cycle 预算的纯 PLMatch 对照：
 
 ```bash
-bash tools/run_office_home_plmatch_all.sh
-python tools/build_duet_benchmark_tables.py
+bash tools/run_visda_plmatch.sh 2020
 ```
 
-Stage14、Boundary-Flip 和更早实验统一保存在 Git 标签：
-
-```text
-archive/dccl-full-pre-prune-20260728
-```
+旧 DUET/DAC、proxy、Comparator 和诊断脚本已移至
+`../archive/duet_development_code_2026-08-26/`，不再是当前运行入口。

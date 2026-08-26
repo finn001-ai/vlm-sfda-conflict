@@ -11,14 +11,14 @@ This codebase is based on [tntek/source-free-domain-adaptation](https://github.c
 
 ---
 
-## 本项目 Stage14 代码入口
+## 当前研究方法：DCR
 
-- [Stage14 与 Dual-tier Pending 中文代码存档](STAGE14_CODE_ARCHIVE_ZH.md)
-- [VisDA 配置索引](cfgs/visda/README_ZH.md)
+当前正式方法统一命名为 DCR（Delayed Credit Refinement），由 DCM、CLM 和
+ARG 三个模块组成。代码路径、简单原理和正式运行命令见
+[DCR_METHOD.md](DCR_METHOD.md)。
 
-其中 Stage14 stable 和最新 Pending 改动已使用独立 Git tag 固定。中文存档同时
-说明了 CE 权重、Stable/Pending/Conflict 状态以及当前尚未利用 Conflict 的代码
-边界。
+当前基线只保留一份干净的 `src/methods/oh/plmatch.py`。旧 DUET/DAC、proxy、
+Comparator 和诊断实验已统一移至 `../archive/duet_development_code_2026-08-26/`。
 
 ---
 
@@ -60,13 +60,14 @@ After training the source model, modify `conf.py` to set `${CKPT_DIR}` to the di
 ### Office-Home and VisDA-C
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python image_target_of_oh_vs.py --cfg "cfgs/office-home/plmatch.yaml" SETTING.S 0 SETTING.T 1
+bash tools/run_office_home_dcr_all.sh 2020
+bash tools/run_visda_dcr.sh 2020
 ```
 
 ### DomainNet-126
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python image_target_in_126.py --cfg "cfgs/domainnet126/plmatch.yaml" SETTING.S 0 SETTING.T 1
+DATA_DIR=/path/to/data bash tools/run_domainnet126_dcr_all.sh 2020
 ```
 
 ---

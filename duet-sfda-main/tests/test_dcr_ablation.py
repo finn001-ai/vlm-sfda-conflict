@@ -4,16 +4,16 @@ from pathlib import Path
 
 import torch
 
-from src.utils.dac_credit_preserving_refinement import (
+from src.utils.dcr_refinement import (
     credit_preserving_refinement_step,
 )
-from src.utils.duet_delayed_credit import initialize_delayed_credit
-from src.methods.oh import plmatch
+from src.utils.dcr_credit_memory import initialize_delayed_credit
+from src.methods.oh import dcr
 
 
 class DcrSfdaAblationTest(unittest.TestCase):
     def test_ablation_controls_reach_label_construction_signature(self):
-        parameters = inspect.signature(plmatch.obtain_label).parameters
+        parameters = inspect.signature(dcr.obtain_label).parameters
         self.assertIn("credit_memory_write_mode", parameters)
         self.assertIn("credit_mode", parameters)
         self.assertIn("credit_feedback_mode", parameters)
@@ -56,7 +56,7 @@ class DcrSfdaAblationTest(unittest.TestCase):
 
     def test_runner_changes_one_named_module(self):
         script = Path(
-            "tools/run_office_home_dcr_sfda_ablation.sh"
+            "tools/run_office_home_dcr_ablation.sh"
         ).read_text()
         self.assertIn("dcm_uniform)", script)
         self.assertIn('dcm_credit_mode="uniform"', script)
@@ -65,11 +65,11 @@ class DcrSfdaAblationTest(unittest.TestCase):
         self.assertIn("arg_none)", script)
         self.assertIn('soft_replacement_mode="none"', script)
         self.assertIn(
-            'DUET_HANDOFF.MEMORY_WRITE_MODE "$memory_write_mode"',
+            'DCR.MEMORY_WRITE_MODE "$memory_write_mode"',
             script,
         )
         self.assertIn(
-            'DUET_HANDOFF.CREDIT_MODE "$dcm_credit_mode"',
+            'DCR.CREDIT_MODE "$dcm_credit_mode"',
             script,
         )
         self.assertIn("TEST.MAX_EPOCH 4 TEST.INTERVAL 4", script)
@@ -77,7 +77,7 @@ class DcrSfdaAblationTest(unittest.TestCase):
 
     def test_core_screen_is_predefined_domain_ring(self):
         script = Path(
-            "tools/run_office_home_dcr_sfda_core_ablation.sh"
+            "tools/run_office_home_dcr_core_ablation.sh"
         ).read_text()
         self.assertIn("tasks=(AC CP PR RA)", script)
         self.assertIn(
@@ -87,11 +87,11 @@ class DcrSfdaAblationTest(unittest.TestCase):
 
     def test_full_ablation_runner_covers_all_tasks_and_resumes(self):
         script = Path(
-            "tools/run_office_home_dcr_sfda_full_ablation.sh"
+            "tools/run_office_home_dcr_all_ablation.sh"
         ).read_text()
         self.assertIn("tasks=(AC AP AR CA CP CR PA PC PR RA RC RP)", script)
         self.assertIn("already complete; skipping", script)
-        self.assertIn("summarize_office_home_dcr_sfda_ablation.py", script)
+        self.assertIn("summarize_office_home_dcr_ablation.py", script)
 
 
 if __name__ == "__main__":

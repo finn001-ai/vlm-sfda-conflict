@@ -512,76 +512,66 @@ _C.DUET_CONTEXT.SEED = 2020
 # 是否打印 evaluation-only 指标（target label 只进日志，不进训练）。
 _C.DUET_CONTEXT.EVAL_ONLY_LOGGING = True
 
-# -------- Full-coverage anchored Task/CLIP consensus adaptation --------- #
-# This is a separate method path. It does not instantiate DUET_CONTEXT's
-# Comparator, synthetic-conflict trainer, sample anchors, or coverage gate.
-_C.DUET_CONSENSUS = CfgNode()
-_C.DUET_CONSENSUS.ENABLED = False
+# ----------------------- DCR memory stage (DCM) ------------------------- #
+_C.DCR_MEMORY = CfgNode()
+_C.DCR_MEMORY.ENABLED = False
 # Fixed adaptation budget. Final-epoch target accuracy is reported; target
 # labels never select a checkpoint or any training setting.
-_C.DUET_CONSENSUS.EPOCHS = 30
-_C.DUET_CONSENSUS.EVAL_INTERVAL = 1
+_C.DCR_MEMORY.EPOCHS = 30
+_C.DCR_MEMORY.EVAL_INTERVAL = 1
 # Target/prompt optimization follows the anchored-consensus protocol.
-_C.DUET_CONSENSUS.TARGET_LR = 5e-3
-_C.DUET_CONSENSUS.PROMPT_LR = 5e-4
-_C.DUET_CONSENSUS.FEATURE_LR_SCALE = 0.1
-_C.DUET_CONSENSUS.BOTTLENECK_LR_SCALE = 1.0
-_C.DUET_CONSENSUS.CLASSIFIER_LR_SCALE = 0.1
+_C.DCR_MEMORY.TARGET_LR = 5e-3
+_C.DCR_MEMORY.PROMPT_LR = 5e-4
+_C.DCR_MEMORY.FEATURE_LR_SCALE = 0.1
+_C.DCR_MEMORY.BOTTLENECK_LR_SCALE = 1.0
+_C.DCR_MEMORY.CLASSIFIER_LR_SCALE = 0.1
 # Target IIC, hard consolidation, and batch-diversity weights.
-_C.DUET_CONSENSUS.ALPHA = 1.3
-_C.DUET_CONSENSUS.AGREEMENT_BETA = 0.4
-_C.DUET_CONSENSUS.CONFLICT_BETA = 0.4
-_C.DUET_CONSENSUS.DIVERSITY_DELTA = 1.0
-_C.DUET_CONSENSUS.EPSILON = 1e-5
-_C.DUET_CONSENSUS.CSM_STRENGTH = 0.5
-# Delayed Agreement Credit (DAC) settings.  DAC is a separate method path:
-# it uses neither entropy PoE, the frozen initial anchor, nor CSM.
-_C.DUET_CONSENSUS.CREDIT_DECAY = 0.9
-_C.DUET_CONSENSUS.CREDIT_ETA = 4.0
-_C.DUET_CONSENSUS.MEMORY_UPDATE_RATE = 0.5
+_C.DCR_MEMORY.ALPHA = 1.3
+_C.DCR_MEMORY.AGREEMENT_BETA = 0.4
+_C.DCR_MEMORY.CONFLICT_BETA = 0.4
+_C.DCR_MEMORY.DIVERSITY_DELTA = 1.0
+_C.DCR_MEMORY.EPSILON = 1e-5
+_C.DCR_MEMORY.CSM_STRENGTH = 0.5
+# Delayed sample credit uses only each sample's own prediction history.
+_C.DCR_MEMORY.CREDIT_DECAY = 0.9
+_C.DCR_MEMORY.CREDIT_ETA = 4.0
+_C.DCR_MEMORY.MEMORY_UPDATE_RATE = 0.5
 # delayed = sample-wise retrospective Task/VLM credit (full method).
 # uniform = fixed 0.5/0.5 credit, used only by the DCM ablation.
-_C.DUET_CONSENSUS.CREDIT_MODE = "delayed"
+_C.DCR_MEMORY.CREDIT_MODE = "delayed"
 # agreement_temporal = agreement x temporal stability (full method).
 # agreement_only removes the temporal-stability factor for DCM ablation.
-_C.DUET_CONSENSUS.FEEDBACK_MODE = "agreement_temporal"
+_C.DCR_MEMORY.FEEDBACK_MODE = "agreement_temporal"
 # consensus = the faithful shared-consensus hard label on all rows.
-# duet_agreement = retain DUET's high-precision agreement decision and use the
-# anchored consensus decision on every conflict; soft IIC still covers all rows.
-_C.DUET_CONSENSUS.HARD_LABEL_MODE = "duet_agreement"
-# Preserve first-cycle prior semantics for agreement labels only. The cached
-# full-distribution consensus anchor always uses raw initial predictions.
-_C.DUET_CONSENSUS.FIRST_PRIOR_EPOCHS = 4
+# task_vlm_agreement keeps only Task/VLM top-1 agreements as hard labels.
+_C.DCR_MEMORY.HARD_LABEL_MODE = "task_vlm_agreement"
+# The early prior is used only while constructing agreement labels.
+_C.DCR_MEMORY.FIRST_PRIOR_EPOCHS = 4
+_C.DCR_MEMORY.FIRST_PRIOR_POWER = 0.8
 
-# ---------------- DAC -> released-DUET checkpoint handoff --------------- #
-# Disabled by default.  The exact-budget handoff enables one additional
-# epoch only in its last DUET cycle: 15 DAC passes + 17 DUET passes = 32.
-_C.DUET_HANDOFF = CfgNode()
-_C.DUET_HANDOFF.FINAL_EXTRA_EPOCHS = 0
-# Credit-preserving refinement keeps DAC's per-sample state active during the
-# second stage instead of using DAC only as an F/B/C initialization.  It is
-# opt-in so every released-DUET control keeps its historical behavior.
-_C.DUET_HANDOFF.CREDIT_PRESERVING = False
-_C.DUET_HANDOFF.STATE_PATH = ""
+# ---------------- DCR conflict refinement (CLM + ARG) ------------------- #
+_C.DCR = CfgNode()
+_C.DCR.FINAL_EXTRA_EPOCHS = 0
+# Keep DCM state active during the refinement stage.
+_C.DCR.CREDIT_PRESERVING = False
+_C.DCR.STATE_PATH = ""
 # Fixed, GT-free rank coverage among the current Task/CLIP conflicts.
-_C.DUET_HANDOFF.CONFLICT_HARD_FRACTION = 0.8
+_C.DCR.CONFLICT_HARD_FRACTION = 0.8
 # Preserve CLIP as an independent semantic expert in the refinement stage.
-_C.DUET_HANDOFF.FREEZE_CLIP = True
-# all_conflicts = replace every conflict KL target with DAC memory.
-# task_supported = replace only conflicts for which DAC pair evidence prefers
-# the current Task candidate over the current CLIP candidate.
-_C.DUET_HANDOFF.SOFT_REPLACEMENT_MODE = "all_conflicts"
+_C.DCR.FREEZE_CLIP = True
+# all_conflicts = replace every conflict KL target with DCM memory.
+# task_supported = replace only conflicts for which DCM history favors Task.
+_C.DCR.SOFT_REPLACEMENT_MODE = "all_conflicts"
 # locked = agreements writable, conflicts frozen (full CLM).
 # writable = every row writable; frozen = no row writable.
-_C.DUET_HANDOFF.MEMORY_WRITE_MODE = "locked"
-# False is the aggressive negative ablation.  True retains released DUET's
-# useful monotonic agreement curriculum.
-_C.DUET_HANDOFF.CUMULATIVE_AGREEMENT_MASK = False
-_C.DUET_HANDOFF.CREDIT_DECAY = 0.9
-_C.DUET_HANDOFF.CREDIT_ETA = 4.0
-_C.DUET_HANDOFF.MEMORY_UPDATE_RATE = 0.5
-_C.DUET_HANDOFF.CREDIT_MODE = "delayed"
-_C.DUET_HANDOFF.FEEDBACK_MODE = "agreement_temporal"
+_C.DCR.MEMORY_WRITE_MODE = "locked"
+# Keep agreement labels accumulated across refinement cycles.
+_C.DCR.CUMULATIVE_AGREEMENT_MASK = False
+_C.DCR.CREDIT_DECAY = 0.9
+_C.DCR.CREDIT_ETA = 4.0
+_C.DCR.MEMORY_UPDATE_RATE = 0.5
+_C.DCR.CREDIT_MODE = "delayed"
+_C.DCR.FEEDBACK_MODE = "agreement_temporal"
 
 # --------------------- DUET swap-conflict hard-label selection ---------- #
 _C.DUET_SWAP = CfgNode()

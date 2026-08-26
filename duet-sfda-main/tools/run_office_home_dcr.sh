@@ -2,10 +2,9 @@
 set -euo pipefail
 shopt -s nullglob
 
-# Surgical DAC anti-erasure experiment.
-# Keeps released DUET's CLIP update and cumulative agreement curriculum.
-# Adds no conflict hard labels.  Only unresolved conflicts for which DAC
-# history prefers Task over CLIP receive a replacement KL target.
+# Stable DCR-SFDA protocol for one Office-Home task.
+# Stage 1 builds delayed credit memory (DCM). Stage 2 protects conflicts with
+# CLM and applies task-supported asymmetric residual guidance (ARG).
 experiment_seed="${1:-2020}"
 task="${2:-AC}"
 domain_keys=(A C P R)
@@ -30,13 +29,15 @@ case "$task" in
     ;;
 esac
 
-dac_method="duet_delayed_agreement_credit_office_home_full_seed${experiment_seed}"
-dac_run_dir="output/uda/office-home/${task}/${dac_method}"
-dac_state="${dac_run_dir}/delayed_credit_state.pt"
+dcm_method="dcr_memory_office_home_full_seed${experiment_seed}"
+dcm_run_dir="output/uda/office-home/${task}/${dcm_method}"
+dcm_state="${dcm_run_dir}/dcr_memory_state.pt"
+legacy_dcm_run_dir="output/uda/office-home/${task}/duet_delayed_agreement_credit_office_home_full_seed${experiment_seed}"
+legacy_dcm_state="${legacy_dcm_run_dir}/delayed_credit_state.pt"
 legacy_handoff_dir="output/dac_duet_handoff_uniform5_office_home_seed${experiment_seed}_${task}/uda/office-home/${domain_keys[$source_index]}"
-handoff_source="output/dac_credit_residual_office_home_seed${experiment_seed}_${task}"
+handoff_source="output/dcr_office_home_seed${experiment_seed}_${task}"
 handoff_source_dir="${handoff_source}/uda/office-home/${domain_keys[$source_index]}"
-method_name="plmatch_dac_handoff_credit_residual_office_home_full_seed${experiment_seed}"
+method_name="dcr_office_home_full_seed${experiment_seed}"
 run_dir="output/uda/office-home/${task}/${method_name}"
 target_list="data/office-home/${domain_names[$target_index]}_list.txt"
 
@@ -52,24 +53,30 @@ for required_path in \
   fi
 done
 
-if [ ! -f "$dac_state" ]; then
-  if [ -d "$dac_run_dir" ] && compgen -G "$dac_run_dir/*.txt" > /dev/null; then
-    echo "Partial DAC run exists but delayed_credit_state.pt is missing: $dac_run_dir" >&2
-    echo "Move or delete that partial directory before rebuilding ${task} DAC" >&2
+if [ -f "$dcm_state" ]; then
+  echo "==> [${task}] Reusing DCR memory: ${dcm_state}"
+elif [ -f "$legacy_dcm_state" ]; then
+  dcm_run_dir="$legacy_dcm_run_dir"
+  dcm_state="$legacy_dcm_state"
+  echo "==> [${task}] Reusing legacy memory artifact: ${dcm_state}"
+else
+  if [ -d "$dcm_run_dir" ] && compgen -G "$dcm_run_dir/*.txt" > /dev/null; then
+    echo "Partial DCM run exists but dcr_memory_state.pt is missing: $dcm_run_dir" >&2
+    echo "Move that partial directory before rebuilding ${task} DCM" >&2
     exit 1
   fi
-  echo "==> [${task}] DAC state missing; rebuilding full-data DAC for 15 epochs"
+  echo "==> [${task}] Building DCM for 15 epochs"
   python image_target_of_oh_vs.py \
-    --cfg cfgs/office-home/duet_delayed_agreement_credit.yaml \
+    --cfg cfgs/office-home/dcr.yaml \
     CKPT_DIR . SETTING.OUTPUT_SRC source \
-    MODEL.METHOD "$dac_method" \
+    MODEL.METHOD "$dcm_method" \
     SETTING.S "$source_index" SETTING.T "$target_index" \
     SETTING.SEED "$experiment_seed" \
     ACTIVE.ADAPTATION_LIST ""
 fi
 
-if [ ! -f "$dac_state" ]; then
-  echo "${task} DAC rebuild did not produce: $dac_state" >&2
+if [ ! -f "$dcm_state" ]; then
+  echo "${task} DCM did not produce: $dcm_state" >&2
   exit 1
 fi
 
@@ -77,29 +84,29 @@ fi
 # source-shaped directory.  Some cloud cleanups retained that copy while
 # removing target_F/B/C from the original DAC directory.  Both locations are
 # byte-equivalent DAC-15 weights; never fall back to a post-DUET target model.
-if [ -f "${dac_run_dir}/target_F.pt" ] \
-  && [ -f "${dac_run_dir}/target_B.pt" ] \
-  && [ -f "${dac_run_dir}/target_C.pt" ]; then
-  dac_weight_f="${dac_run_dir}/target_F.pt"
-  dac_weight_b="${dac_run_dir}/target_B.pt"
-  dac_weight_c="${dac_run_dir}/target_C.pt"
-  dac_weight_origin="original_dac_run"
+if [ -f "${dcm_run_dir}/target_F.pt" ] \
+  && [ -f "${dcm_run_dir}/target_B.pt" ] \
+  && [ -f "${dcm_run_dir}/target_C.pt" ]; then
+  dcm_weight_f="${dcm_run_dir}/target_F.pt"
+  dcm_weight_b="${dcm_run_dir}/target_B.pt"
+  dcm_weight_c="${dcm_run_dir}/target_C.pt"
+  dcm_weight_origin="dcm_run"
 elif [ -f "${legacy_handoff_dir}/source_F.pt" ] \
   && [ -f "${legacy_handoff_dir}/source_B.pt" ] \
   && [ -f "${legacy_handoff_dir}/source_C.pt" ]; then
-  dac_weight_f="${legacy_handoff_dir}/source_F.pt"
-  dac_weight_b="${legacy_handoff_dir}/source_B.pt"
-  dac_weight_c="${legacy_handoff_dir}/source_C.pt"
-  dac_weight_origin="preserved_uniform_handoff_copy"
+  dcm_weight_f="${legacy_handoff_dir}/source_F.pt"
+  dcm_weight_b="${legacy_handoff_dir}/source_B.pt"
+  dcm_weight_c="${legacy_handoff_dir}/source_C.pt"
+  dcm_weight_origin="preserved_legacy_copy"
 else
-  echo "Missing ${task} DAC F/B/C weights in both supported locations:" >&2
-  echo "  ${dac_run_dir}/target_{F,B,C}.pt" >&2
+  echo "Missing ${task} DCM F/B/C weights in both supported locations:" >&2
+  echo "  ${dcm_run_dir}/target_{F,B,C}.pt" >&2
   echo "  ${legacy_handoff_dir}/source_{F,B,C}.pt" >&2
   exit 1
 fi
 
-target_samples=$(wc -l < "$target_list" | tr -d ' ')
-python - "$dac_state" "$target_samples" "$task" <<'PY'
+target_samples=$(awk 'END {print NR}' "$target_list")
+python - "$dcm_state" "$target_samples" "$task" <<'PY'
 import sys
 
 import torch
@@ -110,12 +117,12 @@ task = sys.argv[3]
 memory = state.get("memory")
 if not isinstance(memory, torch.Tensor) or tuple(memory.shape) != (expected_samples, 65):
     raise SystemExit(
-        f"{task}: invalid DAC memory: shape={getattr(memory, 'shape', None)}, "
+        f"{task}: invalid DCR memory: shape={getattr(memory, 'shape', None)}, "
         f"expected=({expected_samples}, 65)"
     )
 if not torch.isfinite(memory).all():
-    raise SystemExit(f"{task}: DAC memory contains non-finite values")
-print(f"==> [{task}] Verified DAC state: samples={memory.shape[0]}; classes={memory.shape[1]}")
+    raise SystemExit(f"{task}: DCR memory contains non-finite values")
+print(f"==> [{task}] Verified DCM: samples={memory.shape[0]}; classes={memory.shape[1]}")
 PY
 
 if [ -d "$run_dir" ] && compgen -G "$run_dir/*.txt" > /dev/null; then
@@ -125,36 +132,35 @@ if [ -d "$run_dir" ] && compgen -G "$run_dir/*.txt" > /dev/null; then
 fi
 
 mkdir -p "$handoff_source_dir"
-cp -f "$dac_weight_f" "${handoff_source_dir}/source_F.pt"
-cp -f "$dac_weight_b" "${handoff_source_dir}/source_B.pt"
-cp -f "$dac_weight_c" "${handoff_source_dir}/source_C.pt"
+cp -f "$dcm_weight_f" "${handoff_source_dir}/source_F.pt"
+cp -f "$dcm_weight_b" "${handoff_source_dir}/source_B.pt"
+cp -f "$dcm_weight_c" "${handoff_source_dir}/source_C.pt"
 
-echo "==> [${task}] DAC-15 ready; weight_origin=${dac_weight_origin}"
-echo "==> [${task}] Released DUET retained: adaptive CLIP + cumulative agreements"
-echo "==> [${task}] New residual: DAC soft correction only when history prefers Task"
+echo "==> [${task}] DCM ready; weight_origin=${dcm_weight_origin}"
+echo "==> [${task}] CLM locks conflict memory; ARG corrects only Task-supported conflicts"
 echo "==> [${task}] Conflict hard admission: 0%; total target passes: 31"
 
 python image_target_of_oh_vs.py \
-  --cfg cfgs/office-home/plmatch.yaml \
+  --cfg cfgs/office-home/dcr.yaml \
   CKPT_DIR . SETTING.OUTPUT_SRC "$handoff_source" \
   MODEL.METHOD "$method_name" \
   SETTING.S "$source_index" SETTING.T "$target_index" \
   SETTING.SEED "$experiment_seed" \
   TEST.MAX_EPOCH 4 TEST.INTERVAL 4 \
   ACTIVE.CYCLE 4 ACTIVE.ADAPTATION_LIST "" \
-  DUET_HANDOFF.FINAL_EXTRA_EPOCHS 0 \
-  DUET_HANDOFF.CREDIT_PRESERVING True \
-  DUET_HANDOFF.STATE_PATH "$dac_state" \
-  DUET_HANDOFF.CONFLICT_HARD_FRACTION 0.0 \
-  DUET_HANDOFF.FREEZE_CLIP False \
-  DUET_HANDOFF.SOFT_REPLACEMENT_MODE task_supported \
-  DUET_HANDOFF.MEMORY_WRITE_MODE locked \
-  DUET_HANDOFF.CUMULATIVE_AGREEMENT_MASK True \
-  DUET_HANDOFF.CREDIT_DECAY 0.9 \
-  DUET_HANDOFF.CREDIT_ETA 4.0 \
-  DUET_HANDOFF.MEMORY_UPDATE_RATE 0.5 \
-  DUET_HANDOFF.CREDIT_MODE delayed \
-  DUET_HANDOFF.FEEDBACK_MODE agreement_temporal
+  DCR.FINAL_EXTRA_EPOCHS 0 \
+  DCR.CREDIT_PRESERVING True \
+  DCR.STATE_PATH "$dcm_state" \
+  DCR.CONFLICT_HARD_FRACTION 0.0 \
+  DCR.FREEZE_CLIP False \
+  DCR.SOFT_REPLACEMENT_MODE task_supported \
+  DCR.MEMORY_WRITE_MODE locked \
+  DCR.CUMULATIVE_AGREEMENT_MASK True \
+  DCR.CREDIT_DECAY 0.9 \
+  DCR.CREDIT_ETA 4.0 \
+  DCR.MEMORY_UPDATE_RATE 0.5 \
+  DCR.CREDIT_MODE delayed \
+  DCR.FEEDBACK_MODE agreement_temporal
 
 logs=("$run_dir"/*.txt)
 if [ "${#logs[@]}" -ne 1 ]; then
@@ -166,8 +172,8 @@ if [ "$(grep -c "Task: ${task}" "$latest_log")" -ne 16 ]; then
   echo "${task} did not complete 4 cycles x 4 logged epochs" >&2
   exit 1
 fi
-if ! grep -q "DAC credit residual KL: cycle=4" "$latest_log"; then
-  echo "DAC residual was not active through cycle 4" >&2
+if ! grep -q "DCR asymmetric residual guidance: cycle=4" "$latest_log"; then
+  echo "DCR residual guidance was not active through cycle 4" >&2
   exit 1
 fi
 for checkpoint in target_F.pt target_B.pt target_C.pt refined_credit_state.pt; do

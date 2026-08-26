@@ -5,7 +5,7 @@ shopt -s nullglob
 # Run all 12 DomainNet-126 transfers. Completed tasks are skipped.
 experiment_seed="${1:-2020}"
 tasks=(CP CR CS PC PR PS RC RP RS SC SP SR)
-method_name="plmatch_dac_handoff_dcr_sfda_domainnet126_seed${experiment_seed}"
+method_name="dcr_domainnet126_seed${experiment_seed}"
 
 for task in "${tasks[@]}"; do
   run_dir="output/uda/domainnet126/${task}/${method_name}"
@@ -16,7 +16,7 @@ for task in "${tasks[@]}"; do
     echo "==> [${task}] already complete; skipping"
     continue
   fi
-  bash tools/run_domainnet126_dcr_sfda.sh "$experiment_seed" "$task"
+  bash tools/run_domainnet126_dcr.sh "$experiment_seed" "$task"
 done
 
 echo "==> DomainNet-126 DCR-SFDA completed for seed ${experiment_seed}"

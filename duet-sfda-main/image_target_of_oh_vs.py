@@ -18,18 +18,8 @@ import src.methods.oh.plue as PLUE
 import src.methods.oh.adacontrast as ADACONTRAST
 import src.methods.oh.source as SOURCE
 import src.methods.oh.plmatch as PLMATCH
-import src.methods.oh.duet_boundary_router as DUET_BOUNDARY
-import src.methods.oh.duet_first_cycle_prior as DUET_FCP
-import src.methods.oh.duet_first_cycle_prior_context_transformer as DUET_FCP_CONTEXT
-import src.methods.oh.duet_anchored_consensus as DUET_ANCHORED_CONSENSUS
-import src.methods.oh.duet_delayed_agreement_credit as DUET_DELAYED_CREDIT
-import src.methods.oh.duet_first_cycle_prior_topk_probe as DUET_FCP_TOPK_PROBE
-import src.methods.oh.duet_first_cycle_prior_swap_selection as DUET_FCP_SWAP
-import src.methods.oh.duet_attribute_reliability_kl as DUET_ATTRIBUTE_KL
-import src.methods.oh.duet_support_conditioned_clip as DUET_SUPPORT_CLIP
-import src.methods.oh.duet_support_conditioned_clip_memory as DUET_SUPPORT_CLIP_MEMORY
-import src.methods.oh.duet_clip_confidence_delay as DUET_CLIP_DELAY
-import src.methods.oh.duet_pcgrad_compatibility as DUET_PCGRAD_COMPATIBILITY
+import src.methods.oh.dcr as DCR
+import src.methods.oh.dcr_memory as DCR_MEMORY
 import src.methods.oh.plum as PLUM
 
 from conf import cfg, load_cfg_from_args
@@ -126,106 +116,20 @@ if __name__ == "__main__":
         acc = SOURCE.train_source(cfg)
 
 
-    elif (
-        cfg.MODEL.METHOD in {"plmatch", "plmatch_ref12"}
-        or cfg.MODEL.METHOD.startswith("plmatch_")
-    ):
+    elif cfg.MODEL.METHOD == "plmatch" or cfg.MODEL.METHOD.startswith("plmatch_"):
         print("using plmatch method")
         acc = PLMATCH.train_target(cfg)
 
     elif (
-        cfg.MODEL.METHOD == "duet_first_cycle_prior_topk_probe"
-        or cfg.MODEL.METHOD.startswith("duet_first_cycle_prior_topk_probe_")
+        cfg.MODEL.METHOD == "dcr_memory"
+        or cfg.MODEL.METHOD.startswith("dcr_memory_")
     ):
-        print("using DUET with first-cycle prior and Top-k conflict probe")
-        acc = DUET_FCP_TOPK_PROBE.train_target(cfg)
+        print("using DCR stage 1: delayed credit memory")
+        acc = DCR_MEMORY.train_target(cfg)
 
-    elif (
-        cfg.MODEL.METHOD == "duet_first_cycle_prior_swap_selection"
-        or cfg.MODEL.METHOD.startswith(
-            "duet_first_cycle_prior_swap_selection_"
-        )
-    ):
-        print("using DUET-FCP with swap-conflict hard-label selection")
-        acc = DUET_FCP_SWAP.train_target(cfg)
-
-    elif (
-        cfg.MODEL.METHOD == "duet_delayed_agreement_credit"
-        or cfg.MODEL.METHOD.startswith("duet_delayed_agreement_credit_")
-    ):
-        print(
-            "using full-coverage per-sample delayed Task/CLIP credit"
-        )
-        acc = DUET_DELAYED_CREDIT.train_target(cfg)
-
-    elif (
-        cfg.MODEL.METHOD == "duet_anchored_consensus"
-        or cfg.MODEL.METHOD.startswith("duet_anchored_consensus_")
-    ):
-        print(
-            "using full-coverage anchored Task/CLIP consensus adaptation"
-        )
-        acc = DUET_ANCHORED_CONSENSUS.train_target(cfg)
-
-    elif (
-        cfg.MODEL.METHOD == "duet_first_cycle_prior_context_transformer"
-        or cfg.MODEL.METHOD.startswith(
-            "duet_first_cycle_prior_context_transformer_"
-        )
-    ):
-        print(
-            "using DUET-FCP with class-balanced anchor context transformer"
-        )
-        acc = DUET_FCP_CONTEXT.train_target(cfg)
-
-    elif (
-        cfg.MODEL.METHOD == "duet_first_cycle_prior"
-        or cfg.MODEL.METHOD.startswith("duet_first_cycle_prior_")
-    ):
-        print("using DUET with first-cycle prior")
-        acc = DUET_FCP.train_target(cfg)
-
-    elif (
-        cfg.MODEL.METHOD == "duet_boundary_router"
-        or cfg.MODEL.METHOD.startswith("duet_boundary_router_")
-    ):
-        print("using DUET with first-cycle boundary router")
-        acc = DUET_BOUNDARY.train_target(cfg)
-
-    elif (
-        cfg.MODEL.METHOD == "duet_attribute_reliability_kl"
-        or cfg.MODEL.METHOD.startswith("duet_attribute_reliability_kl_")
-    ):
-        print("using DUET with first-cycle attribute-reliability KL target")
-        acc = DUET_ATTRIBUTE_KL.train_target(cfg)
-
-    elif (
-        cfg.MODEL.METHOD == "duet_support_conditioned_clip_memory"
-        or cfg.MODEL.METHOD.startswith("duet_support_conditioned_clip_memory_")
-    ):
-        print("using DUET with unresolved-memory support-conditioned CLIP KL target")
-        acc = DUET_SUPPORT_CLIP_MEMORY.train_target(cfg)
-
-    elif (
-        cfg.MODEL.METHOD == "duet_support_conditioned_clip"
-        or cfg.MODEL.METHOD.startswith("duet_support_conditioned_clip_")
-    ):
-        print("using DUET with first-cycle support-conditioned CLIP KL target")
-        acc = DUET_SUPPORT_CLIP.train_target(cfg)
-
-    elif (
-        cfg.MODEL.METHOD == "duet_clip_confidence_delay"
-        or cfg.MODEL.METHOD.startswith("duet_clip_confidence_delay_")
-    ):
-        print("using DUET with first-cycle CLIP-confidence admission delay")
-        acc = DUET_CLIP_DELAY.train_target(cfg)
-
-    elif (
-        cfg.MODEL.METHOD == "duet_pcgrad_compatibility"
-        or cfg.MODEL.METHOD.startswith("duet_pcgrad_compatibility_")
-    ):
-        print("using DUET with cycle-2 compatibility-controlled conflict PCGrad")
-        acc = DUET_PCGRAD_COMPATIBILITY.train_target(cfg)
+    elif cfg.MODEL.METHOD == "dcr" or cfg.MODEL.METHOD.startswith("dcr_"):
+        print("using DCR stage 2: conflict lock and residual guidance")
+        acc = DCR.train_target(cfg)
 
     elif cfg.MODEL.METHOD == "plum":
         print("using plum method")

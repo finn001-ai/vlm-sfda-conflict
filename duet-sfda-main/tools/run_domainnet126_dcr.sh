@@ -3,7 +3,7 @@ set -euo pipefail
 shopt -s nullglob
 
 # DCR-SFDA on one DomainNet-126 transfer task.
-# Usage: DATA_DIR=/path/to/data bash tools/run_domainnet126_dcr_sfda.sh 2020 CP
+# Usage: DATA_DIR=/path/to/data bash tools/run_domainnet126_dcr.sh 2020 CP
 experiment_seed="${1:-2020}"
 task="${2:-CP}"
 domain_keys=(C P R S)
@@ -31,20 +31,21 @@ esac
 data_root="${DATA_DIR:-/home/sfda/data}"
 target_list="data/domainnet126/${domain_names[$target_index]}_list.txt"
 source_checkpoint="source/uda/domainnet126/${domain_keys[$source_index]}/best_${domain_names[$source_index]}_2020.pth"
-dcm_method="duet_delayed_agreement_credit_dcr_sfda_domainnet126_seed${experiment_seed}"
+dcm_method="dcr_memory_domainnet126_seed${experiment_seed}"
 dcm_run_dir="output/uda/domainnet126/${task}/${dcm_method}"
-dcm_state="${dcm_run_dir}/delayed_credit_state.pt"
-handoff_source="output/dcr_sfda_domainnet126_seed${experiment_seed}_${task}"
+dcm_state="${dcm_run_dir}/dcr_memory_state.pt"
+legacy_dcm_run_dir="output/uda/domainnet126/${task}/duet_delayed_agreement_credit_dcr_sfda_domainnet126_seed${experiment_seed}"
+legacy_dcm_state="${legacy_dcm_run_dir}/delayed_credit_state.pt"
+handoff_source="output/dcr_domainnet126_seed${experiment_seed}_${task}"
 handoff_source_dir="${handoff_source}/uda/domainnet126/${domain_keys[$source_index]}"
-method_name="plmatch_dac_handoff_dcr_sfda_domainnet126_seed${experiment_seed}"
+method_name="dcr_domainnet126_seed${experiment_seed}"
 run_dir="output/uda/domainnet126/${task}/${method_name}"
 
 for required_path in \
   "$target_list" \
   data/domainnet126/classname.txt \
   "$source_checkpoint" \
-  cfgs/domainnet126/duet_delayed_agreement_credit.yaml \
-  cfgs/domainnet126/plmatch.yaml; do
+  cfgs/domainnet126/dcr.yaml; do
   if [ ! -f "$required_path" ]; then
     echo "Missing ${task} input: $required_path" >&2
     exit 1
@@ -76,7 +77,13 @@ if [ -n "${DATA_DIR:-}" ]; then
   data_override=(DATA_DIR "$DATA_DIR")
 fi
 
-if [ ! -f "$dcm_state" ]; then
+if [ -f "$dcm_state" ]; then
+  echo "==> [${task}] Reusing DCR memory: ${dcm_state}"
+elif [ -f "$legacy_dcm_state" ]; then
+  dcm_run_dir="$legacy_dcm_run_dir"
+  dcm_state="$legacy_dcm_state"
+  echo "==> [${task}] Reusing legacy memory artifact: ${dcm_state}"
+else
   if [ -d "$dcm_run_dir" ] && compgen -G "$dcm_run_dir/*.txt" > /dev/null; then
     echo "Partial DomainNet DCM run exists but state is missing: $dcm_run_dir" >&2
     echo "Move that directory aside before rebuilding" >&2
@@ -84,7 +91,7 @@ if [ ! -f "$dcm_state" ]; then
   fi
   echo "==> [${task}] Stage 1/2: DCM, 15 epochs"
   python image_target_of_oh_vs.py \
-    --cfg cfgs/domainnet126/duet_delayed_agreement_credit.yaml \
+    --cfg cfgs/domainnet126/dcr.yaml \
     CKPT_DIR . SETTING.OUTPUT_SRC source \
     MODEL.METHOD "$dcm_method" \
     SETTING.S "$source_index" SETTING.T "$target_index" \
@@ -93,9 +100,12 @@ if [ ! -f "$dcm_state" ]; then
     "${data_override[@]}"
 fi
 
-for artifact in delayed_credit_state.pt target_F.pt target_B.pt target_C.pt; do
-  if [ ! -f "${dcm_run_dir}/${artifact}" ]; then
-    echo "Missing completed ${task} DCM artifact: ${dcm_run_dir}/${artifact}" >&2
+for artifact in "$dcm_state" \
+  "${dcm_run_dir}/target_F.pt" \
+  "${dcm_run_dir}/target_B.pt" \
+  "${dcm_run_dir}/target_C.pt"; do
+  if [ ! -f "$artifact" ]; then
+    echo "Missing completed ${task} DCM artifact: $artifact" >&2
     exit 1
   fi
 done
@@ -137,23 +147,23 @@ echo "==> Conflict hard admission=0; cumulative agreement=True; VLM adaptive=Tru
 echo "==> target_gt_affects_training=False"
 
 python image_target_of_oh_vs.py \
-  --cfg cfgs/domainnet126/plmatch.yaml \
+  --cfg cfgs/domainnet126/dcr.yaml \
   CKPT_DIR . SETTING.OUTPUT_SRC "$handoff_source" \
   MODEL.METHOD "$method_name" \
   SETTING.S "$source_index" SETTING.T "$target_index" \
   SETTING.SEED "$experiment_seed" \
   TEST.MAX_EPOCH 4 TEST.INTERVAL 4 \
   ACTIVE.CYCLE 4 ACTIVE.ADAPTATION_LIST "" \
-  DUET_HANDOFF.FINAL_EXTRA_EPOCHS 0 \
-  DUET_HANDOFF.CREDIT_PRESERVING True \
-  DUET_HANDOFF.STATE_PATH "$dcm_state" \
-  DUET_HANDOFF.CONFLICT_HARD_FRACTION 0.0 \
-  DUET_HANDOFF.FREEZE_CLIP False \
-  DUET_HANDOFF.SOFT_REPLACEMENT_MODE task_supported \
-  DUET_HANDOFF.MEMORY_WRITE_MODE locked \
-  DUET_HANDOFF.CUMULATIVE_AGREEMENT_MASK True \
-  DUET_HANDOFF.CREDIT_MODE delayed \
-  DUET_HANDOFF.FEEDBACK_MODE agreement_temporal \
+  DCR.FINAL_EXTRA_EPOCHS 0 \
+  DCR.CREDIT_PRESERVING True \
+  DCR.STATE_PATH "$dcm_state" \
+  DCR.CONFLICT_HARD_FRACTION 0.0 \
+  DCR.FREEZE_CLIP False \
+  DCR.SOFT_REPLACEMENT_MODE task_supported \
+  DCR.MEMORY_WRITE_MODE locked \
+  DCR.CUMULATIVE_AGREEMENT_MASK True \
+  DCR.CREDIT_MODE delayed \
+  DCR.FEEDBACK_MODE agreement_temporal \
   "${data_override[@]}"
 
 logs=("$run_dir"/*.txt)
@@ -166,7 +176,7 @@ if [ "$(grep -c "Task: ${task}" "$latest_log")" -ne 16 ]; then
   echo "${task} did not complete 4 cycles x 4 epochs" >&2
   exit 1
 fi
-if ! grep -q "DAC credit residual KL: cycle=4" "$latest_log"; then
+if ! grep -q "DCR asymmetric residual guidance: cycle=4" "$latest_log"; then
   echo "${task} did not execute DCR through cycle 4" >&2
   exit 1
 fi

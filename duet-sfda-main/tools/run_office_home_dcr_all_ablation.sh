@@ -10,7 +10,7 @@ variants=(dcm_uniform clm_writable arg_none)
 
 for variant in "${variants[@]}"; do
   for task in "${tasks[@]}"; do
-    run_dir="output/uda/office-home/${task}/plmatch_dac_handoff_dcr_sfda_ablation_${variant}_office_home_seed${experiment_seed}"
+    run_dir="output/uda/office-home/${task}/dcr_ablation_${variant}_office_home_seed${experiment_seed}"
     logs=("$run_dir"/*.txt)
     if [ -f "${run_dir}/target_F.pt" ] \
       && [ "${#logs[@]}" -eq 1 ] \
@@ -18,11 +18,11 @@ for variant in "${variants[@]}"; do
       echo "==> [${task}/${variant}] already complete; skipping"
       continue
     fi
-    bash tools/run_office_home_dcr_sfda_ablation.sh \
+    bash tools/run_office_home_dcr_ablation.sh \
       "$experiment_seed" "$task" "$variant"
   done
 done
 
-python tools/summarize_office_home_dcr_sfda_ablation.py \
+python tools/summarize_office_home_dcr_ablation.py \
   --seed "$experiment_seed" \
   --tasks AC AP AR CA CP CR PA PC PR RA RC RP

@@ -1,4 +1,4 @@
-"""Label-free anchored consensus primitives for DUET/CLIP co-adaptation.
+"""Label-free consensus primitives used while building DCR memory.
 
 The functions in this module operate on complete class distributions.  They
 do not select a conflict subset and never consume target labels.

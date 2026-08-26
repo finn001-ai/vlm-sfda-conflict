@@ -1,4 +1,4 @@
-"""Full-coverage anchored Task/CLIP consensus adaptation.
+"""Shared data, model, and optimization helpers for DCR memory training.
 
 This path intentionally does not use the pairwise Comparator, synthetic
 conflicts, sample-anchor K, a coverage gate, or target labels.  A frozen
@@ -32,7 +32,7 @@ from src.utils.adaptation_lists import (
 from src.utils.domainnet126_source import (
     load_domainnet126_source_into_split,
 )
-from src.utils.duet_anchored_consensus import (
+from src.utils.dcr_consensus import (
     consensus_shift_factors,
     entropy_weighted_poe,
     iic_mutual_information_loss,
@@ -101,7 +101,7 @@ def _load_classnames(path: str) -> list[str]:
     return [name.replace("_", " ") for name in classnames]
 
 
-def _build_loaders(cfg, log_prefix="DUET anchored consensus"):
+def _build_loaders(cfg, log_prefix="DCR memory"):
     adaptation_override = str(cfg.ACTIVE.ADAPTATION_LIST).strip()
     adaptation_rows, evaluation_rows, adaptation_path = (
         load_adaptation_and_evaluation_rows(
@@ -201,19 +201,19 @@ def _build_target_model(cfg):
 
 
 def _build_target_optimizer(cfg, net_f, net_b, net_c):
-    base_lr = float(cfg.DUET_CONSENSUS.TARGET_LR)
+    base_lr = float(cfg.DCR_MEMORY.TARGET_LR)
     groups = [
         {
             "params": [parameter for parameter in net_f.parameters()],
-            "lr": base_lr * float(cfg.DUET_CONSENSUS.FEATURE_LR_SCALE),
+            "lr": base_lr * float(cfg.DCR_MEMORY.FEATURE_LR_SCALE),
         },
         {
             "params": [parameter for parameter in net_b.parameters()],
-            "lr": base_lr * float(cfg.DUET_CONSENSUS.BOTTLENECK_LR_SCALE),
+            "lr": base_lr * float(cfg.DCR_MEMORY.BOTTLENECK_LR_SCALE),
         },
         {
             "params": [parameter for parameter in net_c.parameters()],
-            "lr": base_lr * float(cfg.DUET_CONSENSUS.CLASSIFIER_LR_SCALE),
+            "lr": base_lr * float(cfg.DCR_MEMORY.CLASSIFIER_LR_SCALE),
         },
     ]
     return _set_lr0(
@@ -247,7 +247,7 @@ def _build_prompt_model(cfg, classnames):
     prompt_optimizer = _set_lr0(
         optim.SGD(
             prompt_parameters,
-            lr=float(cfg.DUET_CONSENSUS.PROMPT_LR),
+            lr=float(cfg.DCR_MEMORY.PROMPT_LR),
             momentum=0.9,
             weight_decay=1e-3,
             nesterov=True,
@@ -313,18 +313,18 @@ def _evaluate(loader, net_f, net_b, net_c, visda):
     return score, detail
 
 
-def _duet_hard_label_bank(cfg, task_probability, clip_probability, epoch):
-    prior_active = epoch < int(cfg.DUET_CONSENSUS.FIRST_PRIOR_EPOCHS)
+def _task_vlm_hard_label_bank(cfg, task_probability, clip_probability, epoch):
+    prior_active = epoch < int(cfg.DCR_MEMORY.FIRST_PRIOR_EPOCHS)
     if prior_active:
         task_for_label = prior_calibrate(
             task_probability,
-            power=float(cfg.DUET_FCP.POWER),
-            epsilon=float(cfg.DUET_CONSENSUS.EPSILON),
+            power=float(cfg.DCR_MEMORY.FIRST_PRIOR_POWER),
+            epsilon=float(cfg.DCR_MEMORY.EPSILON),
         )
         clip_for_label = prior_calibrate(
             clip_probability,
-            power=float(cfg.DUET_FCP.POWER),
-            epsilon=float(cfg.DUET_CONSENSUS.EPSILON),
+            power=float(cfg.DCR_MEMORY.FIRST_PRIOR_POWER),
+            epsilon=float(cfg.DCR_MEMORY.EPSILON),
         )
     else:
         task_for_label = task_probability
@@ -335,23 +335,23 @@ def _duet_hard_label_bank(cfg, task_probability, clip_probability, epoch):
 
 
 def _validate_config(cfg):
-    if not bool(cfg.DUET_CONSENSUS.ENABLED):
-        raise ValueError("DUET_CONSENSUS.ENABLED must be true for this method")
-    if int(cfg.DUET_CONSENSUS.EPOCHS) < 2:
-        raise ValueError("DUET_CONSENSUS.EPOCHS must be at least 2")
-    if not 0.0 <= float(cfg.DUET_CONSENSUS.CSM_STRENGTH) < 1.0:
-        raise ValueError("DUET_CONSENSUS.CSM_STRENGTH must be in [0, 1)")
-    if str(cfg.DUET_CONSENSUS.HARD_LABEL_MODE) not in {
+    if not bool(cfg.DCR_MEMORY.ENABLED):
+        raise ValueError("DCR_MEMORY.ENABLED must be true for this method")
+    if int(cfg.DCR_MEMORY.EPOCHS) < 2:
+        raise ValueError("DCR_MEMORY.EPOCHS must be at least 2")
+    if not 0.0 <= float(cfg.DCR_MEMORY.CSM_STRENGTH) < 1.0:
+        raise ValueError("DCR_MEMORY.CSM_STRENGTH must be in [0, 1)")
+    if str(cfg.DCR_MEMORY.HARD_LABEL_MODE) not in {
         "consensus",
-        "duet_agreement",
+        "task_vlm_agreement",
     }:
         raise ValueError(
-            "DUET_CONSENSUS.HARD_LABEL_MODE must be consensus or duet_agreement"
+            "DCR_MEMORY.HARD_LABEL_MODE must be consensus or task_vlm_agreement"
         )
-    if float(cfg.DUET_CONSENSUS.AGREEMENT_BETA) <= 0.0:
-        raise ValueError("DUET_CONSENSUS.AGREEMENT_BETA must be positive")
-    if float(cfg.DUET_CONSENSUS.CONFLICT_BETA) <= 0.0:
-        raise ValueError("DUET_CONSENSUS.CONFLICT_BETA must be positive")
+    if float(cfg.DCR_MEMORY.AGREEMENT_BETA) <= 0.0:
+        raise ValueError("DCR_MEMORY.AGREEMENT_BETA must be positive")
+    if float(cfg.DCR_MEMORY.CONFLICT_BETA) <= 0.0:
+        raise ValueError("DCR_MEMORY.CONFLICT_BETA must be positive")
 
 
 def train_target(cfg):
@@ -369,8 +369,8 @@ def train_target(cfg):
     net_f, net_b, net_c = _build_target_model(cfg)
     target_optimizer = _build_target_optimizer(cfg, net_f, net_b, net_c)
     prompt_model, prompt_optimizer = _build_prompt_model(cfg, classnames)
-    epsilon = float(cfg.DUET_CONSENSUS.EPSILON)
-    epochs = int(cfg.DUET_CONSENSUS.EPOCHS)
+    epsilon = float(cfg.DCR_MEMORY.EPSILON)
+    epochs = int(cfg.DCR_MEMORY.EPOCHS)
     total_steps = epochs * len(loaders["train"])
 
     initial_task, initial_clip = _scan_predictions(
@@ -389,7 +389,7 @@ def train_target(cfg):
     anchor_bank = initial_consensus["centered"].detach().cpu()
     initial_conflict = initial_task.argmax(dim=1) != initial_clip.argmax(dim=1)
     logging.info(
-        "DUET anchored consensus initialized: samples={}; classes={}; "
+        "DCR memory initialized: samples={}; classes={}; "
         "initial_conflicts={}; initial_conflict_rate={:.2f}%; "
         "task_weight_mean={:.4f}; clip_weight_mean={:.4f}; "
         "coverage=100.00%; comparator=False; synthetic_supervision=False; "
@@ -403,19 +403,19 @@ def train_target(cfg):
         )
     )
     logging.info(
-        "DUET anchored consensus optimization: epochs={}; steps={}; "
+        "DCR memory optimization: epochs={}; steps={}; "
         "hard_label_mode={}; alpha={:.3f}; agreement_beta={:.3f}; "
         "conflict_beta={:.3f}; diversity_delta={:.3f}; csm_strength={:.3f}; "
         "clip_encoders_frozen=True; prompt_trainable=True; classifier_trainable=True; "
         "synchronous_shared_snapshot=True".format(
             epochs,
             total_steps,
-            str(cfg.DUET_CONSENSUS.HARD_LABEL_MODE),
-            float(cfg.DUET_CONSENSUS.ALPHA),
-            float(cfg.DUET_CONSENSUS.AGREEMENT_BETA),
-            float(cfg.DUET_CONSENSUS.CONFLICT_BETA),
-            float(cfg.DUET_CONSENSUS.DIVERSITY_DELTA),
-            float(cfg.DUET_CONSENSUS.CSM_STRENGTH),
+            str(cfg.DCR_MEMORY.HARD_LABEL_MODE),
+            float(cfg.DCR_MEMORY.ALPHA),
+            float(cfg.DCR_MEMORY.AGREEMENT_BETA),
+            float(cfg.DCR_MEMORY.CONFLICT_BETA),
+            float(cfg.DCR_MEMORY.DIVERSITY_DELTA),
+            float(cfg.DCR_MEMORY.CSM_STRENGTH),
         )
     )
 
@@ -438,11 +438,11 @@ def train_target(cfg):
             scan_dynamic["probability"],
             epoch=epoch,
             total_epochs=epochs,
-            strength=float(cfg.DUET_CONSENSUS.CSM_STRENGTH),
+            strength=float(cfg.DCR_MEMORY.CSM_STRENGTH),
             epsilon=epsilon,
         )
         gamma_bank = shift_state["gamma"].detach().cpu()
-        duet_agreement, duet_label, prior_active = _duet_hard_label_bank(
+        task_vlm_agreement, joint_label, prior_active = _task_vlm_hard_label_bank(
             cfg,
             scan_task,
             scan_clip,
@@ -489,30 +489,30 @@ def train_target(cfg):
             shared_teacher = modulated["probability"].detach()
 
             consensus_hard = shared_teacher.argmax(dim=1)
-            if str(cfg.DUET_CONSENSUS.HARD_LABEL_MODE) == "duet_agreement":
-                agreement_batch = duet_agreement[indices.long()].to(task_logits.device)
-                duet_label_batch = duet_label[indices.long()].to(task_logits.device)
+            if str(cfg.DCR_MEMORY.HARD_LABEL_MODE) == "task_vlm_agreement":
+                agreement_batch = task_vlm_agreement[indices.long()].to(task_logits.device)
+                joint_label_batch = joint_label[indices.long()].to(task_logits.device)
                 hard_label = torch.where(
                     agreement_batch,
-                    duet_label_batch,
+                    joint_label_batch,
                     consensus_hard,
                 )
                 hard_weight = torch.where(
                     agreement_batch,
                     task_logits.new_full(
                         (task_logits.shape[0],),
-                        float(cfg.DUET_CONSENSUS.AGREEMENT_BETA),
+                        float(cfg.DCR_MEMORY.AGREEMENT_BETA),
                     ),
                     task_logits.new_full(
                         (task_logits.shape[0],),
-                        float(cfg.DUET_CONSENSUS.CONFLICT_BETA),
+                        float(cfg.DCR_MEMORY.CONFLICT_BETA),
                     ),
                 )
             else:
                 hard_label = consensus_hard
                 hard_weight = task_logits.new_full(
                     (task_logits.shape[0],),
-                    float(cfg.DUET_CONSENSUS.CONFLICT_BETA),
+                    float(cfg.DCR_MEMORY.CONFLICT_BETA),
                 )
 
             task_iic = iic_mutual_information_loss(
@@ -536,9 +536,9 @@ def train_target(cfg):
                 epsilon=epsilon,
             )
             task_loss = (
-                float(cfg.DUET_CONSENSUS.ALPHA) * task_iic
+                float(cfg.DCR_MEMORY.ALPHA) * task_iic
                 + hard_loss
-                - float(cfg.DUET_CONSENSUS.DIVERSITY_DELTA) * diversity
+                - float(cfg.DCR_MEMORY.DIVERSITY_DELTA) * diversity
             )
             prompt_loss = prompt_iic
             total_loss = task_loss + prompt_loss
@@ -554,7 +554,7 @@ def train_target(cfg):
             hard_loss_sum += float(hard_loss.detach().item())
 
         evaluate_now = (
-            (epoch + 1) % int(cfg.DUET_CONSENSUS.EVAL_INTERVAL) == 0
+            (epoch + 1) % int(cfg.DCR_MEMORY.EVAL_INTERVAL) == 0
             or epoch + 1 == epochs
         )
         if evaluate_now:
@@ -569,9 +569,9 @@ def train_target(cfg):
             accuracy, detail = float("nan"), ""
         current_conflict = scan_task.argmax(dim=1) != scan_clip.argmax(dim=1)
         log_message = (
-            "DUET anchored consensus epoch: {}/{}; accuracy={:.2f}%; "
+            "DCR memory epoch: {}/{}; accuracy={:.2f}%; "
             "task_loss={:.6f}; prompt_loss={:.6f}; hard_loss={:.6f}; "
-            "current_conflicts={}; duet_agreements={}; prior_active={}; "
+            "current_conflicts={}; task_vlm_agreements={}; prior_active={}; "
             "gamma_mean={:.4f}; gamma_min={:.4f}; gamma_max={:.4f}; "
             "soft_coverage=100.00%; conflict_hard_coverage=100.00%; "
             "target_gt_affects_training=False"
@@ -583,7 +583,7 @@ def train_target(cfg):
             prompt_loss_sum / max(batches, 1),
             hard_loss_sum / max(batches, 1),
             int(current_conflict.sum().item()),
-            int(duet_agreement.sum().item()),
+            int(task_vlm_agreement.sum().item()),
             prior_active,
             float(gamma_bank.mean().item()),
             float(gamma_bank.min().item()),
@@ -603,7 +603,7 @@ def train_target(cfg):
         output_dir / "target_prompt.pt",
     )
     logging.info(
-        "DUET anchored consensus completed: saved_dir={}; "
+        "DCR memory completed: saved_dir={}; "
         "inference_uses_target_only=True".format(output_dir)
     )
     return net_f, net_b, net_c

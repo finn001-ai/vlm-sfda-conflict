@@ -16,7 +16,7 @@ import src.methods.net.plue as PLUE
 import src.methods.net.adacontrast as ADACONTRAST
 import src.methods.net.source as SOURCE
 
-import src.methods.net.plmatch as PLMATCH
+import src.methods.net.domainnet_adapter as PLMATCH
 from conf import cfg, load_cfg_from_args
 
 
@@ -34,7 +34,8 @@ if __name__ == "__main__":
     torch.cuda.manual_seed(cfg.SETTING.SEED)
     np.random.seed(cfg.SETTING.SEED)
     random.seed(cfg.SETTING.SEED)
-    torch.backends.cudnn.benchmark = cfg.CUDNN.BENCHMARK
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
 
     if cfg.SETTING.DATASET == 'office-home':
         if cfg.DA == 'pda':
@@ -97,13 +98,8 @@ if __name__ == "__main__":
         print("using plmatch method")
         acc = PLMATCH.train_target(cfg)
 
-    elif cfg.MODEL.METHOD == "plmatch_exp":
-        print("using plmatch_exp method")
-        acc = PLMATCH_EXP.train_target(cfg)
-
-    elif cfg.MODEL.METHOD == "pseudo_metric":
-        print("using pseudo_metric method")
-        acc = PSEUDO_METRIC.train_target(cfg)
+    else:
+        raise ValueError(f"Unknown adaptation method: {cfg.MODEL.METHOD}")
 
     end = time.time()
     all_time = 'Running time: %s Seconds'%(round(end-start, 2))

@@ -1,4 +1,4 @@
-"""DUET adaptation with per-sample delayed Task/CLIP credit.
+"""Build DCR's delayed-credit memory from Task/VLM prediction history.
 
 Unlike anchored consensus, this method does not use entropy-weighted PoE, a
 fixed initial consensus anchor, or entropy-rank CSM.  Each target sample keeps
@@ -14,67 +14,67 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
-from src.methods.oh.duet_anchored_consensus import (
+from src.methods.oh.dcr_common import (
     _build_loaders,
     _build_prompt_model,
     _build_target_model,
     _build_target_optimizer,
-    _duet_hard_label_bank,
+    _task_vlm_hard_label_bank,
     _evaluate,
     _load_classnames,
     _poly_schedule,
     _scan_predictions,
 )
-from src.utils.duet_anchored_consensus import (
+from src.utils.dcr_consensus import (
     iic_mutual_information_loss,
     prediction_diversity_entropy,
 )
-from src.utils.duet_delayed_credit import (
+from src.utils.dcr_credit_memory import (
     initialize_delayed_credit,
     normalized_js_divergence,
     update_delayed_credit,
 )
 
 
-LOG_PREFIX = "DUET delayed agreement credit"
+LOG_PREFIX = "DCR delayed credit memory"
 
 
 def _validate_config(cfg):
-    if not bool(cfg.DUET_CONSENSUS.ENABLED):
-        raise ValueError("DUET_CONSENSUS.ENABLED must be true for this method")
-    if int(cfg.DUET_CONSENSUS.EPOCHS) < 2:
-        raise ValueError("DUET_CONSENSUS.EPOCHS must be at least 2")
-    if not 0.0 <= float(cfg.DUET_CONSENSUS.CREDIT_DECAY) < 1.0:
-        raise ValueError("DUET_CONSENSUS.CREDIT_DECAY must be in [0, 1)")
-    if float(cfg.DUET_CONSENSUS.CREDIT_ETA) <= 0.0:
-        raise ValueError("DUET_CONSENSUS.CREDIT_ETA must be positive")
-    if not 0.0 < float(cfg.DUET_CONSENSUS.MEMORY_UPDATE_RATE) <= 1.0:
+    if not bool(cfg.DCR_MEMORY.ENABLED):
+        raise ValueError("DCR_MEMORY.ENABLED must be true for this method")
+    if int(cfg.DCR_MEMORY.EPOCHS) < 2:
+        raise ValueError("DCR_MEMORY.EPOCHS must be at least 2")
+    if not 0.0 <= float(cfg.DCR_MEMORY.CREDIT_DECAY) < 1.0:
+        raise ValueError("DCR_MEMORY.CREDIT_DECAY must be in [0, 1)")
+    if float(cfg.DCR_MEMORY.CREDIT_ETA) <= 0.0:
+        raise ValueError("DCR_MEMORY.CREDIT_ETA must be positive")
+    if not 0.0 < float(cfg.DCR_MEMORY.MEMORY_UPDATE_RATE) <= 1.0:
         raise ValueError(
-            "DUET_CONSENSUS.MEMORY_UPDATE_RATE must be in (0, 1]"
+            "DCR_MEMORY.MEMORY_UPDATE_RATE must be in (0, 1]"
         )
-    if str(cfg.DUET_CONSENSUS.CREDIT_MODE) not in {"delayed", "uniform"}:
+    if str(cfg.DCR_MEMORY.CREDIT_MODE) not in {"delayed", "uniform"}:
         raise ValueError(
-            "DUET_CONSENSUS.CREDIT_MODE must be delayed or uniform"
+            "DCR_MEMORY.CREDIT_MODE must be delayed or uniform"
         )
-    if str(cfg.DUET_CONSENSUS.FEEDBACK_MODE) not in {
+    if str(cfg.DCR_MEMORY.FEEDBACK_MODE) not in {
         "agreement_temporal",
         "agreement_only",
     }:
         raise ValueError(
-            "DUET_CONSENSUS.FEEDBACK_MODE must be agreement_temporal "
+            "DCR_MEMORY.FEEDBACK_MODE must be agreement_temporal "
             "or agreement_only"
         )
-    if str(cfg.DUET_CONSENSUS.HARD_LABEL_MODE) not in {
+    if str(cfg.DCR_MEMORY.HARD_LABEL_MODE) not in {
         "consensus",
-        "duet_agreement",
+        "task_vlm_agreement",
     }:
         raise ValueError(
-            "DUET_CONSENSUS.HARD_LABEL_MODE must be consensus or duet_agreement"
+            "DCR_MEMORY.HARD_LABEL_MODE must be consensus or task_vlm_agreement"
         )
-    if float(cfg.DUET_CONSENSUS.AGREEMENT_BETA) <= 0.0:
-        raise ValueError("DUET_CONSENSUS.AGREEMENT_BETA must be positive")
-    if float(cfg.DUET_CONSENSUS.CONFLICT_BETA) <= 0.0:
-        raise ValueError("DUET_CONSENSUS.CONFLICT_BETA must be positive")
+    if float(cfg.DCR_MEMORY.AGREEMENT_BETA) <= 0.0:
+        raise ValueError("DCR_MEMORY.AGREEMENT_BETA must be positive")
+    if float(cfg.DCR_MEMORY.CONFLICT_BETA) <= 0.0:
+        raise ValueError("DCR_MEMORY.CONFLICT_BETA must be positive")
 
 
 def _initial_diagnostics(state, task_probability, clip_probability, epsilon):
@@ -115,8 +115,8 @@ def train_target(cfg):
     net_f, net_b, net_c = _build_target_model(cfg)
     target_optimizer = _build_target_optimizer(cfg, net_f, net_b, net_c)
     prompt_model, prompt_optimizer = _build_prompt_model(cfg, classnames)
-    epsilon = float(cfg.DUET_CONSENSUS.EPSILON)
-    epochs = int(cfg.DUET_CONSENSUS.EPOCHS)
+    epsilon = float(cfg.DCR_MEMORY.EPSILON)
+    epochs = int(cfg.DCR_MEMORY.EPOCHS)
     total_steps = epochs * len(loaders["train"])
 
     initial_task, initial_clip = _scan_predictions(
@@ -158,16 +158,16 @@ def train_target(cfg):
             LOG_PREFIX,
             epochs,
             total_steps,
-            str(cfg.DUET_CONSENSUS.HARD_LABEL_MODE),
-            float(cfg.DUET_CONSENSUS.CREDIT_DECAY),
-            float(cfg.DUET_CONSENSUS.CREDIT_ETA),
-            float(cfg.DUET_CONSENSUS.MEMORY_UPDATE_RATE),
-            str(cfg.DUET_CONSENSUS.CREDIT_MODE),
-            str(cfg.DUET_CONSENSUS.FEEDBACK_MODE),
-            float(cfg.DUET_CONSENSUS.ALPHA),
-            float(cfg.DUET_CONSENSUS.AGREEMENT_BETA),
-            float(cfg.DUET_CONSENSUS.CONFLICT_BETA),
-            float(cfg.DUET_CONSENSUS.DIVERSITY_DELTA),
+            str(cfg.DCR_MEMORY.HARD_LABEL_MODE),
+            float(cfg.DCR_MEMORY.CREDIT_DECAY),
+            float(cfg.DCR_MEMORY.CREDIT_ETA),
+            float(cfg.DCR_MEMORY.MEMORY_UPDATE_RATE),
+            str(cfg.DCR_MEMORY.CREDIT_MODE),
+            str(cfg.DCR_MEMORY.FEEDBACK_MODE),
+            float(cfg.DCR_MEMORY.ALPHA),
+            float(cfg.DCR_MEMORY.AGREEMENT_BETA),
+            float(cfg.DCR_MEMORY.CONFLICT_BETA),
+            float(cfg.DCR_MEMORY.DIVERSITY_DELTA),
         )
     )
 
@@ -195,17 +195,17 @@ def train_target(cfg):
                 credit_state,
                 scan_task,
                 scan_clip,
-                decay=float(cfg.DUET_CONSENSUS.CREDIT_DECAY),
-                credit_eta=float(cfg.DUET_CONSENSUS.CREDIT_ETA),
+                decay=float(cfg.DCR_MEMORY.CREDIT_DECAY),
+                credit_eta=float(cfg.DCR_MEMORY.CREDIT_ETA),
                 memory_update_rate=float(
-                    cfg.DUET_CONSENSUS.MEMORY_UPDATE_RATE
+                    cfg.DCR_MEMORY.MEMORY_UPDATE_RATE
                 ),
-                credit_mode=str(cfg.DUET_CONSENSUS.CREDIT_MODE),
-                feedback_mode=str(cfg.DUET_CONSENSUS.FEEDBACK_MODE),
+                credit_mode=str(cfg.DCR_MEMORY.CREDIT_MODE),
+                feedback_mode=str(cfg.DCR_MEMORY.FEEDBACK_MODE),
                 epsilon=epsilon,
             )
         teacher_bank = credit_state["memory"].detach().cpu()
-        duet_agreement, duet_label, prior_active = _duet_hard_label_bank(
+        task_vlm_agreement, joint_label, prior_active = _task_vlm_hard_label_bank(
             cfg,
             scan_task,
             scan_clip,
@@ -243,34 +243,34 @@ def train_target(cfg):
             ).detach()
 
             consensus_hard = shared_teacher.argmax(dim=1)
-            if str(cfg.DUET_CONSENSUS.HARD_LABEL_MODE) == "duet_agreement":
-                agreement_batch = duet_agreement[cpu_indices].to(
+            if str(cfg.DCR_MEMORY.HARD_LABEL_MODE) == "task_vlm_agreement":
+                agreement_batch = task_vlm_agreement[cpu_indices].to(
                     task_logits.device
                 )
-                duet_label_batch = duet_label[cpu_indices].to(
+                joint_label_batch = joint_label[cpu_indices].to(
                     task_logits.device
                 )
                 hard_label = torch.where(
                     agreement_batch,
-                    duet_label_batch,
+                    joint_label_batch,
                     consensus_hard,
                 )
                 hard_weight = torch.where(
                     agreement_batch,
                     task_logits.new_full(
                         (task_logits.shape[0],),
-                        float(cfg.DUET_CONSENSUS.AGREEMENT_BETA),
+                        float(cfg.DCR_MEMORY.AGREEMENT_BETA),
                     ),
                     task_logits.new_full(
                         (task_logits.shape[0],),
-                        float(cfg.DUET_CONSENSUS.CONFLICT_BETA),
+                        float(cfg.DCR_MEMORY.CONFLICT_BETA),
                     ),
                 )
             else:
                 hard_label = consensus_hard
                 hard_weight = task_logits.new_full(
                     (task_logits.shape[0],),
-                    float(cfg.DUET_CONSENSUS.CONFLICT_BETA),
+                    float(cfg.DCR_MEMORY.CONFLICT_BETA),
                 )
 
             task_iic = iic_mutual_information_loss(
@@ -294,9 +294,9 @@ def train_target(cfg):
                 epsilon=epsilon,
             )
             task_loss = (
-                float(cfg.DUET_CONSENSUS.ALPHA) * task_iic
+                float(cfg.DCR_MEMORY.ALPHA) * task_iic
                 + hard_loss
-                - float(cfg.DUET_CONSENSUS.DIVERSITY_DELTA) * diversity
+                - float(cfg.DCR_MEMORY.DIVERSITY_DELTA) * diversity
             )
             prompt_loss = prompt_iic
             total_loss = task_loss + prompt_loss
@@ -312,7 +312,7 @@ def train_target(cfg):
             hard_loss_sum += float(hard_loss.detach().item())
 
         evaluate_now = (
-            (epoch + 1) % int(cfg.DUET_CONSENSUS.EVAL_INTERVAL) == 0
+            (epoch + 1) % int(cfg.DCR_MEMORY.EVAL_INTERVAL) == 0
             or epoch + 1 == epochs
         )
         if evaluate_now:
@@ -329,7 +329,7 @@ def train_target(cfg):
         log_message = (
             "{} epoch: {}/{}; accuracy={:.2f}%; task_loss={:.6f}; "
             "prompt_loss={:.6f}; hard_loss={:.6f}; current_conflicts={}; "
-            "duet_agreements={}; prior_active={}; feedback_mean={:.4f}; "
+            "task_vlm_agreements={}; prior_active={}; feedback_mean={:.4f}; "
             "task_delayed_loss={:.4f}; clip_delayed_loss={:.4f}; "
             "task_weight_mean={:.4f}; clip_weight_mean={:.4f}; "
             "task_preferred_rate={:.2f}%; memory_shift_l1={:.4f}; "
@@ -344,7 +344,7 @@ def train_target(cfg):
             prompt_loss_sum / max(batches, 1),
             hard_loss_sum / max(batches, 1),
             int(current_conflict.sum().item()),
-            int(duet_agreement.sum().item()),
+            int(task_vlm_agreement.sum().item()),
             prior_active,
             float(credit_diagnostics["feedback"].mean().item()),
             float(credit_diagnostics["task_delayed_loss"].mean().item()),
@@ -378,7 +378,7 @@ def train_target(cfg):
     )
     torch.save(
         {key: value.cpu() for key, value in credit_state.items()},
-        output_dir / "delayed_credit_state.pt",
+        output_dir / "dcr_memory_state.pt",
     )
     logging.info(
         "{} completed: saved_dir={}; inference_uses_target_only=True".format(

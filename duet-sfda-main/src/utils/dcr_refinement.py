@@ -1,10 +1,7 @@
-"""Keep DAC's sample history active during cyclic Task/CLIP refinement.
+"""Implement DCR's conflict lock (CLM) and residual guidance (ARG).
 
-Released DUET replaces the DAC teacher with the current CLIP distribution and
-accumulates every past Task/CLIP agreement as a hard label.  This module makes
-the opposite state transition on current conflicts: the existing DAC memory
-is retained, and it may move again only after Task and CLIP reach agreement.
-Target labels are never accepted by this module.
+The existing DCR memory is retained on current conflicts and can move again
+only after Task and VLM agree. Target labels are never accepted here.
 """
 
 from __future__ import annotations
@@ -13,7 +10,7 @@ import math
 
 import torch
 
-from src.utils.duet_delayed_credit import update_delayed_credit
+from src.utils.dcr_credit_memory import update_delayed_credit
 
 
 _REQUIRED_STATE_KEYS = {
@@ -34,25 +31,25 @@ def validate_credit_state(
     sample_count: int,
     class_count: int,
 ) -> None:
-    """Validate the row/class contract shared by DAC and the refinement run."""
+    """Validate the row/class contract shared by DCM and refinement."""
     missing = sorted(_REQUIRED_STATE_KEYS.difference(state))
     if missing:
-        raise ValueError("DAC credit state is missing keys: {}".format(missing))
+        raise ValueError("DCR memory state is missing keys: {}".format(missing))
     expected_probability_shape = (int(sample_count), int(class_count))
     for key in ("memory", "previous_task", "previous_clip"):
         value = state[key]
         if not isinstance(value, torch.Tensor):
-            raise TypeError("DAC credit state {} must be a tensor".format(key))
+            raise TypeError("DCR credit state {} must be a tensor".format(key))
         if tuple(value.shape) != expected_probability_shape:
             raise ValueError(
-                "DAC credit state {} has shape {}, expected {}".format(
+                "DCR credit state {} has shape {}, expected {}".format(
                     key,
                     tuple(value.shape),
                     expected_probability_shape,
                 )
             )
         if not bool(torch.isfinite(value).all()):
-            raise ValueError("DAC credit state {} contains non-finite values".format(key))
+            raise ValueError("DCR credit state {} contains non-finite values".format(key))
     expected_vector_shape = (int(sample_count),)
     for key in (
         "task_loss_sum",
@@ -63,17 +60,17 @@ def validate_credit_state(
     ):
         value = state[key]
         if not isinstance(value, torch.Tensor):
-            raise TypeError("DAC credit state {} must be a tensor".format(key))
+            raise TypeError("DCR credit state {} must be a tensor".format(key))
         if tuple(value.shape) != expected_vector_shape:
             raise ValueError(
-                "DAC credit state {} has shape {}, expected {}".format(
+                "DCR credit state {} has shape {}, expected {}".format(
                     key,
                     tuple(value.shape),
                     expected_vector_shape,
                 )
             )
         if not bool(torch.isfinite(value).all()):
-            raise ValueError("DAC credit state {} contains non-finite values".format(key))
+            raise ValueError("DCR credit state {} contains non-finite values".format(key))
 
 
 def _normalize(probability: torch.Tensor, epsilon: float) -> torch.Tensor:
@@ -195,7 +192,7 @@ def credit_preserving_refinement_step(
         soft_replaced = conflict
 
     # Agreements keep the current CLIP target.  The residual mode also keeps
-    # CLIP whenever DAC history supports CLIP; only the opposite historical
+    # CLIP whenever DCR history supports CLIP; only the opposite historical
     # direction receives an anti-erasure correction.
     soft_target = clip_probability.clone()
     soft_target[soft_replaced] = memory[soft_replaced]
