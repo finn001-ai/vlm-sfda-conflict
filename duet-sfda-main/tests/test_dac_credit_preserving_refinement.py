@@ -137,6 +137,15 @@ class DacCreditPreservingRefinementTest(unittest.TestCase):
             "DUET_HANDOFF.CUMULATIVE_AGREEMENT_MASK True",
             script,
         )
+        self.assertIn("DUET_HANDOFF.MEMORY_WRITE_MODE locked", script)
+        self.assertIn("DUET_HANDOFF.CREDIT_DECAY 0.9", script)
+        self.assertIn("DUET_HANDOFF.CREDIT_ETA 4.0", script)
+        self.assertIn("DUET_HANDOFF.MEMORY_UPDATE_RATE 0.5", script)
+        self.assertIn("DUET_HANDOFF.CREDIT_MODE delayed", script)
+        self.assertIn(
+            "DUET_HANDOFF.FEEDBACK_MODE agreement_temporal",
+            script,
+        )
         self.assertIn("TEST.MAX_EPOCH 4 TEST.INTERVAL 4", script)
         self.assertIn("ACTIVE.CYCLE 4", script)
         self.assertIn("legacy_handoff_dir=", script)
@@ -168,6 +177,15 @@ class DacCreditPreservingRefinementTest(unittest.TestCase):
             "DUET_HANDOFF.CUMULATIVE_AGREEMENT_MASK True",
             script,
         )
+        self.assertIn("DUET_HANDOFF.MEMORY_WRITE_MODE locked", script)
+        self.assertIn("DUET_HANDOFF.CREDIT_DECAY 0.9", script)
+        self.assertIn("DUET_HANDOFF.CREDIT_ETA 4.0", script)
+        self.assertIn("DUET_HANDOFF.MEMORY_UPDATE_RATE 0.5", script)
+        self.assertIn("DUET_HANDOFF.CREDIT_MODE delayed", script)
+        self.assertIn(
+            "DUET_HANDOFF.FEEDBACK_MODE agreement_temporal",
+            script,
+        )
         self.assertIn("TEST.MAX_EPOCH 4 TEST.INTERVAL 4", script)
         self.assertIn("ACTIVE.CYCLE 8", script)
         self.assertIn("Total target passes: 47", script)
@@ -175,6 +193,19 @@ class DacCreditPreservingRefinementTest(unittest.TestCase):
         self.assertIn('Cycle: 8/8', script)
         self.assertIn('grep -c "Task: TV"', script)
         self.assertNotIn("91.70%", script)
+
+    def test_second_stage_configs_match_the_paper_loss_contract(self):
+        office = Path("cfgs/office-home/plmatch.yaml").read_text()
+        visda = Path("cfgs/visda/plmatch.yaml").read_text()
+        for config in (office, visda):
+            self.assertIn("CLS_PAR: 0.4", config)
+            self.assertIn("CON_PAR: 0.2", config)
+            self.assertIn("KL_PAR: 0.4", config)
+            self.assertIn("BETA: 0.99", config)
+        self.assertIn("FINE_LR: 1e-6", office)
+        self.assertIn("Q_VALUE: 1.1", office)
+        self.assertIn("FINE_LR: 1e-7", visda)
+        self.assertIn("Q_VALUE: 1.05", visda)
 
 if __name__ == "__main__":
     unittest.main()

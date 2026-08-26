@@ -134,8 +134,34 @@ class DuetDelayedCreditTest(unittest.TestCase):
         ).read_text()
         self.assertIn("DUET_DELAYED_CREDIT.train_target(cfg)", entry)
         self.assertIn("METHOD: duet_delayed_agreement_credit", config)
+        self.assertIn("CREDIT_MODE: delayed", config)
+        self.assertIn("FEEDBACK_MODE: agreement_temporal", config)
         self.assertIn("--ratio 0.25", script)
         self.assertIn("full_evaluation_samples=${full_samples}", script)
+
+    def test_formal_dac_configs_share_the_paper_credit_contract(self):
+        required = (
+            "EPOCHS: 15",
+            "ALPHA: 1.0",
+            "AGREEMENT_BETA: 0.4",
+            "CONFLICT_BETA: 0.05",
+            "DIVERSITY_DELTA: 0.1",
+            "EPSILON: 1e-5",
+            "CREDIT_DECAY: 0.9",
+            "CREDIT_ETA: 4.0",
+            "MEMORY_UPDATE_RATE: 0.5",
+            "CREDIT_MODE: delayed",
+            "FEEDBACK_MODE: agreement_temporal",
+            "HARD_LABEL_MODE: duet_agreement",
+            "FIRST_PRIOR_EPOCHS: 4",
+        )
+        for path in (
+            "cfgs/office-home/duet_delayed_agreement_credit.yaml",
+            "cfgs/visda/duet_delayed_agreement_credit.yaml",
+        ):
+            config = Path(path).read_text()
+            for setting in required:
+                self.assertIn(setting, config, msg=f"{path}: {setting}")
 
     def test_full_handoff_reuses_dac_and_preserves_duet_budget(self):
         script = Path(
