@@ -153,6 +153,26 @@ class DacCreditPreservingRefinementTest(unittest.TestCase):
             script,
         )
 
+    def test_visda_residual_uses_office_locked_settings(self):
+        script = Path(
+            "tools/run_visda_dac_credit_residual_refinement_full.sh"
+        ).read_text()
+        self.assertIn("duet_delayed_agreement_credit_visda_full_seed", script)
+        self.assertIn("DUET_HANDOFF.CONFLICT_HARD_FRACTION 0.0", script)
+        self.assertIn("DUET_HANDOFF.FREEZE_CLIP False", script)
+        self.assertIn(
+            "DUET_HANDOFF.SOFT_REPLACEMENT_MODE task_supported",
+            script,
+        )
+        self.assertIn(
+            "DUET_HANDOFF.CUMULATIVE_AGREEMENT_MASK True",
+            script,
+        )
+        self.assertIn("TEST.MAX_EPOCH 4 TEST.INTERVAL 4", script)
+        self.assertIn("ACTIVE.CYCLE 4", script)
+        self.assertIn("Total target passes: 31", script)
+        self.assertIn("Same-budget DAC15+DUET16 reference: 91.54%", script)
+
 
 if __name__ == "__main__":
     unittest.main()
