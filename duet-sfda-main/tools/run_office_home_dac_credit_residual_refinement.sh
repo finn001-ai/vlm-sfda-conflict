@@ -33,6 +33,7 @@ esac
 dac_method="duet_delayed_agreement_credit_office_home_full_seed${experiment_seed}"
 dac_run_dir="output/uda/office-home/${task}/${dac_method}"
 dac_state="${dac_run_dir}/delayed_credit_state.pt"
+legacy_handoff_dir="output/dac_duet_handoff_uniform5_office_home_seed${experiment_seed}_${task}/uda/office-home/${domain_keys[$source_index]}"
 handoff_source="output/dac_credit_residual_office_home_seed${experiment_seed}_${task}"
 handoff_source_dir="${handoff_source}/uda/office-home/${domain_keys[$source_index]}"
 method_name="plmatch_dac_handoff_credit_residual_office_home_full_seed${experiment_seed}"
@@ -42,15 +43,37 @@ target_list="data/office-home/${domain_names[$target_index]}_list.txt"
 for required_path in \
   "$target_list" \
   data/office-home/classname.txt \
-  "${dac_run_dir}/target_F.pt" \
-  "${dac_run_dir}/target_B.pt" \
-  "${dac_run_dir}/target_C.pt" \
   "${dac_state}"; do
   if [ ! -f "$required_path" ]; then
     echo "Missing ${task} DAC input: $required_path" >&2
     exit 1
   fi
 done
+
+# The earlier uniform handoff copied the fixed DAC F/B/C checkpoint into a
+# source-shaped directory.  Some cloud cleanups retained that copy while
+# removing target_F/B/C from the original DAC directory.  Both locations are
+# byte-equivalent DAC-15 weights; never fall back to a post-DUET target model.
+if [ -f "${dac_run_dir}/target_F.pt" ] \
+  && [ -f "${dac_run_dir}/target_B.pt" ] \
+  && [ -f "${dac_run_dir}/target_C.pt" ]; then
+  dac_weight_f="${dac_run_dir}/target_F.pt"
+  dac_weight_b="${dac_run_dir}/target_B.pt"
+  dac_weight_c="${dac_run_dir}/target_C.pt"
+  dac_weight_origin="original_dac_run"
+elif [ -f "${legacy_handoff_dir}/source_F.pt" ] \
+  && [ -f "${legacy_handoff_dir}/source_B.pt" ] \
+  && [ -f "${legacy_handoff_dir}/source_C.pt" ]; then
+  dac_weight_f="${legacy_handoff_dir}/source_F.pt"
+  dac_weight_b="${legacy_handoff_dir}/source_B.pt"
+  dac_weight_c="${legacy_handoff_dir}/source_C.pt"
+  dac_weight_origin="preserved_uniform_handoff_copy"
+else
+  echo "Missing ${task} DAC F/B/C weights in both supported locations:" >&2
+  echo "  ${dac_run_dir}/target_{F,B,C}.pt" >&2
+  echo "  ${legacy_handoff_dir}/source_{F,B,C}.pt" >&2
+  exit 1
+fi
 
 target_samples=$(wc -l < "$target_list" | tr -d ' ')
 python - "$dac_state" "$target_samples" "$task" <<'PY'
@@ -79,11 +102,11 @@ if [ -d "$run_dir" ] && compgen -G "$run_dir/*.txt" > /dev/null; then
 fi
 
 mkdir -p "$handoff_source_dir"
-cp -f "${dac_run_dir}/target_F.pt" "${handoff_source_dir}/source_F.pt"
-cp -f "${dac_run_dir}/target_B.pt" "${handoff_source_dir}/source_B.pt"
-cp -f "${dac_run_dir}/target_C.pt" "${handoff_source_dir}/source_C.pt"
+cp -f "$dac_weight_f" "${handoff_source_dir}/source_F.pt"
+cp -f "$dac_weight_b" "${handoff_source_dir}/source_B.pt"
+cp -f "$dac_weight_c" "${handoff_source_dir}/source_C.pt"
 
-echo "==> [${task}] Reusing DAC-15 checkpoint"
+echo "==> [${task}] Reusing DAC-15 checkpoint; weight_origin=${dac_weight_origin}"
 echo "==> [${task}] Released DUET retained: adaptive CLIP + cumulative agreements"
 echo "==> [${task}] New residual: DAC soft correction only when history prefers Task"
 echo "==> [${task}] Conflict hard admission: 0%; total target passes: 31"

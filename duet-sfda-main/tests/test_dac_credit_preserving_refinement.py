@@ -139,6 +139,13 @@ class DacCreditPreservingRefinementTest(unittest.TestCase):
         )
         self.assertIn("TEST.MAX_EPOCH 4 TEST.INTERVAL 4", script)
         self.assertIn("ACTIVE.CYCLE 4", script)
+        self.assertIn("legacy_handoff_dir=", script)
+        self.assertIn("preserved_uniform_handoff_copy", script)
+        self.assertIn('cp -f "$dac_weight_f"', script)
+        self.assertNotIn(
+            'cp -f "${duet_run_dir}/target_F.pt"',
+            script,
+        )
 
 
 if __name__ == "__main__":
