@@ -25,7 +25,13 @@ from torchvision import transforms
 from clip.custom_clip import ClipTestTimeTuning
 from src.data.data_list import ImageList_idx, NCropsTransform
 from src.models import network
-from src.utils.adaptation_lists import load_adaptation_and_evaluation_rows
+from src.utils.adaptation_lists import (
+    load_adaptation_and_evaluation_rows,
+    resolve_relative_image_rows,
+)
+from src.utils.domainnet126_source import (
+    load_domainnet126_source_into_split,
+)
 from src.utils.duet_anchored_consensus import (
     consensus_shift_factors,
     entropy_weighted_poe,
@@ -104,6 +110,16 @@ def _build_loaders(cfg, log_prefix="DUET anchored consensus"):
             adaptation_override,
         )
     )
+    if str(cfg.SETTING.DATASET) == "domainnet126":
+        image_root = Path(cfg.DATA_DIR) / "domainnet126"
+        adaptation_rows = resolve_relative_image_rows(
+            adaptation_rows,
+            image_root,
+        )
+        evaluation_rows = resolve_relative_image_rows(
+            evaluation_rows,
+            image_root,
+        )
     if adaptation_override:
         logging.info(
             "{} adaptation list: {}; adaptation_samples={}; "
@@ -175,9 +191,12 @@ def _build_target_model(cfg):
         class_num=int(cfg.class_num),
         bottleneck_dim=int(cfg.bottleneck),
     ).cuda()
-    net_f.load_state_dict(torch.load(cfg.output_dir_src + "/source_F.pt"))
-    net_b.load_state_dict(torch.load(cfg.output_dir_src + "/source_B.pt"))
-    net_c.load_state_dict(torch.load(cfg.output_dir_src + "/source_C.pt"))
+    if str(cfg.SETTING.DATASET) == "domainnet126":
+        load_domainnet126_source_into_split(cfg, net_f, net_b, net_c)
+    else:
+        net_f.load_state_dict(torch.load(cfg.output_dir_src + "/source_F.pt"))
+        net_b.load_state_dict(torch.load(cfg.output_dir_src + "/source_B.pt"))
+        net_c.load_state_dict(torch.load(cfg.output_dir_src + "/source_C.pt"))
     return net_f, net_b, net_c
 
 

@@ -37,3 +37,22 @@ def load_adaptation_and_evaluation_rows(
         raise ValueError(f"Evaluation list is empty: {evaluation_path_obj}")
 
     return adaptation_rows, evaluation_rows, adaptation_path
+
+
+def resolve_relative_image_rows(
+    rows: list[str],
+    image_root: str | Path,
+) -> list[str]:
+    """Resolve relative image-list paths without changing labels or order."""
+    root = Path(image_root)
+    resolved = []
+    for row in rows:
+        fields = row.strip().rsplit(maxsplit=1)
+        if len(fields) != 2:
+            raise ValueError("image-list row must contain path and label")
+        image_path, label = fields
+        path = Path(image_path)
+        if not path.is_absolute():
+            path = root / path
+        resolved.append(f"{path} {label}\n")
+    return resolved

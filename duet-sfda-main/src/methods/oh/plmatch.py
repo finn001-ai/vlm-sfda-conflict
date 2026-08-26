@@ -32,7 +32,10 @@ from data.datautils_domain import build_dataset
 from data.cls_to_names import *
 from data.domain_datasets import domain_datasets
 from sklearn.metrics import confusion_matrix
-from src.utils.adaptation_lists import load_adaptation_and_evaluation_rows
+from src.utils.adaptation_lists import (
+    load_adaptation_and_evaluation_rows,
+    resolve_relative_image_rows,
+)
 from src.utils.conflict_boundary import (
     pairwise_first_order_boundary,
     route_conflict_probabilities,
@@ -237,6 +240,10 @@ def data_load(cfg):
                 adaptation_path, len(txt_tar), len(txt_test)
             )
         )
+    if str(cfg.SETTING.DATASET) == "domainnet126":
+        image_root = osp.join(str(cfg.DATA_DIR), "domainnet126")
+        txt_tar = resolve_relative_image_rows(txt_tar, image_root)
+        txt_test = resolve_relative_image_rows(txt_test, image_root)
     # txt_test = open(cfg.t_dset_path).readlines()
 
     # if not cfg.da == 'uda':
