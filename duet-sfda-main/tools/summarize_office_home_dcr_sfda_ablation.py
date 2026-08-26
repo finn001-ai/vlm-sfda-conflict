@@ -10,6 +10,8 @@ from pathlib import Path
 
 
 ACCURACY_PATTERN = re.compile(r"Accuracy\s*=\s*([0-9]+(?:\.[0-9]+)?)%")
+CYCLE_PATTERN = re.compile(r"Cycle:\s*(\d+)\s*/\s*(\d+)")
+TASK_PATTERN = re.compile(r"Task:\s*([A-Z]{2})\b")
 DEFAULT_TASKS = ("AC", "CP", "PR", "RA")
 DEFAULT_VARIANTS = ("full", "dcm_uniform", "clm_writable", "arg_none")
 
@@ -19,6 +21,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=2020)
     parser.add_argument("--tasks", nargs="+", default=list(DEFAULT_TASKS))
     parser.add_argument("--variants", nargs="+", default=list(DEFAULT_VARIANTS))
+    parser.add_argument("--cycles", type=int, default=4)
+    parser.add_argument("--records-per-cycle", type=int, default=4)
     parser.add_argument(
         "--allow-missing",
         action="store_true",
@@ -49,11 +53,47 @@ def locate_log(task: str, variant: str, seed: int) -> Path | None:
     return None
 
 
-def parse_log(path: Path) -> tuple[float, float, int]:
-    values = [float(value) for value in ACCURACY_PATTERN.findall(path.read_text())]
-    if len(values) != 16:
-        raise RuntimeError(f"Expected 16 accuracy records in {path}, found {len(values)}")
-    return max(values), values[-1], len(values)
+def parse_log(
+    path: Path,
+    task: str,
+    cycles: int = 4,
+    records_per_cycle: int = 4,
+) -> tuple[float, float, int, int]:
+    """Read a fixed-budget prefix from either 4- or extended-cycle logs."""
+    records: list[tuple[int | None, float]] = []
+    for line in path.read_text().splitlines():
+        task_match = TASK_PATTERN.search(line)
+        accuracy_match = ACCURACY_PATTERN.search(line)
+        if (
+            task_match is None
+            or task_match.group(1) != task
+            or accuracy_match is None
+        ):
+            continue
+        cycle_match = CYCLE_PATTERN.search(line)
+        cycle = int(cycle_match.group(1)) if cycle_match else None
+        records.append((cycle, float(accuracy_match.group(1))))
+
+    expected = cycles * records_per_cycle
+    has_cycle = [cycle is not None for cycle, _ in records]
+    if records and all(has_cycle):
+        selected = [
+            accuracy
+            for cycle, accuracy in records
+            if cycle is not None and cycle <= cycles
+        ]
+    elif records and not any(has_cycle):
+        # Compatibility with old logs that predate the explicit Cycle field.
+        selected = [accuracy for _, accuracy in records[:expected]]
+    else:
+        raise RuntimeError(f"Mixed cycle metadata in {path}")
+
+    if len(selected) != expected:
+        raise RuntimeError(
+            f"Expected {expected} accuracy records through cycle {cycles} "
+            f"in {path}, found {len(selected)} (total task records={len(records)})"
+        )
+    return max(selected), selected[-1], len(selected), len(records)
 
 
 def main() -> None:
@@ -66,7 +106,12 @@ def main() -> None:
             if log_path is None:
                 missing.append(f"{variant}/{task}")
                 continue
-            peak, final, records = parse_log(log_path)
+            peak, final, records, records_total = parse_log(
+                log_path,
+                task,
+                cycles=args.cycles,
+                records_per_cycle=args.records_per_cycle,
+            )
             rows.append(
                 {
                     "variant": variant,
@@ -74,6 +119,7 @@ def main() -> None:
                     "peak": peak,
                     "final": final,
                     "records": records,
+                    "records_total": records_total,
                     "log": str(log_path),
                 }
             )
@@ -111,6 +157,16 @@ def main() -> None:
         )
     if missing:
         print("missing=" + ",".join(missing))
+    extended = [
+        f"{row['variant']}/{row['task']}:{row['records_total']}->{row['records']}"
+        for row in rows
+        if int(row["records_total"]) != int(row["records"])
+    ]
+    if extended:
+        print(
+            f"fixed_budget=cycles_1_to_{args.cycles}; "
+            "extended_logs_truncated=" + ",".join(extended)
+        )
     print(f"csv={output_path}")
 
 
