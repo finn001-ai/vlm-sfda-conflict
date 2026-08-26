@@ -968,10 +968,13 @@ def train_target(
             credit_runtime=credit_runtime,
             credit_conflict_fraction=credit_conflict_fraction,
             credit_soft_replacement_mode=credit_soft_replacement_mode,
+            credit_memory_write_mode=credit_memory_write_mode,
             credit_cumulative_agreement_mask=credit_cumulative_agreement_mask,
             credit_decay=credit_decay,
             credit_eta=credit_eta,
             credit_memory_update_rate=credit_memory_update_rate,
+            credit_mode=credit_mode,
+            credit_feedback_mode=credit_feedback_mode,
         )
         if diagnostic_payload_requested:
             (
@@ -1279,10 +1282,13 @@ def obtain_label(
     credit_runtime=None,
     credit_conflict_fraction=0.8,
     credit_soft_replacement_mode="all_conflicts",
+    credit_memory_write_mode="locked",
     credit_cumulative_agreement_mask=False,
     credit_decay=0.9,
     credit_eta=4.0,
     credit_memory_update_rate=0.5,
+    credit_mode="delayed",
+    credit_feedback_mode="agreement_temporal",
 ):
     # class_logit_bias = get_class_bias(netF, netB, netC)
     start_test = True

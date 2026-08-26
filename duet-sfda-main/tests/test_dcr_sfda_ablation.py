@@ -1,3 +1,4 @@
+import inspect
 import unittest
 from pathlib import Path
 
@@ -7,9 +8,16 @@ from src.utils.dac_credit_preserving_refinement import (
     credit_preserving_refinement_step,
 )
 from src.utils.duet_delayed_credit import initialize_delayed_credit
+from src.methods.oh import plmatch
 
 
 class DcrSfdaAblationTest(unittest.TestCase):
+    def test_ablation_controls_reach_label_construction_signature(self):
+        parameters = inspect.signature(plmatch.obtain_label).parameters
+        self.assertIn("credit_memory_write_mode", parameters)
+        self.assertIn("credit_mode", parameters)
+        self.assertIn("credit_feedback_mode", parameters)
+
     def test_writable_conflict_ablation_removes_memory_lock(self):
         task = torch.tensor([[0.95, 0.05]])
         clip = torch.tensor([[0.05, 0.95]])
