@@ -153,7 +153,7 @@ class DacCreditPreservingRefinementTest(unittest.TestCase):
             script,
         )
 
-    def test_visda_residual_uses_office_locked_settings(self):
+    def test_visda_residual_uses_formal_dataset_specific_schedule(self):
         script = Path(
             "tools/run_visda_dac_credit_residual_refinement_full.sh"
         ).read_text()
@@ -169,10 +169,12 @@ class DacCreditPreservingRefinementTest(unittest.TestCase):
             script,
         )
         self.assertIn("TEST.MAX_EPOCH 4 TEST.INTERVAL 4", script)
-        self.assertIn("ACTIVE.CYCLE 4", script)
-        self.assertIn("Total target passes: 31", script)
-        self.assertIn("Same-budget DAC15+DUET16 reference: 91.54%", script)
-
+        self.assertIn("ACTIVE.CYCLE 8", script)
+        self.assertIn("Total target passes: 47", script)
+        self.assertIn('-ne 32', script)
+        self.assertIn('Cycle: 8/8', script)
+        self.assertIn('grep -c "Task: TV"', script)
+        self.assertNotIn("91.70%", script)
 
 if __name__ == "__main__":
     unittest.main()

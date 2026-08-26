@@ -2,10 +2,9 @@
 set -euo pipefail
 shopt -s nullglob
 
-# Run the same DAC-state-preserving residual refinement used by the final
-# Office-Home experiment: no conflict hard admission, cumulative agreement
-# admission, adaptive CLIP, and DAC-memory KL replacement only when the
-# retained history supports the current Task candidate.
+# Run the formal VisDA-C DAC-state-preserving residual refinement protocol:
+# 15 DAC epochs followed by 8 cycles x 4 epochs. The refinement logic matches
+# Office-Home, while the dataset-specific training length is 47 total passes.
 experiment_seed="${1:-2020}"
 dac_method="duet_delayed_agreement_credit_visda_full_seed${experiment_seed}"
 dac_run_dir="output/uda/VISDA-C/TV/${dac_method}"
@@ -78,11 +77,11 @@ cp -f "${dac_run_dir}/target_B.pt" "${handoff_source_dir}/source_B.pt"
 cp -f "${dac_run_dir}/target_C.pt" "${handoff_source_dir}/source_C.pt"
 
 echo "==> Stage 1 reused: full-data DAC, 15 epochs"
-echo "==> Stage 2: state-preserving residual refinement, 4 cycles x 4 epochs"
+echo "==> Stage 2: state-preserving residual refinement, 8 cycles x 4 epochs"
 echo "==> Conflict hard admission: 0%"
 echo "==> Residual soft target: unresolved conflicts supported by Task history"
 echo "==> CLIP update: enabled; cumulative agreement admission: enabled"
-echo "==> Total target passes: 31; target GT affects training: False"
+echo "==> Total target passes: 47; target GT affects training: False"
 
 python image_target_of_oh_vs.py \
   --cfg cfgs/visda/plmatch.yaml \
@@ -105,12 +104,12 @@ if [ "${#logs[@]}" -ne 1 ]; then
   exit 1
 fi
 latest_log="${logs[0]}"
-if [ "$(grep -c "Task: TV" "$latest_log")" -ne 16 ]; then
-  echo "Run did not complete 4 cycles x 4 logged epochs" >&2
+if [ "$(grep -c "Task: TV" "$latest_log")" -ne 32 ]; then
+  echo "Run did not complete 8 cycles x 4 logged epochs" >&2
   exit 1
 fi
-if ! grep -q "DAC credit residual KL: cycle=4" "$latest_log"; then
-  echo "DAC residual was not active through cycle 4" >&2
+if ! grep -q "DAC credit residual KL: cycle=8" "$latest_log"; then
+  echo "DAC residual was not active through cycle 8" >&2
   exit 1
 fi
 for checkpoint in target_F.pt target_B.pt target_C.pt refined_credit_state.pt; do
@@ -125,7 +124,7 @@ best_acc=$(sed -nE \
   "$latest_log" \
   | awk 'BEGIN { best = -1 } $1 + 0 > best { best = $1 + 0 } END { if (best >= 0) printf "%.2f", best }')
 
-echo "==> Best accuracy over the fixed 16-point trajectory: ${best_acc}%"
+echo "==> Best accuracy over the fixed 32-point trajectory: ${best_acc}%"
 echo "==> Final fixed checkpoint"
-grep "Cycle: 4/4" "$latest_log" | tail -n 1
+grep "Cycle: 8/8" "$latest_log" | tail -n 1
 echo "==> Full log: ${latest_log}"
