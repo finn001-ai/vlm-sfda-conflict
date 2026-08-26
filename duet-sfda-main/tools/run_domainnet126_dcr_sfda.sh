@@ -100,7 +100,10 @@ for artifact in delayed_credit_state.pt target_F.pt target_B.pt target_C.pt; do
   fi
 done
 
-target_samples=$(wc -l < "$target_list" | tr -d ' ')
+# `wc -l` counts newline characters and undercounts DomainNet list files whose
+# final record has no trailing newline.  Count records instead so this matches
+# Python's splitlines() and the number of rows used by the dataset loader.
+target_samples=$(awk 'END {print NR}' "$target_list")
 python - "$dcm_state" "$target_samples" "$task" <<'PY'
 import sys
 import torch
