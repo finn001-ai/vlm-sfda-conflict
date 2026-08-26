@@ -52,6 +52,18 @@ def _validate_config(cfg):
         raise ValueError(
             "DUET_CONSENSUS.MEMORY_UPDATE_RATE must be in (0, 1]"
         )
+    if str(cfg.DUET_CONSENSUS.CREDIT_MODE) not in {"delayed", "uniform"}:
+        raise ValueError(
+            "DUET_CONSENSUS.CREDIT_MODE must be delayed or uniform"
+        )
+    if str(cfg.DUET_CONSENSUS.FEEDBACK_MODE) not in {
+        "agreement_temporal",
+        "agreement_only",
+    }:
+        raise ValueError(
+            "DUET_CONSENSUS.FEEDBACK_MODE must be agreement_temporal "
+            "or agreement_only"
+        )
     if str(cfg.DUET_CONSENSUS.HARD_LABEL_MODE) not in {
         "consensus",
         "duet_agreement",
@@ -138,6 +150,7 @@ def train_target(cfg):
     logging.info(
         "{} optimization: epochs={}; steps={}; hard_label_mode={}; "
         "credit_decay={:.3f}; credit_eta={:.3f}; memory_update_rate={:.3f}; "
+        "credit_mode={}; feedback_mode={}; "
         "alpha={:.3f}; agreement_beta={:.3f}; conflict_beta={:.3f}; "
         "diversity_delta={:.3f}; clip_encoders_frozen=True; "
         "prompt_trainable=True; classifier_trainable=True; "
@@ -149,6 +162,8 @@ def train_target(cfg):
             float(cfg.DUET_CONSENSUS.CREDIT_DECAY),
             float(cfg.DUET_CONSENSUS.CREDIT_ETA),
             float(cfg.DUET_CONSENSUS.MEMORY_UPDATE_RATE),
+            str(cfg.DUET_CONSENSUS.CREDIT_MODE),
+            str(cfg.DUET_CONSENSUS.FEEDBACK_MODE),
             float(cfg.DUET_CONSENSUS.ALPHA),
             float(cfg.DUET_CONSENSUS.AGREEMENT_BETA),
             float(cfg.DUET_CONSENSUS.CONFLICT_BETA),
@@ -185,6 +200,8 @@ def train_target(cfg):
                 memory_update_rate=float(
                     cfg.DUET_CONSENSUS.MEMORY_UPDATE_RATE
                 ),
+                credit_mode=str(cfg.DUET_CONSENSUS.CREDIT_MODE),
+                feedback_mode=str(cfg.DUET_CONSENSUS.FEEDBACK_MODE),
                 epsilon=epsilon,
             )
         teacher_bank = credit_state["memory"].detach().cpu()

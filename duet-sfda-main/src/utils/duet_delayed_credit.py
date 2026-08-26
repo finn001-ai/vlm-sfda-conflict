@@ -75,6 +75,8 @@ def update_delayed_credit(
     decay: float = 0.9,
     credit_eta: float = 4.0,
     memory_update_rate: float = 0.5,
+    credit_mode: str = "delayed",
+    feedback_mode: str = "agreement_temporal",
     epsilon: float = 1e-8,
 ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
     """Apply one label-free delayed-credit update to every sample.
@@ -91,6 +93,12 @@ def update_delayed_credit(
         raise ValueError("credit_eta must be positive")
     if not 0.0 < memory_update_rate <= 1.0:
         raise ValueError("memory_update_rate must be in (0, 1]")
+    if credit_mode not in {"delayed", "uniform"}:
+        raise ValueError("credit_mode must be delayed or uniform")
+    if feedback_mode not in {"agreement_temporal", "agreement_only"}:
+        raise ValueError(
+            "feedback_mode must be agreement_temporal or agreement_only"
+        )
 
     task_probability = _normalize_probability(task_probability, epsilon).cpu()
     clip_probability = _normalize_probability(clip_probability, epsilon).cpu()
@@ -116,7 +124,10 @@ def update_delayed_credit(
         memory_before,
         epsilon,
     )
-    feedback = (agreement * temporal_stability).clamp(0.0, 1.0)
+    if feedback_mode == "agreement_only":
+        feedback = agreement.clamp(0.0, 1.0)
+    else:
+        feedback = (agreement * temporal_stability).clamp(0.0, 1.0)
 
     task_delayed_loss = normalized_js_divergence(
         previous_task,
@@ -146,12 +157,17 @@ def update_delayed_credit(
         clip_loss_sum / feedback_mass.clamp_min(epsilon),
         torch.zeros_like(feedback_mass),
     )
-    expert_weight = torch.softmax(
-        -credit_eta * torch.stack([average_task_loss, average_clip_loss], dim=1),
-        dim=1,
-    )
-    task_weight = expert_weight[:, 0]
-    clip_weight = expert_weight[:, 1]
+    if credit_mode == "uniform":
+        task_weight = torch.full_like(average_task_loss, 0.5)
+        clip_weight = torch.full_like(average_clip_loss, 0.5)
+    else:
+        expert_weight = torch.softmax(
+            -credit_eta
+            * torch.stack([average_task_loss, average_clip_loss], dim=1),
+            dim=1,
+        )
+        task_weight = expert_weight[:, 0]
+        clip_weight = expert_weight[:, 1]
     instantaneous = (
         task_weight.unsqueeze(1) * task_probability
         + clip_weight.unsqueeze(1) * clip_probability

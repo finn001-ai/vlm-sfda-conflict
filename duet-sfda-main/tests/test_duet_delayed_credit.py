@@ -59,6 +59,38 @@ class DuetDelayedCreditTest(unittest.TestCase):
             float(updated["clip_weight"].item()),
         )
 
+    def test_uniform_credit_ablation_keeps_equal_expert_weights(self):
+        previous_task = torch.tensor([[0.9, 0.1]])
+        previous_clip = torch.tensor([[0.2, 0.8]])
+        state = initialize_delayed_credit(previous_task, previous_clip)
+        updated, _ = update_delayed_credit(
+            state,
+            torch.tensor([[0.82, 0.18]]),
+            torch.tensor([[0.82, 0.18]]),
+            credit_mode="uniform",
+        )
+
+        self.assertAlmostEqual(float(updated["task_weight"].item()), 0.5)
+        self.assertAlmostEqual(float(updated["clip_weight"].item()), 0.5)
+
+    def test_agreement_only_ablation_removes_temporal_factor(self):
+        task = torch.tensor([[0.9, 0.1]])
+        clip = torch.tensor([[0.8, 0.2]])
+        state = initialize_delayed_credit(task, clip)
+        state["memory"] = torch.tensor([[0.1, 0.9]])
+        _, full = update_delayed_credit(state, task, clip)
+        _, agreement_only = update_delayed_credit(
+            state,
+            task,
+            clip,
+            feedback_mode="agreement_only",
+        )
+
+        self.assertGreater(
+            float(agreement_only["feedback"].item()),
+            float(full["feedback"].item()),
+        )
+
     def test_every_sample_has_positive_continuous_memory_update_rate(self):
         task = torch.tensor([[0.999, 0.001], [0.6, 0.4]])
         clip = torch.tensor([[0.001, 0.999], [0.4, 0.6]])

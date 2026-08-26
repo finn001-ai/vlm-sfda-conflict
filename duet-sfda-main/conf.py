@@ -539,6 +539,12 @@ _C.DUET_CONSENSUS.CSM_STRENGTH = 0.5
 _C.DUET_CONSENSUS.CREDIT_DECAY = 0.9
 _C.DUET_CONSENSUS.CREDIT_ETA = 4.0
 _C.DUET_CONSENSUS.MEMORY_UPDATE_RATE = 0.5
+# delayed = sample-wise retrospective Task/VLM credit (full method).
+# uniform = fixed 0.5/0.5 credit, used only by the DCM ablation.
+_C.DUET_CONSENSUS.CREDIT_MODE = "delayed"
+# agreement_temporal = agreement x temporal stability (full method).
+# agreement_only removes the temporal-stability factor for DCM ablation.
+_C.DUET_CONSENSUS.FEEDBACK_MODE = "agreement_temporal"
 # consensus = the faithful shared-consensus hard label on all rows.
 # duet_agreement = retain DUET's high-precision agreement decision and use the
 # anchored consensus decision on every conflict; soft IIC still covers all rows.
@@ -565,12 +571,17 @@ _C.DUET_HANDOFF.FREEZE_CLIP = True
 # task_supported = replace only conflicts for which DAC pair evidence prefers
 # the current Task candidate over the current CLIP candidate.
 _C.DUET_HANDOFF.SOFT_REPLACEMENT_MODE = "all_conflicts"
+# locked = agreements writable, conflicts frozen (full CLM).
+# writable = every row writable; frozen = no row writable.
+_C.DUET_HANDOFF.MEMORY_WRITE_MODE = "locked"
 # False is the aggressive negative ablation.  True retains released DUET's
 # useful monotonic agreement curriculum.
 _C.DUET_HANDOFF.CUMULATIVE_AGREEMENT_MASK = False
 _C.DUET_HANDOFF.CREDIT_DECAY = 0.9
 _C.DUET_HANDOFF.CREDIT_ETA = 4.0
 _C.DUET_HANDOFF.MEMORY_UPDATE_RATE = 0.5
+_C.DUET_HANDOFF.CREDIT_MODE = "delayed"
+_C.DUET_HANDOFF.FEEDBACK_MODE = "agreement_temporal"
 
 # --------------------- DUET swap-conflict hard-label selection ---------- #
 _C.DUET_SWAP = CfgNode()

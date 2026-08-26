@@ -483,6 +483,9 @@ def train_target(
     credit_soft_replacement_mode = str(
         getattr(handoff_cfg, "SOFT_REPLACEMENT_MODE", "all_conflicts")
     )
+    credit_memory_write_mode = str(
+        getattr(handoff_cfg, "MEMORY_WRITE_MODE", "locked")
+    )
     credit_cumulative_agreement_mask = bool(
         getattr(handoff_cfg, "CUMULATIVE_AGREEMENT_MASK", False)
     )
@@ -490,6 +493,10 @@ def train_target(
     credit_eta = float(getattr(handoff_cfg, "CREDIT_ETA", 4.0))
     credit_memory_update_rate = float(
         getattr(handoff_cfg, "MEMORY_UPDATE_RATE", 0.5)
+    )
+    credit_mode = str(getattr(handoff_cfg, "CREDIT_MODE", "delayed"))
+    credit_feedback_mode = str(
+        getattr(handoff_cfg, "FEEDBACK_MODE", "agreement_temporal")
     )
     if handoff_final_extra_epochs < 0:
         raise ValueError("DUET_HANDOFF.FINAL_EXTRA_EPOCHS must be non-negative")
@@ -517,12 +524,18 @@ def train_target(
             "DUET_HANDOFF.CONFLICT_HARD_FRACTION must be in [0, 1]"
         )
     if credit_soft_replacement_mode not in {
+        "none",
         "all_conflicts",
         "task_supported",
     }:
         raise ValueError(
-            "DUET_HANDOFF.SOFT_REPLACEMENT_MODE must be all_conflicts "
-            "or task_supported"
+            "DUET_HANDOFF.SOFT_REPLACEMENT_MODE must be none, "
+            "all_conflicts, or task_supported"
+        )
+    if credit_memory_write_mode not in {"locked", "writable", "frozen"}:
+        raise ValueError(
+            "DUET_HANDOFF.MEMORY_WRITE_MODE must be locked, writable, "
+            "or frozen"
         )
     if not 0.0 <= credit_decay < 1.0:
         raise ValueError("DUET_HANDOFF.CREDIT_DECAY must be in [0, 1)")
@@ -531,6 +544,18 @@ def train_target(
     if not 0.0 < credit_memory_update_rate <= 1.0:
         raise ValueError(
             "DUET_HANDOFF.MEMORY_UPDATE_RATE must be in (0, 1]"
+        )
+    if credit_mode not in {"delayed", "uniform"}:
+        raise ValueError(
+            "DUET_HANDOFF.CREDIT_MODE must be delayed or uniform"
+        )
+    if credit_feedback_mode not in {
+        "agreement_temporal",
+        "agreement_only",
+    }:
+        raise ValueError(
+            "DUET_HANDOFF.FEEDBACK_MODE must be agreement_temporal "
+            "or agreement_only"
         )
     parameter_audit = bool(cfg.PCGRAD_PARAMETER_AUDIT.ENABLED)
     if parameter_audit and candidate_count:
@@ -724,13 +749,16 @@ def train_target(
         "DAC credit-preserving refinement: enabled={}; "
         "conflict_hard_fraction={:.3f}; freeze_clip={}; "
         "soft_replacement_mode={}; cumulative_agreement_mask={}; "
-        "agreement_memory_writable=True; conflict_memory_writable=False; "
+        "memory_write_mode={}; credit_mode={}; feedback_mode={}; "
         "target_gt_affects_training=False".format(
             credit_preserving,
             credit_conflict_fraction,
             credit_freeze_clip if credit_preserving else False,
             credit_soft_replacement_mode,
             credit_cumulative_agreement_mask,
+            credit_memory_write_mode,
+            credit_mode,
+            credit_feedback_mode,
         )
     )
     clip_model, preprocess, _ = clip.load(cfg.ACTIVE.ARCH)
@@ -1521,9 +1549,12 @@ def obtain_label(
             clip_all_output.detach(),
             conflict_hard_fraction=float(credit_conflict_fraction),
             soft_replacement_mode=str(credit_soft_replacement_mode),
+            memory_write_mode=str(credit_memory_write_mode),
             decay=float(credit_decay),
             credit_eta=float(credit_eta),
             memory_update_rate=float(credit_memory_update_rate),
+            credit_mode=str(credit_mode),
+            feedback_mode=str(credit_feedback_mode),
             epsilon=float(prior_epsilon),
         )
         credit_runtime["state"] = refined_state
@@ -1544,6 +1575,7 @@ def obtain_label(
             "DAC credit-preserving teacher: cycle={}; agreements={}; "
             "conflicts={}; hard_selected={}; conflict_hard_coverage={:.2f}%; "
             "soft_replaced={}; soft_replacement_mode={}; "
+            "memory_write_mode={}; "
             "conflict_memory_shift_mean={:.8f}; "
             "target_gt_affects_training=False".format(
                 curr_cycle + 1,
@@ -1553,6 +1585,7 @@ def obtain_label(
                 100.0 * realized_coverage,
                 soft_replaced_count,
                 str(credit_soft_replacement_mode),
+                str(credit_memory_write_mode),
                 (
                     float(preserved_shift.mean().item())
                     if preserved_shift.numel()

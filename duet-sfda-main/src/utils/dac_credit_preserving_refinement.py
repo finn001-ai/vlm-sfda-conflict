@@ -89,24 +89,35 @@ def credit_preserving_refinement_step(
     *,
     conflict_hard_fraction: float = 0.8,
     soft_replacement_mode: str = "all_conflicts",
+    memory_write_mode: str = "locked",
     decay: float = 0.9,
     credit_eta: float = 4.0,
     memory_update_rate: float = 0.5,
+    credit_mode: str = "delayed",
+    feedback_mode: str = "agreement_temporal",
     epsilon: float = 1e-8,
 ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
     """Build one GT-free refinement teacher and its current hard-label set.
 
-    Agreement rows accept the ordinary delayed-credit update.  Conflict rows
-    retain their previous full-distribution memory, preventing a moving CLIP
-    target from overwriting the historical decision.  The fixed top fraction
-    of conflicts ranked by DAC pair log-odds receives a hard A/B decision;
-    every conflict receives the retained soft memory.
+    The full method lets agreement rows accept the delayed-credit update and
+    locks conflict rows to their previous full-distribution memory.  Explicit
+    modes expose one-factor memory-write and residual-target ablations without
+    changing coverage or training length.
     """
     if not 0.0 <= conflict_hard_fraction <= 1.0:
         raise ValueError("conflict_hard_fraction must be in [0, 1]")
-    if soft_replacement_mode not in {"all_conflicts", "task_supported"}:
+    if soft_replacement_mode not in {
+        "none",
+        "all_conflicts",
+        "task_supported",
+    }:
         raise ValueError(
-            "soft_replacement_mode must be all_conflicts or task_supported"
+            "soft_replacement_mode must be none, all_conflicts, "
+            "or task_supported"
+        )
+    if memory_write_mode not in {"locked", "writable", "frozen"}:
+        raise ValueError(
+            "memory_write_mode must be locked, writable, or frozen"
         )
     task_probability = _normalize(task_probability, epsilon)
     clip_probability = _normalize(clip_probability, epsilon)
@@ -126,6 +137,8 @@ def credit_preserving_refinement_step(
         decay=decay,
         credit_eta=credit_eta,
         memory_update_rate=memory_update_rate,
+        credit_mode=credit_mode,
+        feedback_mode=feedback_mode,
         epsilon=epsilon,
     )
     task_label = task_probability.argmax(dim=1)
@@ -133,14 +146,21 @@ def credit_preserving_refinement_step(
     agreement = task_label == clip_label
     conflict = ~agreement
 
-    # This is the anti-erasure constraint: a disagreement cannot rewrite its
-    # own historical teacher.  A row becomes writable again after the two
-    # independent branches agree.
-    memory = torch.where(
-        agreement.unsqueeze(1),
-        proposed_state["memory"],
-        memory_before,
-    )
+    # ``locked`` is the full CLM transition.  The other two modes are explicit
+    # ablations; they must never be selected by target-label performance.
+    if memory_write_mode == "writable":
+        memory = proposed_state["memory"]
+        memory_preserved = torch.zeros_like(conflict)
+    elif memory_write_mode == "frozen":
+        memory = memory_before
+        memory_preserved = torch.ones_like(conflict)
+    else:
+        memory = torch.where(
+            agreement.unsqueeze(1),
+            proposed_state["memory"],
+            memory_before,
+        )
+        memory_preserved = conflict
     memory = _normalize(memory, epsilon)
     proposed_state["memory"] = memory
 
@@ -167,7 +187,9 @@ def credit_preserving_refinement_step(
         )
         selected[conflict_indices[order[:requested]]] = True
 
-    if soft_replacement_mode == "task_supported":
+    if soft_replacement_mode == "none":
+        soft_replaced = torch.zeros_like(conflict)
+    elif soft_replacement_mode == "task_supported":
         soft_replaced = conflict & choose_task
     else:
         soft_replaced = conflict
@@ -188,7 +210,7 @@ def credit_preserving_refinement_step(
             "pair_log_odds": pair_log_odds,
             "soft_target": soft_target,
             "soft_replaced": soft_replaced,
-            "memory_preserved": conflict,
+            "memory_preserved": memory_preserved,
             "memory_shift_l1": (memory - memory_before).abs().sum(dim=1),
         }
     )
