@@ -142,6 +142,12 @@ class DacCreditPreservingRefinementTest(unittest.TestCase):
         self.assertIn("legacy_handoff_dir=", script)
         self.assertIn("preserved_uniform_handoff_copy", script)
         self.assertIn('cp -f "$dac_weight_f"', script)
+        self.assertIn("DAC state missing; rebuilding full-data DAC", script)
+        self.assertIn(
+            "cfgs/office-home/duet_delayed_agreement_credit.yaml",
+            script,
+        )
+        self.assertIn('MODEL.METHOD "$dac_method"', script)
         self.assertNotIn(
             'cp -f "${duet_run_dir}/target_F.pt"',
             script,

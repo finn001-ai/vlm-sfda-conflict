@@ -43,12 +43,35 @@ target_list="data/office-home/${domain_names[$target_index]}_list.txt"
 for required_path in \
   "$target_list" \
   data/office-home/classname.txt \
-  "${dac_state}"; do
+  "source/uda/office-home/${domain_keys[$source_index]}/source_F.pt" \
+  "source/uda/office-home/${domain_keys[$source_index]}/source_B.pt" \
+  "source/uda/office-home/${domain_keys[$source_index]}/source_C.pt"; do
   if [ ! -f "$required_path" ]; then
-    echo "Missing ${task} DAC input: $required_path" >&2
+    echo "Missing ${task} base input: $required_path" >&2
     exit 1
   fi
 done
+
+if [ ! -f "$dac_state" ]; then
+  if [ -d "$dac_run_dir" ] && compgen -G "$dac_run_dir/*.txt" > /dev/null; then
+    echo "Partial DAC run exists but delayed_credit_state.pt is missing: $dac_run_dir" >&2
+    echo "Move or delete that partial directory before rebuilding ${task} DAC" >&2
+    exit 1
+  fi
+  echo "==> [${task}] DAC state missing; rebuilding full-data DAC for 15 epochs"
+  python image_target_of_oh_vs.py \
+    --cfg cfgs/office-home/duet_delayed_agreement_credit.yaml \
+    CKPT_DIR . SETTING.OUTPUT_SRC source \
+    MODEL.METHOD "$dac_method" \
+    SETTING.S "$source_index" SETTING.T "$target_index" \
+    SETTING.SEED "$experiment_seed" \
+    ACTIVE.ADAPTATION_LIST ""
+fi
+
+if [ ! -f "$dac_state" ]; then
+  echo "${task} DAC rebuild did not produce: $dac_state" >&2
+  exit 1
+fi
 
 # The earlier uniform handoff copied the fixed DAC F/B/C checkpoint into a
 # source-shaped directory.  Some cloud cleanups retained that copy while
@@ -106,7 +129,7 @@ cp -f "$dac_weight_f" "${handoff_source_dir}/source_F.pt"
 cp -f "$dac_weight_b" "${handoff_source_dir}/source_B.pt"
 cp -f "$dac_weight_c" "${handoff_source_dir}/source_C.pt"
 
-echo "==> [${task}] Reusing DAC-15 checkpoint; weight_origin=${dac_weight_origin}"
+echo "==> [${task}] DAC-15 ready; weight_origin=${dac_weight_origin}"
 echo "==> [${task}] Released DUET retained: adaptive CLIP + cumulative agreements"
 echo "==> [${task}] New residual: DAC soft correction only when history prefers Task"
 echo "==> [${task}] Conflict hard admission: 0%; total target passes: 31"
