@@ -185,6 +185,29 @@ def iic_mutual_information_loss(
     ).sum()
 
 
+def samplewise_distribution_alignment_loss(
+    prediction: torch.Tensor,
+    teacher: torch.Tensor,
+    *,
+    epsilon: float = 1e-5,
+) -> torch.Tensor:
+    """Align each sample with its own full-distribution memory teacher.
+
+    The loss does not estimate a class-by-class joint matrix, so it remains
+    well-defined when the number of classes exceeds the mini-batch size.
+    """
+    _validate_pair(prediction, teacher)
+    if prediction.shape[0] < 1:
+        raise ValueError("distribution alignment requires a non-empty batch")
+    if epsilon <= 0.0:
+        raise ValueError("epsilon must be positive")
+    prediction = prediction.float().clamp_min(epsilon)
+    prediction = prediction / prediction.sum(dim=1, keepdim=True)
+    teacher = teacher.float().clamp_min(epsilon)
+    teacher = teacher / teacher.sum(dim=1, keepdim=True)
+    return -(teacher * prediction.log()).sum(dim=1).mean()
+
+
 def prediction_diversity_entropy(
     prediction: torch.Tensor,
     *,

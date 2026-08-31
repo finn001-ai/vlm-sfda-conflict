@@ -525,7 +525,11 @@ _C.DCR_MEMORY.PROMPT_LR = 5e-4
 _C.DCR_MEMORY.FEATURE_LR_SCALE = 0.1
 _C.DCR_MEMORY.BOTTLENECK_LR_SCALE = 1.0
 _C.DCR_MEMORY.CLASSIFIER_LR_SCALE = 0.1
-# Target IIC, hard consolidation, and batch-diversity weights.
+# ``batch_iic`` is the historical DCM objective. ``samplewise_kl`` aligns
+# each prediction with its own delayed-credit memory, without estimating a
+# C x C joint distribution from a mini-batch that can be smaller than C.
+_C.DCR_MEMORY.ALIGNMENT_MODE = "batch_iic"
+# Target alignment, hard consolidation, and batch-diversity weights.
 _C.DCR_MEMORY.ALPHA = 1.3
 _C.DCR_MEMORY.AGREEMENT_BETA = 0.4
 _C.DCR_MEMORY.CONFLICT_BETA = 0.4

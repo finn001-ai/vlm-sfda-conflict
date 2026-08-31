@@ -31,14 +31,12 @@ esac
 data_root="${DATA_DIR:-/home/sfda/data}"
 target_list="data/domainnet126/${domain_names[$target_index]}_list.txt"
 source_checkpoint="source/uda/domainnet126/${domain_keys[$source_index]}/best_${domain_names[$source_index]}_2020.pth"
-dcm_method="dcr_memory_domainnet126_seed${experiment_seed}"
+dcm_method="dcr_memory_domainnet126_samplewise_seed${experiment_seed}"
 dcm_run_dir="output/uda/domainnet126/${task}/${dcm_method}"
 dcm_state="${dcm_run_dir}/dcr_memory_state.pt"
-legacy_dcm_run_dir="output/uda/domainnet126/${task}/duet_delayed_agreement_credit_dcr_sfda_domainnet126_seed${experiment_seed}"
-legacy_dcm_state="${legacy_dcm_run_dir}/delayed_credit_state.pt"
-handoff_source="output/dcr_domainnet126_seed${experiment_seed}_${task}"
+handoff_source="output/dcr_domainnet126_samplewise_seed${experiment_seed}_${task}"
 handoff_source_dir="${handoff_source}/uda/domainnet126/${domain_keys[$source_index]}"
-method_name="dcr_domainnet126_seed${experiment_seed}"
+method_name="dcr_domainnet126_samplewise_seed${experiment_seed}"
 run_dir="output/uda/domainnet126/${task}/${method_name}"
 
 for required_path in \
@@ -79,17 +77,13 @@ fi
 
 if [ -f "$dcm_state" ]; then
   echo "==> [${task}] Reusing DCR memory: ${dcm_state}"
-elif [ -f "$legacy_dcm_state" ]; then
-  dcm_run_dir="$legacy_dcm_run_dir"
-  dcm_state="$legacy_dcm_state"
-  echo "==> [${task}] Reusing legacy memory artifact: ${dcm_state}"
 else
   if [ -d "$dcm_run_dir" ] && compgen -G "$dcm_run_dir/*.txt" > /dev/null; then
     echo "Partial DomainNet DCM run exists but state is missing: $dcm_run_dir" >&2
     echo "Move that directory aside before rebuilding" >&2
     exit 1
   fi
-  echo "==> [${task}] Stage 1/2: DCM, 15 epochs"
+  echo "==> [${task}] Stage 1/2: DCM samplewise memory alignment, 15 epochs"
   python image_target_of_oh_vs.py \
     --cfg cfgs/domainnet126/dcr.yaml \
     CKPT_DIR . SETTING.OUTPUT_SRC source \

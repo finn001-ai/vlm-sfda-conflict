@@ -5,7 +5,7 @@ shopt -s nullglob
 # Run all 12 DomainNet-126 transfers. Completed tasks are skipped.
 experiment_seed="${1:-2020}"
 tasks=(CP CR CS PC PR PS RC RP RS SC SP SR)
-method_name="dcr_domainnet126_seed${experiment_seed}"
+method_name="dcr_domainnet126_samplewise_seed${experiment_seed}"
 
 for task in "${tasks[@]}"; do
   run_dir="output/uda/domainnet126/${task}/${method_name}"

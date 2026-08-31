@@ -8,9 +8,25 @@ from src.utils.dcr_credit_memory import (
     normalized_js_divergence,
     update_delayed_credit,
 )
+from src.utils.dcr_consensus import samplewise_distribution_alignment_loss
 
 
 class DcrCreditMemoryTest(unittest.TestCase):
+    def test_samplewise_alignment_handles_more_classes_than_samples(self):
+        teacher_logits = torch.randn(4, 126)
+        teacher = teacher_logits.softmax(dim=1)
+        matched_logits = teacher_logits.detach().clone().requires_grad_(True)
+        mismatched_logits = (-teacher_logits).detach().clone().requires_grad_(True)
+        matched = samplewise_distribution_alignment_loss(
+            matched_logits.softmax(dim=1), teacher
+        )
+        mismatched = samplewise_distribution_alignment_loss(
+            mismatched_logits.softmax(dim=1), teacher
+        )
+        self.assertLess(float(matched.item()), float(mismatched.item()))
+        matched.backward()
+        self.assertTrue(torch.isfinite(matched_logits.grad).all())
+
     def test_normalized_js_is_symmetric_and_bounded(self):
         left = torch.tensor([[0.9, 0.1], [0.4, 0.6]])
         right = torch.tensor([[0.1, 0.9], [0.4, 0.6]])
@@ -80,6 +96,11 @@ class DcrCreditMemoryTest(unittest.TestCase):
             self.assertIn("CREDIT_MODE: delayed", config)
             self.assertIn("FEEDBACK_MODE: agreement_temporal", config)
             self.assertIn("HARD_LABEL_MODE: task_vlm_agreement", config)
+
+    def test_domainnet_uses_class_count_safe_alignment(self):
+        config = Path("cfgs/domainnet126/dcr.yaml").read_text()
+        self.assertIn("ALIGNMENT_MODE: samplewise_kl", config)
+        self.assertIn("DIVERSITY_DELTA: 0.0", config)
 
 
 if __name__ == "__main__":

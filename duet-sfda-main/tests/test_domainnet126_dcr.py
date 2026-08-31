@@ -22,7 +22,8 @@ class DomainNet126DcrSfdaTest(unittest.TestCase):
     def test_single_task_runner_uses_complete_dcr_contract(self):
         script = Path("tools/run_domainnet126_dcr.sh").read_text()
         self.assertIn('task="${2:-CP}"', script)
-        self.assertIn("dcr_memory_domainnet126", script)
+        self.assertIn("dcr_memory_domainnet126_samplewise", script)
+        self.assertIn("dcr_domainnet126_samplewise", script)
         self.assertIn("DCR.CREDIT_PRESERVING True", script)
         self.assertIn("DCR.MEMORY_WRITE_MODE locked", script)
         self.assertIn("DCR.SOFT_REPLACEMENT_MODE task_supported", script)
@@ -43,6 +44,8 @@ class DomainNet126DcrSfdaTest(unittest.TestCase):
         self.assertIn("DATASET: domainnet126", config)
         self.assertIn("EPOCHS: 15", config)
         self.assertIn("ARCH: ViT-B/32", config)
+        self.assertIn("ALIGNMENT_MODE: samplewise_kl", config)
+        self.assertIn("DIVERSITY_DELTA: 0.0", config)
         self.assertIn("CREDIT_MODE: delayed", config)
         self.assertIn("FEEDBACK_MODE: agreement_temporal", config)
 

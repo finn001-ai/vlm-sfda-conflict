@@ -28,6 +28,7 @@ from src.methods.oh.dcr_common import (
 from src.utils.dcr_consensus import (
     iic_mutual_information_loss,
     prediction_diversity_entropy,
+    samplewise_distribution_alignment_loss,
 )
 from src.utils.dcr_credit_memory import (
     initialize_delayed_credit,
@@ -70,6 +71,13 @@ def _validate_config(cfg):
     }:
         raise ValueError(
             "DCR_MEMORY.HARD_LABEL_MODE must be consensus or task_vlm_agreement"
+        )
+    if str(cfg.DCR_MEMORY.ALIGNMENT_MODE) not in {
+        "batch_iic",
+        "samplewise_kl",
+    }:
+        raise ValueError(
+            "DCR_MEMORY.ALIGNMENT_MODE must be batch_iic or samplewise_kl"
         )
     if float(cfg.DCR_MEMORY.AGREEMENT_BETA) <= 0.0:
         raise ValueError("DCR_MEMORY.AGREEMENT_BETA must be positive")
@@ -149,6 +157,7 @@ def train_target(cfg):
     )
     logging.info(
         "{} optimization: epochs={}; steps={}; hard_label_mode={}; "
+        "alignment_mode={}; "
         "credit_decay={:.3f}; credit_eta={:.3f}; memory_update_rate={:.3f}; "
         "credit_mode={}; feedback_mode={}; "
         "alpha={:.3f}; agreement_beta={:.3f}; conflict_beta={:.3f}; "
@@ -159,6 +168,7 @@ def train_target(cfg):
             epochs,
             total_steps,
             str(cfg.DCR_MEMORY.HARD_LABEL_MODE),
+            str(cfg.DCR_MEMORY.ALIGNMENT_MODE),
             float(cfg.DCR_MEMORY.CREDIT_DECAY),
             float(cfg.DCR_MEMORY.CREDIT_ETA),
             float(cfg.DCR_MEMORY.MEMORY_UPDATE_RATE),
@@ -273,16 +283,28 @@ def train_target(cfg):
                     float(cfg.DCR_MEMORY.CONFLICT_BETA),
                 )
 
-            task_iic = iic_mutual_information_loss(
-                task_probability,
-                shared_teacher,
-                epsilon=epsilon,
-            )
-            prompt_iic = iic_mutual_information_loss(
-                clip_probability,
-                shared_teacher,
-                epsilon=epsilon,
-            )
+            if str(cfg.DCR_MEMORY.ALIGNMENT_MODE) == "samplewise_kl":
+                task_alignment = samplewise_distribution_alignment_loss(
+                    task_probability,
+                    shared_teacher,
+                    epsilon=epsilon,
+                )
+                prompt_alignment = samplewise_distribution_alignment_loss(
+                    clip_probability,
+                    shared_teacher,
+                    epsilon=epsilon,
+                )
+            else:
+                task_alignment = iic_mutual_information_loss(
+                    task_probability,
+                    shared_teacher,
+                    epsilon=epsilon,
+                )
+                prompt_alignment = iic_mutual_information_loss(
+                    clip_probability,
+                    shared_teacher,
+                    epsilon=epsilon,
+                )
             hard_ce = F.cross_entropy(
                 task_logits,
                 hard_label,
@@ -294,11 +316,11 @@ def train_target(cfg):
                 epsilon=epsilon,
             )
             task_loss = (
-                float(cfg.DCR_MEMORY.ALPHA) * task_iic
+                float(cfg.DCR_MEMORY.ALPHA) * task_alignment
                 + hard_loss
                 - float(cfg.DCR_MEMORY.DIVERSITY_DELTA) * diversity
             )
-            prompt_loss = prompt_iic
+            prompt_loss = prompt_alignment
             total_loss = task_loss + prompt_loss
 
             target_optimizer.zero_grad()
