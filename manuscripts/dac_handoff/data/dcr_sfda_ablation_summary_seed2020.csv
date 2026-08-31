@@ -1,0 +1,17 @@
+variant,task,peak,final,records,records_total,log
+full,AC,74.0,73.65,16,16,output/uda/office-home/AC/plmatch_dac_handoff_credit_residual_office_home_full_seed2020/plmatch_260825_165047.txt
+full,CP,91.94,91.94,16,16,output/uda/office-home/CP/plmatch_dac_handoff_credit_residual_office_home_full_seed2020/plmatch_260825_172238.txt
+full,PR,91.48,91.3,16,16,output/uda/office-home/PR/plmatch_dac_handoff_credit_residual_office_home_full_seed2020/plmatch_260826_015044.txt
+full,RA,83.93,83.68,16,16,output/uda/office-home/RA/plmatch_dac_handoff_credit_residual_office_home_full_seed2020/plmatch_260826_020634.txt
+dcm_uniform,AC,73.86,73.84,16,16,output/uda/office-home/AC/plmatch_dac_handoff_dcr_sfda_ablation_dcm_uniform_office_home_seed2020/plmatch_260826_103346.txt
+dcm_uniform,CP,91.96,91.96,16,16,output/uda/office-home/CP/plmatch_dac_handoff_dcr_sfda_ablation_dcm_uniform_office_home_seed2020/plmatch_260826_104803.txt
+dcm_uniform,PR,91.53,91.53,16,16,output/uda/office-home/PR/plmatch_dac_handoff_dcr_sfda_ablation_dcm_uniform_office_home_seed2020/plmatch_260826_112636.txt
+dcm_uniform,RA,84.51,84.38,16,16,output/uda/office-home/RA/plmatch_dac_handoff_dcr_sfda_ablation_dcm_uniform_office_home_seed2020/plmatch_260826_115945.txt
+clm_writable,AC,74.18,74.18,16,16,output/uda/office-home/AC/plmatch_dac_handoff_dcr_sfda_ablation_clm_writable_office_home_seed2020/plmatch_260826_120629.txt
+clm_writable,CP,91.69,91.57,16,16,output/uda/office-home/CP/plmatch_dac_handoff_dcr_sfda_ablation_clm_writable_office_home_seed2020/plmatch_260826_121346.txt
+clm_writable,PR,91.58,91.44,16,16,output/uda/office-home/PR/plmatch_dac_handoff_dcr_sfda_ablation_clm_writable_office_home_seed2020/plmatch_260826_122129.txt
+clm_writable,RA,83.97,83.89,16,16,output/uda/office-home/RA/plmatch_dac_handoff_dcr_sfda_ablation_clm_writable_office_home_seed2020/plmatch_260826_124638.txt
+arg_none,AC,72.92,72.92,16,16,output/uda/office-home/AC/plmatch_dac_handoff_dcr_sfda_ablation_arg_none_office_home_seed2020/plmatch_260826_125327.txt
+arg_none,CP,91.17,91.17,16,16,output/uda/office-home/CP/plmatch_dac_handoff_dcr_sfda_ablation_arg_none_office_home_seed2020/plmatch_260826_130042.txt
+arg_none,PR,91.0,90.84,16,16,output/uda/office-home/PR/plmatch_dac_handoff_dcr_sfda_ablation_arg_none_office_home_seed2020/plmatch_260826_130828.txt
+arg_none,RA,83.23,83.15,16,16,output/uda/office-home/RA/plmatch_dac_handoff_dcr_sfda_ablation_arg_none_office_home_seed2020/plmatch_260826_133421.txt
