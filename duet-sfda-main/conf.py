@@ -519,6 +519,9 @@ _C.DCR_MEMORY.ENABLED = False
 # labels never select a checkpoint or any training setting.
 _C.DCR_MEMORY.EPOCHS = 30
 _C.DCR_MEMORY.EVAL_INTERVAL = 1
+# Full-set Task/VLM scans do not optimize parameters and may use a smaller
+# micro-batch to avoid CUDA/cuDNN workspace spikes. Zero reuses TEST.BATCH_SIZE.
+_C.DCR_MEMORY.SCAN_BATCH_SIZE = 0
 # Target/prompt optimization follows the anchored-consensus protocol.
 _C.DCR_MEMORY.TARGET_LR = 5e-3
 _C.DCR_MEMORY.PROMPT_LR = 5e-4

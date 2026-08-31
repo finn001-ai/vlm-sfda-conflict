@@ -137,6 +137,19 @@ def _build_loaders(cfg, log_prefix="DCR memory"):
     scan_set = ImageList_idx(adaptation_rows, transform=scan_transform)
     test_set = ImageList_idx(evaluation_rows, transform=_task_test_transform())
     batch_size = int(cfg.TEST.BATCH_SIZE)
+    configured_scan_batch_size = int(cfg.DCR_MEMORY.SCAN_BATCH_SIZE)
+    scan_batch_size = (
+        configured_scan_batch_size
+        if configured_scan_batch_size > 0
+        else batch_size
+    )
+    logging.info(
+        "%s loader batches: train=%d; scan=%d; evaluation=%d",
+        log_prefix,
+        batch_size,
+        scan_batch_size,
+        batch_size * 3,
+    )
     return {
         "train": DataLoader(
             train_set,
@@ -147,7 +160,7 @@ def _build_loaders(cfg, log_prefix="DCR memory"):
         ),
         "scan": DataLoader(
             scan_set,
-            batch_size=batch_size,
+            batch_size=scan_batch_size,
             shuffle=False,
             num_workers=int(cfg.NUM_WORKERS),
             drop_last=False,
