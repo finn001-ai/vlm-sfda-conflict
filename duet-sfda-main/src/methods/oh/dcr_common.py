@@ -248,6 +248,13 @@ def _build_prompt_model(cfg, classnames):
         n_ctx=int(cfg.ACTIVE.N_CTX),
         ctx_init=str(cfg.ACTIVE.CTX_INIT),
     ).cuda()
+    if bool(cfg.DCR_MEMORY.PROMPT_FLOAT32):
+        prompt_model.float()
+        # These two helpers cache CLIP's dtype during construction rather than
+        # reading it dynamically in forward(). Keep them synchronized with
+        # the converted module parameters and buffers.
+        prompt_model.text_encoder.dtype = torch.float32
+        prompt_model.prompt_learner.dtype = torch.float32
     for parameter in prompt_model.parameters():
         parameter.requires_grad_(False)
     # PromptLearner keeps a reference to the complete CLIP module for prompt
@@ -265,6 +272,11 @@ def _build_prompt_model(cfg, classnames):
             weight_decay=1e-3,
             nesterov=True,
         )
+    )
+    logging.info(
+        "DCR prompt numeric mode: dtype=%s; float32_requested=%s",
+        str(prompt_model.dtype),
+        bool(cfg.DCR_MEMORY.PROMPT_FLOAT32),
     )
     return prompt_model, prompt_optimizer
 
