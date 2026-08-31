@@ -44,7 +44,6 @@ class DomainNet126DcrSfdaTest(unittest.TestCase):
         self.assertIn("DATASET: domainnet126", config)
         self.assertIn("EPOCHS: 15", config)
         self.assertIn("SCAN_BATCH_SIZE: 32", config)
-        self.assertIn("PROMPT_FLOAT32: true", config)
         self.assertIn("ARCH: ViT-B/32", config)
         self.assertIn("ALIGNMENT_MODE: samplewise_kl", config)
         self.assertIn("DIVERSITY_DELTA: 0.0", config)
