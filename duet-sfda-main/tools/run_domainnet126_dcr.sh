@@ -4,9 +4,10 @@ shopt -s nullglob
 source tools/lib/dcr_timing.sh
 
 # DCR-SFDA on one DomainNet-126 transfer task.
-# Usage: DATA_DIR=/path/to/data bash tools/run_domainnet126_dcr.sh 2020 CP
+# Usage: DATA_DIR=/path/to/data bash tools/run_domainnet126_dcr.sh 2020 CP uniform_locked_arg
 experiment_seed="${1:-2020}"
 task="${2:-CP}"
+profile="${3:-delayed}"
 domain_keys=(C P R S)
 domain_names=(clipart painting real sketch)
 
@@ -29,15 +30,31 @@ case "$task" in
     ;;
 esac
 
+case "$profile" in
+  delayed)
+    dcm_credit_mode="delayed"
+    dcm_method="dcr_memory_domainnet126_rankadaptive_seed${experiment_seed}"
+    handoff_source="output/dcr_domainnet126_rankadaptive_seed${experiment_seed}_${task}"
+    method_name="dcr_domainnet126_rankadaptive_seed${experiment_seed}"
+    ;;
+  uniform_locked_arg)
+    dcm_credit_mode="uniform"
+    dcm_method="dcr_memory_uniform_domainnet126_rankadaptive_seed${experiment_seed}"
+    handoff_source="output/dcr_domainnet126_uniform_locked_arg_rankadaptive_seed${experiment_seed}_${task}"
+    method_name="dcr_domainnet126_uniform_locked_arg_rankadaptive_seed${experiment_seed}"
+    ;;
+  *)
+    echo "Profile must be delayed or uniform_locked_arg" >&2
+    exit 1
+    ;;
+esac
+
 data_root="${DATA_DIR:-/home/sfda/data}"
 target_list="data/domainnet126/${domain_names[$target_index]}_list.txt"
 source_checkpoint="source/uda/domainnet126/${domain_keys[$source_index]}/best_${domain_names[$source_index]}_2020.pth"
-dcm_method="dcr_memory_domainnet126_rankadaptive_seed${experiment_seed}"
 dcm_run_dir="output/uda/domainnet126/${task}/${dcm_method}"
 dcm_state="${dcm_run_dir}/dcr_memory_state.pt"
-handoff_source="output/dcr_domainnet126_rankadaptive_seed${experiment_seed}_${task}"
 handoff_source_dir="${handoff_source}/uda/domainnet126/${domain_keys[$source_index]}"
-method_name="dcr_domainnet126_rankadaptive_seed${experiment_seed}"
 run_dir="output/uda/domainnet126/${task}/${method_name}"
 timing_file="${run_dir}/stage_timing.csv"
 
@@ -85,7 +102,7 @@ fi
 dcr_timing_init "$timing_file"
 
 if [ -f "$dcm_state" ]; then
-  echo "==> [${task}] Reusing DCR memory: ${dcm_state}"
+  echo "==> [${task}] Reusing ${dcm_credit_mode} DCR memory: ${dcm_state}"
   if ! dcr_timing_has_stage "$timing_file" stage1; then
     dcr_timing_record "$timing_file" stage1 NA true NA NA
   fi
@@ -95,7 +112,7 @@ else
     echo "Move that directory aside before rebuilding" >&2
     exit 1
   fi
-  echo "==> [${task}] Stage 1/2: DCM rank-adaptive alignment, 15 epochs"
+  echo "==> [${task}] Stage 1/2: ${dcm_credit_mode} DCM rank-adaptive alignment, 15 epochs"
   stage1_started="$(date +%s)"
   stage1_started_iso="$(date '+%Y-%m-%dT%H:%M:%S%z')"
   python image_target_of_oh_vs.py \
@@ -105,6 +122,7 @@ else
     SETTING.S "$source_index" SETTING.T "$target_index" \
     SETTING.SEED "$experiment_seed" \
     ACTIVE.ADAPTATION_LIST "" \
+    DCR_MEMORY.CREDIT_MODE "$dcm_credit_mode" \
     "${data_override[@]}"
   stage1_finished="$(date +%s)"
   stage1_finished_iso="$(date '+%Y-%m-%dT%H:%M:%S%z')"
@@ -122,6 +140,16 @@ for artifact in "$dcm_state" \
     exit 1
   fi
 done
+dcm_logs=("$dcm_run_dir"/*.txt)
+if [ "${#dcm_logs[@]}" -ne 1 ]; then
+  echo "Expected one ${task} DCM log in ${dcm_run_dir}, found ${#dcm_logs[@]}" >&2
+  exit 1
+fi
+if ! grep -q "alignment_mode=rank_adaptive" "${dcm_logs[0]}" \
+  || ! grep -q "credit_mode=${dcm_credit_mode}" "${dcm_logs[0]}"; then
+  echo "${task} DCM log does not match profile=${profile}" >&2
+  exit 1
+fi
 
 # `wc -l` counts newline characters and undercounts DomainNet list files whose
 # final record has no trailing newline.  Count records instead so this matches
@@ -149,7 +177,7 @@ cp -f "${dcm_run_dir}/target_B.pt" "${handoff_source_dir}/source_B.pt"
 cp -f "${dcm_run_dir}/target_C.pt" "${handoff_source_dir}/source_C.pt"
 
 echo "==> [${task}] Stage 2/2: DCR residual refinement, 4 cycles x 4 epochs"
-echo "==> DCM=delayed; CLM=locked; ARG=task_supported; passes=31"
+echo "==> profile=${profile}; DCM=${dcm_credit_mode}; CLM=locked; ARG=task_supported; passes=31"
 echo "==> Conflict hard admission=0; cumulative agreement=True; VLM adaptive=True"
 echo "==> target_gt_affects_training=False"
 
@@ -171,7 +199,7 @@ python image_target_of_oh_vs.py \
   DCR.SOFT_REPLACEMENT_MODE task_supported \
   DCR.MEMORY_WRITE_MODE locked \
   DCR.CUMULATIVE_AGREEMENT_MASK True \
-  DCR.CREDIT_MODE delayed \
+  DCR.CREDIT_MODE "$dcm_credit_mode" \
   DCR.FEEDBACK_MODE agreement_temporal \
   "${data_override[@]}"
 stage2_finished="$(date +%s)"
@@ -192,6 +220,10 @@ if [ "$(grep -c "Task: ${task}" "$latest_log")" -ne 16 ]; then
 fi
 if ! grep -q "DCR asymmetric residual guidance: cycle=4" "$latest_log"; then
   echo "${task} did not execute DCR through cycle 4" >&2
+  exit 1
+fi
+if ! grep -q "DCR refinement: enabled=True;.*soft_replacement_mode=task_supported;.*memory_write_mode=locked; credit_mode=${dcm_credit_mode};" "$latest_log"; then
+  echo "${task} Stage-2 log does not match profile=${profile}" >&2
   exit 1
 fi
 for checkpoint in target_F.pt target_B.pt target_C.pt refined_credit_state.pt; do

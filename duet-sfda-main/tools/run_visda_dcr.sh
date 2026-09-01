@@ -6,12 +6,30 @@ source tools/lib/dcr_timing.sh
 # Stable DCR-SFDA protocol for VisDA-C.
 # DCM uses 15 epochs; CLM+ARG then use 8 cycles x 4 epochs.
 experiment_seed="${1:-2020}"
-dcm_method="dcr_memory_visda_rankadaptive_seed${experiment_seed}"
+profile="${2:-delayed}"
+
+case "$profile" in
+  delayed)
+    dcm_credit_mode="delayed"
+    dcm_method="dcr_memory_visda_rankadaptive_seed${experiment_seed}"
+    handoff_source="output/dcr_visda_rankadaptive_seed${experiment_seed}"
+    method_name="dcr_visda_rankadaptive_seed${experiment_seed}"
+    ;;
+  uniform_locked_arg)
+    dcm_credit_mode="uniform"
+    dcm_method="dcr_memory_uniform_visda_rankadaptive_seed${experiment_seed}"
+    handoff_source="output/dcr_visda_uniform_locked_arg_rankadaptive_seed${experiment_seed}"
+    method_name="dcr_visda_uniform_locked_arg_rankadaptive_seed${experiment_seed}"
+    ;;
+  *)
+    echo "Profile must be delayed or uniform_locked_arg" >&2
+    exit 1
+    ;;
+esac
+
 dcm_run_dir="output/uda/VISDA-C/TV/${dcm_method}"
 dcm_state="${dcm_run_dir}/dcr_memory_state.pt"
-handoff_source="output/dcr_visda_rankadaptive_seed${experiment_seed}"
 handoff_source_dir="${handoff_source}/uda/VISDA-C/T"
-method_name="dcr_visda_rankadaptive_seed${experiment_seed}"
 run_dir="output/uda/VISDA-C/TV/${method_name}"
 timing_file="${run_dir}/stage_timing.csv"
 
@@ -32,7 +50,7 @@ fi
 dcr_timing_init "$timing_file"
 
 if [ -f "$dcm_state" ]; then
-  echo "==> Reusing rank-adaptive DCR memory: ${dcm_state}"
+  echo "==> Reusing ${dcm_credit_mode} rank-adaptive DCR memory: ${dcm_state}"
   if ! dcr_timing_has_stage "$timing_file" stage1; then
     dcr_timing_record "$timing_file" stage1 NA true NA NA
   fi
@@ -42,7 +60,7 @@ else
     echo "Move that partial directory before rebuilding VisDA-C DCM" >&2
     exit 1
   fi
-  echo "==> Stage 1/2: building VisDA-C rank-adaptive DCM for 15 epochs"
+  echo "==> Stage 1/2: building VisDA-C ${dcm_credit_mode} rank-adaptive DCM for 15 epochs"
   stage1_started="$(date +%s)"
   stage1_started_iso="$(date '+%Y-%m-%dT%H:%M:%S%z')"
   python image_target_of_oh_vs.py \
@@ -50,7 +68,8 @@ else
     CKPT_DIR . SETTING.OUTPUT_SRC source \
     MODEL.METHOD "$dcm_method" \
     SETTING.S 0 SETTING.T 1 SETTING.SEED "$experiment_seed" \
-    ACTIVE.ADAPTATION_LIST ""
+    ACTIVE.ADAPTATION_LIST "" \
+    DCR_MEMORY.CREDIT_MODE "$dcm_credit_mode"
   stage1_finished="$(date +%s)"
   stage1_finished_iso="$(date '+%Y-%m-%dT%H:%M:%S%z')"
   dcr_timing_record "$timing_file" stage1 \
@@ -67,6 +86,16 @@ for artifact in "$dcm_state" \
     exit 1
   fi
 done
+dcm_logs=("$dcm_run_dir"/*.txt)
+if [ "${#dcm_logs[@]}" -ne 1 ]; then
+  echo "Expected one VisDA-C DCM log in ${dcm_run_dir}, found ${#dcm_logs[@]}" >&2
+  exit 1
+fi
+if ! grep -q "alignment_mode=rank_adaptive" "${dcm_logs[0]}" \
+  || ! grep -q "credit_mode=${dcm_credit_mode}" "${dcm_logs[0]}"; then
+  echo "VisDA-C DCM log does not match profile=${profile}" >&2
+  exit 1
+fi
 
 full_samples=$(awk 'END {print NR}' data/VISDA-C/validation_list.txt)
 if [ "$full_samples" -ne 55388 ]; then
@@ -110,6 +139,7 @@ cp -f "${dcm_run_dir}/target_F.pt" "${handoff_source_dir}/source_F.pt"
 cp -f "${dcm_run_dir}/target_B.pt" "${handoff_source_dir}/source_B.pt"
 cp -f "${dcm_run_dir}/target_C.pt" "${handoff_source_dir}/source_C.pt"
 
+echo "==> Profile=${profile}; DCM credit=${dcm_credit_mode}"
 echo "==> Rank-adaptive DCM ready: 15 epochs"
 echo "==> CLM+ARG: 8 cycles x 4 epochs"
 echo "==> Conflict hard admission: 0%"
@@ -137,7 +167,7 @@ python image_target_of_oh_vs.py \
   DCR.CREDIT_DECAY 0.9 \
   DCR.CREDIT_ETA 4.0 \
   DCR.MEMORY_UPDATE_RATE 0.5 \
-  DCR.CREDIT_MODE delayed \
+  DCR.CREDIT_MODE "$dcm_credit_mode" \
   DCR.FEEDBACK_MODE agreement_temporal
 stage2_finished="$(date +%s)"
 stage2_finished_iso="$(date '+%Y-%m-%dT%H:%M:%S%z')"
@@ -157,6 +187,10 @@ if [ "$(grep -c "Task: TV" "$latest_log")" -ne 32 ]; then
 fi
 if ! grep -q "DCR asymmetric residual guidance: cycle=8" "$latest_log"; then
   echo "DCR residual guidance was not active through cycle 8" >&2
+  exit 1
+fi
+if ! grep -q "DCR refinement: enabled=True;.*soft_replacement_mode=task_supported;.*memory_write_mode=locked; credit_mode=${dcm_credit_mode};" "$latest_log"; then
+  echo "VisDA-C Stage-2 log does not match profile=${profile}" >&2
   exit 1
 fi
 for checkpoint in target_F.pt target_B.pt target_C.pt refined_credit_state.pt; do

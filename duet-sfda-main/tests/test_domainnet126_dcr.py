@@ -28,6 +28,9 @@ class DomainNet126DcrSfdaTest(unittest.TestCase):
         self.assertIn("DCR.MEMORY_WRITE_MODE locked", script)
         self.assertIn("DCR.SOFT_REPLACEMENT_MODE task_supported", script)
         self.assertIn("DCR.CONFLICT_HARD_FRACTION 0.0", script)
+        self.assertIn("uniform_locked_arg", script)
+        self.assertIn('DCR_MEMORY.CREDIT_MODE "$dcm_credit_mode"', script)
+        self.assertIn('DCR.CREDIT_MODE "$dcm_credit_mode"', script)
         self.assertIn("TEST.MAX_EPOCH 4 TEST.INTERVAL 4", script)
         self.assertIn("ACTIVE.CYCLE 4", script)
         self.assertIn("passes=31", script)
@@ -36,6 +39,8 @@ class DomainNet126DcrSfdaTest(unittest.TestCase):
         script = Path("tools/run_domainnet126_dcr_all.sh").read_text()
         self.assertIn("tasks=(CP CR CS PC PR PS RC RP RS SC SP SR)", script)
         self.assertIn("already complete; skipping", script)
+        self.assertIn("uniform_locked_arg", script)
+        self.assertIn('if [ -n "$equivalent_method_name" ]', script)
 
     def test_domainnet_dcm_config_is_explicit(self):
         config = Path(

@@ -127,6 +127,11 @@ class DcrRefinementTest(unittest.TestCase):
             self.assertIn("DCR.CONFLICT_HARD_FRACTION 0.0", script)
             self.assertIn("DCR.SOFT_REPLACEMENT_MODE task_supported", script)
             self.assertIn("DCR.MEMORY_WRITE_MODE locked", script)
+            self.assertIn("uniform_locked_arg", script)
+            self.assertIn(
+                'DCR_MEMORY.CREDIT_MODE "$dcm_credit_mode"', script
+            )
+            self.assertIn('DCR.CREDIT_MODE "$dcm_credit_mode"', script)
             self.assertIn("rankadaptive", script)
             self.assertIn("stage_timing.csv", script)
             self.assertIn("dcr_timing_record", script)
