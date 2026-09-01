@@ -15,3 +15,15 @@ arg_none,AC,72.92,72.92,16,16,output/uda/office-home/AC/plmatch_dac_handoff_dcr_
 arg_none,CP,91.17,91.17,16,16,output/uda/office-home/CP/plmatch_dac_handoff_dcr_sfda_ablation_arg_none_office_home_seed2020/plmatch_260826_130042.txt
 arg_none,PR,91.0,90.84,16,16,output/uda/office-home/PR/plmatch_dac_handoff_dcr_sfda_ablation_arg_none_office_home_seed2020/plmatch_260826_130828.txt
 arg_none,RA,83.23,83.15,16,16,output/uda/office-home/RA/plmatch_dac_handoff_dcr_sfda_ablation_arg_none_office_home_seed2020/plmatch_260826_133421.txt
+uniform_writable,AC,74.27,74.23,16,16,output/uda/office-home/AC/dcr_ablation_uniform_writable_office_home_rankadaptive_seed2020/dcr_260901_040223.txt
+uniform_writable,CP,91.69,91.53,16,16,output/uda/office-home/CP/dcr_ablation_uniform_writable_office_home_rankadaptive_seed2020/dcr_260901_041713.txt
+uniform_writable,PR,91.44,91.37,16,16,output/uda/office-home/PR/dcr_ablation_uniform_writable_office_home_rankadaptive_seed2020/dcr_260901_045648.txt
+uniform_writable,RA,84.34,84.26,16,16,output/uda/office-home/RA/dcr_ablation_uniform_writable_office_home_rankadaptive_seed2020/dcr_260901_052938.txt
+uniform_writable_arg_none,AC,72.85,72.78,16,16,output/uda/office-home/AC/dcr_ablation_uniform_writable_arg_none_office_home_rankadaptive_seed2020/dcr_260901_053619.txt
+uniform_writable_arg_none,CP,91.15,91.08,16,16,output/uda/office-home/CP/dcr_ablation_uniform_writable_arg_none_office_home_rankadaptive_seed2020/dcr_260901_054333.txt
+uniform_writable_arg_none,PR,91.14,90.89,16,16,output/uda/office-home/PR/dcr_ablation_uniform_writable_arg_none_office_home_rankadaptive_seed2020/dcr_260901_055110.txt
+uniform_writable_arg_none,RA,83.23,83.11,16,16,output/uda/office-home/RA/dcr_ablation_uniform_writable_arg_none_office_home_rankadaptive_seed2020/dcr_260901_061657.txt
+uniform_arg_none,AC,72.85,72.78,16,16,output/uda/office-home/AC/dcr_ablation_uniform_arg_none_office_home_rankadaptive_seed2020/dcr_260901_063907.txt
+uniform_arg_none,CP,91.15,91.08,16,16,output/uda/office-home/CP/dcr_ablation_uniform_arg_none_office_home_rankadaptive_seed2020/dcr_260901_064623.txt
+uniform_arg_none,PR,91.14,90.89,16,16,output/uda/office-home/PR/dcr_ablation_uniform_arg_none_office_home_rankadaptive_seed2020/dcr_260901_065400.txt
+uniform_arg_none,RA,83.23,83.11,16,16,output/uda/office-home/RA/dcr_ablation_uniform_arg_none_office_home_rankadaptive_seed2020/dcr_260901_071941.txt

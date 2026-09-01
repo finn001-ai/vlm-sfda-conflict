@@ -1,19 +1,33 @@
-# DAC交接框架论文材料
+# DCR-SFDA论文材料
 
-- `manuscript_zh.md`：中文完整审阅稿；
-- `references.bib`：正文引用库，优先采用出版社、会议论文集、PMLR、CVF和DOI元数据；
-- `citation_audit.md`：引用核验范围和仍需人工复查的项目。
+- `manuscript_zh.md`：当前中文证据版稿件。
+- `references.bib`：正文引用库。
+- `citation_audit.md`：引用核验记录。
+- `data/dcr_sfda_ablation_summary_seed2020.csv`：Office-Home四任务交互消融原始汇总。
+- `dcr_sfda_ablation_audit_seed2020.md`：消融语义和可支持结论审计。
+- `method_implementation_consistency_audit.md`：当前方法与代码路径核对。
 
-正文使用 Pandoc/Citeproc 形式的引用键，例如 `[@liang2020shot]`。英文投稿时可继续沿用同一份 BibTeX，再按目标期刊模板转换样式。
+当前统一候选配置为：
 
-当前方法在主文中统一写作“本文两阶段方法”或“DAC交接框架”。DUET只作为相关工作、直接基线及第二阶段思想来源出现；`plmatch.py`仅在复现说明中作为代码文件名出现。
+```text
+uniform + locked + task_supported ARG + rank_adaptive
+```
 
-## Office-Home固定协议
+它对应两阶段DCR-SFDA：第一阶段维护Task/VLM等权全分布共识记忆，并用一致性和时间稳定性调节写入速度；第二阶段保留F/B/C与记忆，对冲突锁定记忆，仅在历史支持Task时替换未准入冲突的软目标。
 
-- 本文完整方法：DAC 15 epochs + 周期式精炼5 cycles × 4 epochs，共35次任务模型目标集遍历；
-- 12个迁移任务使用同一设置，作者已确认；正式脚本会自动检查`Cycle 5/5`和`handoff_target_passes=20`；
-- 等passes单阶段对照：从同一源F/B/C直接运行7 cycles × 5 epochs，共35 passes；
-- 单阶段对照脚本：`duet-sfda-main/tools/run_office_home_single_stage_refinement35_all.sh`；
-- 所有主结果均使用预先确定的最终检查点，不使用目标标签选择中间峰值。
+当前证据状态：
 
-原始CSV与日志可以保留内部实现名称；论文正文、图表和对外结果表统一使用功能名称。
+- Office-Home预设四任务环完成，固定最终平均85.43%，峰值平均85.47%。
+- VisDA-C完成，峰值91.97%，固定最终91.94%。
+- Office-Home全12任务和DomainNet-126当前配置全量结果待补充。
+- Office-Home 85.36%/85.25%、VisDA-C 92.05%/92.03%属于历史延迟信用变体，不是当前统一配置结果。
+
+正式全量入口必须显式传入 `uniform_locked_arg`，因为脚本默认参数仍为历史 `delayed`：
+
+```bash
+bash tools/run_office_home_dcr_all.sh 2020 uniform_locked_arg
+bash tools/run_visda_dcr.sh 2020 uniform_locked_arg
+bash tools/run_domainnet126_dcr_all.sh 2020 uniform_locked_arg
+```
+
+正文使用Pandoc/Citeproc引用键，例如 `[@liang2020shot]`。原始日志可以保留开发期文件名，但论文正文和图表统一使用功能名称。
