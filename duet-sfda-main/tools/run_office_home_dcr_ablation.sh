@@ -5,7 +5,8 @@ shopt -s nullglob
 # Office-Home component ablations for DCR-SFDA.
 # Usage: bash tools/run_office_home_dcr_ablation.sh SEED TASK VARIANT
 # Core variants: full, dcm_uniform, clm_writable, arg_none.
-# Interaction variants: uniform_writable, uniform_writable_arg_none.
+# Interaction variants: uniform_writable, uniform_writable_arg_none,
+# uniform_arg_none (uniform credit + locked memory - ARG).
 # Focused variants: dcm_no_history, dcm_no_temporal, clm_frozen,
 # arg_all_conflicts, no_cumulative, freeze_vlm.
 
@@ -15,7 +16,7 @@ variant="${3:-}"
 
 if [ -z "$variant" ]; then
   echo "Usage: $0 SEED TASK VARIANT" >&2
-  echo "Variants: full dcm_uniform clm_writable arg_none uniform_writable uniform_writable_arg_none dcm_no_history dcm_no_temporal clm_frozen arg_all_conflicts no_cumulative freeze_vlm" >&2
+  echo "Variants: full dcm_uniform clm_writable arg_none uniform_writable uniform_writable_arg_none uniform_arg_none dcm_no_history dcm_no_temporal clm_frozen arg_all_conflicts no_cumulative freeze_vlm" >&2
   exit 1
 fi
 
@@ -84,6 +85,11 @@ case "$variant" in
     dcm_tag="uniform"
     dcm_credit_mode="uniform"
     memory_write_mode="writable"
+    soft_replacement_mode="none"
+    ;;
+  uniform_arg_none)
+    dcm_tag="uniform"
+    dcm_credit_mode="uniform"
     soft_replacement_mode="none"
     ;;
   no_cumulative)

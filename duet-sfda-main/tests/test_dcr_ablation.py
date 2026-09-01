@@ -66,6 +66,7 @@ class DcrSfdaAblationTest(unittest.TestCase):
         self.assertIn('soft_replacement_mode="none"', script)
         self.assertIn("uniform_writable)", script)
         self.assertIn("uniform_writable_arg_none)", script)
+        self.assertIn("uniform_arg_none)", script)
         self.assertIn(
             'DCR.MEMORY_WRITE_MODE "$memory_write_mode"',
             script,
