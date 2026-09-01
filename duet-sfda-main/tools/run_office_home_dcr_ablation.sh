@@ -5,6 +5,7 @@ shopt -s nullglob
 # Office-Home component ablations for DCR-SFDA.
 # Usage: bash tools/run_office_home_dcr_ablation.sh SEED TASK VARIANT
 # Core variants: full, dcm_uniform, clm_writable, arg_none.
+# Interaction variants: uniform_writable, uniform_writable_arg_none.
 # Focused variants: dcm_no_history, dcm_no_temporal, clm_frozen,
 # arg_all_conflicts, no_cumulative, freeze_vlm.
 
@@ -14,7 +15,7 @@ variant="${3:-}"
 
 if [ -z "$variant" ]; then
   echo "Usage: $0 SEED TASK VARIANT" >&2
-  echo "Variants: full dcm_uniform dcm_no_history dcm_no_temporal clm_writable clm_frozen arg_none arg_all_conflicts no_cumulative freeze_vlm" >&2
+  echo "Variants: full dcm_uniform clm_writable arg_none uniform_writable uniform_writable_arg_none dcm_no_history dcm_no_temporal clm_frozen arg_all_conflicts no_cumulative freeze_vlm" >&2
   exit 1
 fi
 
@@ -74,6 +75,17 @@ case "$variant" in
   arg_all_conflicts)
     soft_replacement_mode="all_conflicts"
     ;;
+  uniform_writable)
+    dcm_tag="uniform"
+    dcm_credit_mode="uniform"
+    memory_write_mode="writable"
+    ;;
+  uniform_writable_arg_none)
+    dcm_tag="uniform"
+    dcm_credit_mode="uniform"
+    memory_write_mode="writable"
+    soft_replacement_mode="none"
+    ;;
   no_cumulative)
     cumulative_agreement="False"
     ;;
@@ -88,11 +100,15 @@ esac
 
 if [ "$dcm_tag" = "full" ]; then
   dcm_method="dcr_memory_office_home_rankadaptive_seed${experiment_seed}"
+  equivalent_dcm_method="dcr_memory_office_home_full_seed${experiment_seed}"
 else
   dcm_method="dcr_memory_ablation_${dcm_tag}_office_home_rankadaptive_seed${experiment_seed}"
+  equivalent_dcm_method="dcr_memory_ablation_${dcm_tag}_office_home_seed${experiment_seed}"
 fi
 dcm_run_dir="output/uda/office-home/${task}/${dcm_method}"
 dcm_state="${dcm_run_dir}/dcr_memory_state.pt"
+equivalent_dcm_run_dir="output/uda/office-home/${task}/${equivalent_dcm_method}"
+equivalent_dcm_state="${equivalent_dcm_run_dir}/dcr_memory_state.pt"
 handoff_source="output/dcr_ablation_${variant}_office_home_rankadaptive_seed${experiment_seed}_${task}"
 handoff_source_dir="${handoff_source}/uda/office-home/${domain_keys[$source_index]}"
 method_name="dcr_ablation_${variant}_office_home_rankadaptive_seed${experiment_seed}"
@@ -112,7 +128,16 @@ for required_path in \
 done
 
 if [ -f "$dcm_state" ]; then
+  dcm_weight_origin="rank_adaptive_dcm_run"
   echo "==> [${task}/${variant}] Reusing DCR memory: ${dcm_state}"
+elif [ -f "$equivalent_dcm_state" ] \
+  && compgen -G "$equivalent_dcm_run_dir/*.txt" > /dev/null \
+  && grep -q "alignment_mode=batch_iic" "$equivalent_dcm_run_dir"/*.txt \
+  && grep -q "diversity_delta=0.100" "$equivalent_dcm_run_dir"/*.txt; then
+  dcm_run_dir="$equivalent_dcm_run_dir"
+  dcm_state="$equivalent_dcm_state"
+  dcm_weight_origin="rank_equivalent_historical_dcm"
+  echo "==> [${task}/${variant}] Reusing rank-equivalent historical DCM: ${dcm_state}"
 else
   if [ -d "$dcm_run_dir" ] && compgen -G "$dcm_run_dir/*.txt" > /dev/null; then
     echo "Partial DCM run exists but state is missing: $dcm_run_dir" >&2
@@ -130,6 +155,7 @@ else
     DCR_MEMORY.CREDIT_MODE "$dcm_credit_mode" \
     DCR_MEMORY.FEEDBACK_MODE "$dcm_feedback_mode" \
     DCR_MEMORY.CREDIT_DECAY "$dcm_decay"
+  dcm_weight_origin="rank_adaptive_dcm_run"
 fi
 
 if [ ! -f "$dcm_state" ]; then
@@ -149,7 +175,6 @@ done
 dcm_weight_f="${dcm_run_dir}/target_F.pt"
 dcm_weight_b="${dcm_run_dir}/target_B.pt"
 dcm_weight_c="${dcm_run_dir}/target_C.pt"
-dcm_weight_origin="rank_adaptive_dcm_run"
 
 target_samples=$(awk 'END {print NR}' "$target_list")
 python - "$dcm_state" "$target_samples" "$task" "$variant" <<'PY'

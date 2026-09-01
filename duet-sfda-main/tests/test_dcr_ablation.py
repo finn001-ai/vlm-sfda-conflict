@@ -64,6 +64,8 @@ class DcrSfdaAblationTest(unittest.TestCase):
         self.assertIn('memory_write_mode="writable"', script)
         self.assertIn("arg_none)", script)
         self.assertIn('soft_replacement_mode="none"', script)
+        self.assertIn("uniform_writable)", script)
+        self.assertIn("uniform_writable_arg_none)", script)
         self.assertIn(
             'DCR.MEMORY_WRITE_MODE "$memory_write_mode"',
             script,
@@ -84,6 +86,17 @@ class DcrSfdaAblationTest(unittest.TestCase):
             "variants=(dcm_uniform clm_writable arg_none)",
             script,
         )
+
+    def test_interaction_screen_tests_optimized_base_with_and_without_arg(self):
+        script = Path(
+            "tools/run_office_home_dcr_interaction_ablation.sh"
+        ).read_text()
+        self.assertIn("tasks=(AC CP PR RA)", script)
+        self.assertIn(
+            "variants=(uniform_writable uniform_writable_arg_none)",
+            script,
+        )
+        self.assertIn("already complete; skipping", script)
 
     def test_full_ablation_runner_covers_all_tasks_and_resumes(self):
         script = Path(
