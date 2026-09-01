@@ -10,7 +10,7 @@ variants=(dcm_uniform clm_writable arg_none)
 
 for variant in "${variants[@]}"; do
   for task in "${tasks[@]}"; do
-    run_dir="output/uda/office-home/${task}/dcr_ablation_${variant}_office_home_seed${experiment_seed}"
+    run_dir="output/uda/office-home/${task}/dcr_ablation_${variant}_office_home_samplewise_seed${experiment_seed}"
     logs=("$run_dir"/*.txt)
     if [ -f "${run_dir}/target_F.pt" ] \
       && [ "${#logs[@]}" -eq 1 ] \

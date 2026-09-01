@@ -1,4 +1,6 @@
 import math
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -9,6 +11,28 @@ from src.utils.dcr_refinement import credit_preserving_refinement_step
 
 
 class DcrRefinementTest(unittest.TestCase):
+    def test_stage_timer_records_independent_and_total_wall_time(self):
+        with tempfile.TemporaryDirectory() as directory:
+            timing_file = Path(directory) / "stage_timing.csv"
+            subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    (
+                        "source tools/lib/dcr_timing.sh; "
+                        f"dcr_timing_init '{timing_file}'; "
+                        f"dcr_timing_record '{timing_file}' stage1 5 false s1 e1; "
+                        f"dcr_timing_record '{timing_file}' stage2 12 false s2 e2; "
+                        f"dcr_timing_record_total '{timing_file}'"
+                    ),
+                ],
+                check=True,
+            )
+            rows = timing_file.read_text().splitlines()
+            self.assertIn("stage1,5,00:00:05,false,s1,e1", rows)
+            self.assertIn("stage2,12,00:00:12,false,s2,e2", rows)
+            self.assertIn("total,17,00:00:17,false,s1,e2", rows)
+
     def test_clm_locks_conflict_memory(self):
         task = torch.tensor([[0.90, 0.10], [0.80, 0.20]])
         vlm = torch.tensor([[0.10, 0.90], [0.20, 0.80]])
@@ -83,6 +107,9 @@ class DcrRefinementTest(unittest.TestCase):
             self.assertIn("DCR.CONFLICT_HARD_FRACTION 0.0", script)
             self.assertIn("DCR.SOFT_REPLACEMENT_MODE task_supported", script)
             self.assertIn("DCR.MEMORY_WRITE_MODE locked", script)
+            self.assertIn("samplewise", script)
+            self.assertIn("stage_timing.csv", script)
+            self.assertIn("dcr_timing_record", script)
             self.assertIn(schedule, script)
 
 

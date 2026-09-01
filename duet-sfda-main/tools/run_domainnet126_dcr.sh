@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 shopt -s nullglob
+source tools/lib/dcr_timing.sh
 
 # DCR-SFDA on one DomainNet-126 transfer task.
 # Usage: DATA_DIR=/path/to/data bash tools/run_domainnet126_dcr.sh 2020 CP
@@ -38,6 +39,7 @@ handoff_source="output/dcr_domainnet126_samplewise_seed${experiment_seed}_${task
 handoff_source_dir="${handoff_source}/uda/domainnet126/${domain_keys[$source_index]}"
 method_name="dcr_domainnet126_samplewise_seed${experiment_seed}"
 run_dir="output/uda/domainnet126/${task}/${method_name}"
+timing_file="${run_dir}/stage_timing.csv"
 
 for required_path in \
   "$target_list" \
@@ -75,8 +77,18 @@ if [ -n "${DATA_DIR:-}" ]; then
   data_override=(DATA_DIR "$DATA_DIR")
 fi
 
+if [ -d "$run_dir" ] && compgen -G "$run_dir/*.txt" > /dev/null; then
+  echo "Refusing to mix logs with an existing run: $run_dir" >&2
+  echo "Move the existing directory aside before rerunning" >&2
+  exit 1
+fi
+dcr_timing_init "$timing_file"
+
 if [ -f "$dcm_state" ]; then
   echo "==> [${task}] Reusing DCR memory: ${dcm_state}"
+  if ! dcr_timing_has_stage "$timing_file" stage1; then
+    dcr_timing_record "$timing_file" stage1 NA true NA NA
+  fi
 else
   if [ -d "$dcm_run_dir" ] && compgen -G "$dcm_run_dir/*.txt" > /dev/null; then
     echo "Partial DomainNet DCM run exists but state is missing: $dcm_run_dir" >&2
@@ -84,6 +96,8 @@ else
     exit 1
   fi
   echo "==> [${task}] Stage 1/2: DCM samplewise memory alignment, 15 epochs"
+  stage1_started="$(date +%s)"
+  stage1_started_iso="$(date '+%Y-%m-%dT%H:%M:%S%z')"
   python image_target_of_oh_vs.py \
     --cfg cfgs/domainnet126/dcr.yaml \
     CKPT_DIR . SETTING.OUTPUT_SRC source \
@@ -92,6 +106,11 @@ else
     SETTING.SEED "$experiment_seed" \
     ACTIVE.ADAPTATION_LIST "" \
     "${data_override[@]}"
+  stage1_finished="$(date +%s)"
+  stage1_finished_iso="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+  dcr_timing_record "$timing_file" stage1 \
+    "$((stage1_finished - stage1_started))" false \
+    "$stage1_started_iso" "$stage1_finished_iso"
 fi
 
 for artifact in "$dcm_state" \
@@ -124,12 +143,6 @@ if not torch.isfinite(memory).all():
 print(f"==> [{sys.argv[3]}] DCM state verified: samples={expected[0]}; classes=126")
 PY
 
-if [ -d "$run_dir" ] && compgen -G "$run_dir/*.txt" > /dev/null; then
-  echo "Refusing to mix logs with an existing run: $run_dir" >&2
-  echo "Move the existing directory aside before rerunning" >&2
-  exit 1
-fi
-
 mkdir -p "$handoff_source_dir"
 cp -f "${dcm_run_dir}/target_F.pt" "${handoff_source_dir}/source_F.pt"
 cp -f "${dcm_run_dir}/target_B.pt" "${handoff_source_dir}/source_B.pt"
@@ -140,6 +153,8 @@ echo "==> DCM=delayed; CLM=locked; ARG=task_supported; passes=31"
 echo "==> Conflict hard admission=0; cumulative agreement=True; VLM adaptive=True"
 echo "==> target_gt_affects_training=False"
 
+stage2_started="$(date +%s)"
+stage2_started_iso="$(date '+%Y-%m-%dT%H:%M:%S%z')"
 python image_target_of_oh_vs.py \
   --cfg cfgs/domainnet126/dcr.yaml \
   CKPT_DIR . SETTING.OUTPUT_SRC "$handoff_source" \
@@ -159,6 +174,11 @@ python image_target_of_oh_vs.py \
   DCR.CREDIT_MODE delayed \
   DCR.FEEDBACK_MODE agreement_temporal \
   "${data_override[@]}"
+stage2_finished="$(date +%s)"
+stage2_finished_iso="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+dcr_timing_record "$timing_file" stage2 \
+  "$((stage2_finished - stage2_started))" false \
+  "$stage2_started_iso" "$stage2_finished_iso"
 
 logs=("$run_dir"/*.txt)
 if [ "${#logs[@]}" -ne 1 ]; then
@@ -184,3 +204,6 @@ done
 echo "==> [${task}] Final fixed checkpoint"
 grep "Cycle: 4/4" "$latest_log" | tail -n 1
 echo "==> [${task}] Full log: ${latest_log}"
+dcr_timing_record_total "$timing_file"
+echo "==> [${task}] Stage timing: ${timing_file}"
+column -s, -t "$timing_file" 2>/dev/null || cat "$timing_file"

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 shopt -s nullglob
+source tools/lib/dcr_timing.sh
 
 # Stable DCR-SFDA protocol for one Office-Home task.
 # Stage 1 builds delayed credit memory (DCM). Stage 2 protects conflicts with
@@ -29,16 +30,14 @@ case "$task" in
     ;;
 esac
 
-dcm_method="dcr_memory_office_home_full_seed${experiment_seed}"
+dcm_method="dcr_memory_office_home_samplewise_seed${experiment_seed}"
 dcm_run_dir="output/uda/office-home/${task}/${dcm_method}"
 dcm_state="${dcm_run_dir}/dcr_memory_state.pt"
-legacy_dcm_run_dir="output/uda/office-home/${task}/duet_delayed_agreement_credit_office_home_full_seed${experiment_seed}"
-legacy_dcm_state="${legacy_dcm_run_dir}/delayed_credit_state.pt"
-legacy_handoff_dir="output/dac_duet_handoff_uniform5_office_home_seed${experiment_seed}_${task}/uda/office-home/${domain_keys[$source_index]}"
-handoff_source="output/dcr_office_home_seed${experiment_seed}_${task}"
+handoff_source="output/dcr_office_home_samplewise_seed${experiment_seed}_${task}"
 handoff_source_dir="${handoff_source}/uda/office-home/${domain_keys[$source_index]}"
-method_name="dcr_office_home_full_seed${experiment_seed}"
+method_name="dcr_office_home_samplewise_seed${experiment_seed}"
 run_dir="output/uda/office-home/${task}/${method_name}"
+timing_file="${run_dir}/stage_timing.csv"
 target_list="data/office-home/${domain_names[$target_index]}_list.txt"
 
 for required_path in \
@@ -53,19 +52,27 @@ for required_path in \
   fi
 done
 
+if [ -d "$run_dir" ] && compgen -G "$run_dir/*.txt" > /dev/null; then
+  echo "Refusing to mix logs with an existing run: $run_dir" >&2
+  echo "Move the existing directory aside before rerunning" >&2
+  exit 1
+fi
+dcr_timing_init "$timing_file"
+
 if [ -f "$dcm_state" ]; then
-  echo "==> [${task}] Reusing DCR memory: ${dcm_state}"
-elif [ -f "$legacy_dcm_state" ]; then
-  dcm_run_dir="$legacy_dcm_run_dir"
-  dcm_state="$legacy_dcm_state"
-  echo "==> [${task}] Reusing legacy memory artifact: ${dcm_state}"
+  echo "==> [${task}] Reusing samplewise DCR memory: ${dcm_state}"
+  if ! dcr_timing_has_stage "$timing_file" stage1; then
+    dcr_timing_record "$timing_file" stage1 NA true NA NA
+  fi
 else
   if [ -d "$dcm_run_dir" ] && compgen -G "$dcm_run_dir/*.txt" > /dev/null; then
     echo "Partial DCM run exists but dcr_memory_state.pt is missing: $dcm_run_dir" >&2
     echo "Move that partial directory before rebuilding ${task} DCM" >&2
     exit 1
   fi
-  echo "==> [${task}] Building DCM for 15 epochs"
+  echo "==> [${task}] Stage 1/2: building samplewise DCM for 15 epochs"
+  stage1_started="$(date +%s)"
+  stage1_started_iso="$(date '+%Y-%m-%dT%H:%M:%S%z')"
   python image_target_of_oh_vs.py \
     --cfg cfgs/office-home/dcr.yaml \
     CKPT_DIR . SETTING.OUTPUT_SRC source \
@@ -73,6 +80,11 @@ else
     SETTING.S "$source_index" SETTING.T "$target_index" \
     SETTING.SEED "$experiment_seed" \
     ACTIVE.ADAPTATION_LIST ""
+  stage1_finished="$(date +%s)"
+  stage1_finished_iso="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+  dcr_timing_record "$timing_file" stage1 \
+    "$((stage1_finished - stage1_started))" false \
+    "$stage1_started_iso" "$stage1_finished_iso"
 fi
 
 if [ ! -f "$dcm_state" ]; then
@@ -80,30 +92,18 @@ if [ ! -f "$dcm_state" ]; then
   exit 1
 fi
 
-# The earlier uniform handoff copied the fixed DAC F/B/C checkpoint into a
-# source-shaped directory.  Some cloud cleanups retained that copy while
-# removing target_F/B/C from the original DAC directory.  Both locations are
-# byte-equivalent DAC-15 weights; never fall back to a post-DUET target model.
-if [ -f "${dcm_run_dir}/target_F.pt" ] \
-  && [ -f "${dcm_run_dir}/target_B.pt" ] \
-  && [ -f "${dcm_run_dir}/target_C.pt" ]; then
-  dcm_weight_f="${dcm_run_dir}/target_F.pt"
-  dcm_weight_b="${dcm_run_dir}/target_B.pt"
-  dcm_weight_c="${dcm_run_dir}/target_C.pt"
-  dcm_weight_origin="dcm_run"
-elif [ -f "${legacy_handoff_dir}/source_F.pt" ] \
-  && [ -f "${legacy_handoff_dir}/source_B.pt" ] \
-  && [ -f "${legacy_handoff_dir}/source_C.pt" ]; then
-  dcm_weight_f="${legacy_handoff_dir}/source_F.pt"
-  dcm_weight_b="${legacy_handoff_dir}/source_B.pt"
-  dcm_weight_c="${legacy_handoff_dir}/source_C.pt"
-  dcm_weight_origin="preserved_legacy_copy"
-else
-  echo "Missing ${task} DCM F/B/C weights in both supported locations:" >&2
-  echo "  ${dcm_run_dir}/target_{F,B,C}.pt" >&2
-  echo "  ${legacy_handoff_dir}/source_{F,B,C}.pt" >&2
-  exit 1
-fi
+for artifact in \
+  "${dcm_run_dir}/target_F.pt" \
+  "${dcm_run_dir}/target_B.pt" \
+  "${dcm_run_dir}/target_C.pt"; do
+  if [ ! -f "$artifact" ]; then
+    echo "Missing completed ${task} samplewise DCM artifact: $artifact" >&2
+    exit 1
+  fi
+done
+dcm_weight_f="${dcm_run_dir}/target_F.pt"
+dcm_weight_b="${dcm_run_dir}/target_B.pt"
+dcm_weight_c="${dcm_run_dir}/target_C.pt"
 
 target_samples=$(awk 'END {print NR}' "$target_list")
 python - "$dcm_state" "$target_samples" "$task" <<'PY'
@@ -125,21 +125,17 @@ if not torch.isfinite(memory).all():
 print(f"==> [{task}] Verified DCM: samples={memory.shape[0]}; classes={memory.shape[1]}")
 PY
 
-if [ -d "$run_dir" ] && compgen -G "$run_dir/*.txt" > /dev/null; then
-  echo "Refusing to mix logs with an existing run: $run_dir" >&2
-  echo "Move the existing directory aside before rerunning" >&2
-  exit 1
-fi
-
 mkdir -p "$handoff_source_dir"
 cp -f "$dcm_weight_f" "${handoff_source_dir}/source_F.pt"
 cp -f "$dcm_weight_b" "${handoff_source_dir}/source_B.pt"
 cp -f "$dcm_weight_c" "${handoff_source_dir}/source_C.pt"
 
-echo "==> [${task}] DCM ready; weight_origin=${dcm_weight_origin}"
+echo "==> [${task}] Samplewise DCM ready"
 echo "==> [${task}] CLM locks conflict memory; ARG corrects only Task-supported conflicts"
 echo "==> [${task}] Conflict hard admission: 0%; total target passes: 31"
 
+stage2_started="$(date +%s)"
+stage2_started_iso="$(date '+%Y-%m-%dT%H:%M:%S%z')"
 python image_target_of_oh_vs.py \
   --cfg cfgs/office-home/dcr.yaml \
   CKPT_DIR . SETTING.OUTPUT_SRC "$handoff_source" \
@@ -161,6 +157,11 @@ python image_target_of_oh_vs.py \
   DCR.MEMORY_UPDATE_RATE 0.5 \
   DCR.CREDIT_MODE delayed \
   DCR.FEEDBACK_MODE agreement_temporal
+stage2_finished="$(date +%s)"
+stage2_finished_iso="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+dcr_timing_record "$timing_file" stage2 \
+  "$((stage2_finished - stage2_started))" false \
+  "$stage2_started_iso" "$stage2_finished_iso"
 
 logs=("$run_dir"/*.txt)
 if [ "${#logs[@]}" -ne 1 ]; then
@@ -186,3 +187,6 @@ done
 echo "==> [${task}] Final fixed checkpoint"
 grep "Cycle: 4/4" "$latest_log" | tail -n 1
 echo "==> [${task}] Full log: ${latest_log}"
+dcr_timing_record_total "$timing_file"
+echo "==> [${task}] Stage timing: ${timing_file}"
+column -s, -t "$timing_file" 2>/dev/null || cat "$timing_file"

@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 shopt -s nullglob
+source tools/lib/dcr_timing.sh
 
 # Stable DCR-SFDA protocol for VisDA-C.
 # DCM uses 15 epochs; CLM+ARG then use 8 cycles x 4 epochs.
 experiment_seed="${1:-2020}"
-dcm_method="dcr_memory_visda_full_seed${experiment_seed}"
+dcm_method="dcr_memory_visda_samplewise_seed${experiment_seed}"
 dcm_run_dir="output/uda/VISDA-C/TV/${dcm_method}"
 dcm_state="${dcm_run_dir}/dcr_memory_state.pt"
-legacy_dcm_run_dir="output/uda/VISDA-C/TV/duet_delayed_agreement_credit_visda_full_seed${experiment_seed}"
-legacy_dcm_state="${legacy_dcm_run_dir}/delayed_credit_state.pt"
-handoff_source="output/dcr_visda_seed${experiment_seed}"
+handoff_source="output/dcr_visda_samplewise_seed${experiment_seed}"
 handoff_source_dir="${handoff_source}/uda/VISDA-C/T"
-method_name="dcr_visda_full_seed${experiment_seed}"
+method_name="dcr_visda_samplewise_seed${experiment_seed}"
 run_dir="output/uda/VISDA-C/TV/${method_name}"
+timing_file="${run_dir}/stage_timing.csv"
 
 for required_path in \
   data/VISDA-C/validation_list.txt \
@@ -24,25 +24,38 @@ for required_path in \
   fi
 done
 
+if [ -d "$run_dir" ] && compgen -G "$run_dir/*.txt" > /dev/null; then
+  echo "Refusing to mix logs with an existing run: $run_dir" >&2
+  echo "Move the existing directory aside before rerunning" >&2
+  exit 1
+fi
+dcr_timing_init "$timing_file"
+
 if [ -f "$dcm_state" ]; then
-  echo "==> Reusing DCR memory: ${dcm_state}"
-elif [ -f "$legacy_dcm_state" ]; then
-  dcm_run_dir="$legacy_dcm_run_dir"
-  dcm_state="$legacy_dcm_state"
-  echo "==> Reusing legacy memory artifact: ${dcm_state}"
+  echo "==> Reusing samplewise DCR memory: ${dcm_state}"
+  if ! dcr_timing_has_stage "$timing_file" stage1; then
+    dcr_timing_record "$timing_file" stage1 NA true NA NA
+  fi
 else
   if [ -d "$dcm_run_dir" ] && compgen -G "$dcm_run_dir/*.txt" > /dev/null; then
     echo "Partial DCM run exists but dcr_memory_state.pt is missing: $dcm_run_dir" >&2
     echo "Move that partial directory before rebuilding VisDA-C DCM" >&2
     exit 1
   fi
-  echo "==> Building VisDA-C DCM for 15 epochs"
+  echo "==> Stage 1/2: building VisDA-C samplewise DCM for 15 epochs"
+  stage1_started="$(date +%s)"
+  stage1_started_iso="$(date '+%Y-%m-%dT%H:%M:%S%z')"
   python image_target_of_oh_vs.py \
     --cfg cfgs/visda/dcr.yaml \
     CKPT_DIR . SETTING.OUTPUT_SRC source \
     MODEL.METHOD "$dcm_method" \
     SETTING.S 0 SETTING.T 1 SETTING.SEED "$experiment_seed" \
     ACTIVE.ADAPTATION_LIST ""
+  stage1_finished="$(date +%s)"
+  stage1_finished_iso="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+  dcr_timing_record "$timing_file" stage1 \
+    "$((stage1_finished - stage1_started))" false \
+    "$stage1_started_iso" "$stage1_finished_iso"
 fi
 
 for artifact in "$dcm_state" \
@@ -92,24 +105,20 @@ if not torch.isfinite(memory).all():
 print(f"==> Verified DCM: samples={memory.shape[0]}; classes={memory.shape[1]}")
 PY
 
-if [ -d "$run_dir" ] && compgen -G "$run_dir/*.txt" > /dev/null; then
-  echo "Refusing to mix logs with an existing run: $run_dir" >&2
-  echo "Move the existing directory aside before rerunning" >&2
-  exit 1
-fi
-
 mkdir -p "$handoff_source_dir"
 cp -f "${dcm_run_dir}/target_F.pt" "${handoff_source_dir}/source_F.pt"
 cp -f "${dcm_run_dir}/target_B.pt" "${handoff_source_dir}/source_B.pt"
 cp -f "${dcm_run_dir}/target_C.pt" "${handoff_source_dir}/source_C.pt"
 
-echo "==> DCM ready: 15 epochs"
+echo "==> Samplewise DCM ready: 15 epochs"
 echo "==> CLM+ARG: 8 cycles x 4 epochs"
 echo "==> Conflict hard admission: 0%"
 echo "==> Residual soft target: unresolved conflicts supported by Task history"
 echo "==> CLIP update: enabled; cumulative agreement admission: enabled"
 echo "==> Total target passes: 47; target GT affects training: False"
 
+stage2_started="$(date +%s)"
+stage2_started_iso="$(date '+%Y-%m-%dT%H:%M:%S%z')"
 python image_target_of_oh_vs.py \
   --cfg cfgs/visda/dcr.yaml \
   CKPT_DIR . SETTING.OUTPUT_SRC "$handoff_source" \
@@ -130,6 +139,11 @@ python image_target_of_oh_vs.py \
   DCR.MEMORY_UPDATE_RATE 0.5 \
   DCR.CREDIT_MODE delayed \
   DCR.FEEDBACK_MODE agreement_temporal
+stage2_finished="$(date +%s)"
+stage2_finished_iso="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+dcr_timing_record "$timing_file" stage2 \
+  "$((stage2_finished - stage2_started))" false \
+  "$stage2_started_iso" "$stage2_finished_iso"
 
 logs=("$run_dir"/*.txt)
 if [ "${#logs[@]}" -ne 1 ]; then
@@ -161,3 +175,6 @@ echo "==> Best accuracy over the fixed 32-point trajectory: ${best_acc}%"
 echo "==> Final fixed checkpoint"
 grep "Cycle: 8/8" "$latest_log" | tail -n 1
 echo "==> Full log: ${latest_log}"
+dcr_timing_record_total "$timing_file"
+echo "==> Stage timing: ${timing_file}"
+column -s, -t "$timing_file" 2>/dev/null || cat "$timing_file"

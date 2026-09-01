@@ -87,20 +87,15 @@ case "$variant" in
 esac
 
 if [ "$dcm_tag" = "full" ]; then
-  dcm_method="dcr_memory_office_home_full_seed${experiment_seed}"
-  legacy_dcm_method="duet_delayed_agreement_credit_office_home_full_seed${experiment_seed}"
+  dcm_method="dcr_memory_office_home_samplewise_seed${experiment_seed}"
 else
-  dcm_method="dcr_memory_ablation_${dcm_tag}_office_home_seed${experiment_seed}"
-  legacy_dcm_method=""
+  dcm_method="dcr_memory_ablation_${dcm_tag}_office_home_samplewise_seed${experiment_seed}"
 fi
 dcm_run_dir="output/uda/office-home/${task}/${dcm_method}"
 dcm_state="${dcm_run_dir}/dcr_memory_state.pt"
-legacy_dcm_run_dir="output/uda/office-home/${task}/${legacy_dcm_method}"
-legacy_dcm_state="${legacy_dcm_run_dir}/delayed_credit_state.pt"
-legacy_handoff_dir="output/dac_duet_handoff_uniform5_office_home_seed${experiment_seed}_${task}/uda/office-home/${domain_keys[$source_index]}"
-handoff_source="output/dcr_ablation_${variant}_office_home_seed${experiment_seed}_${task}"
+handoff_source="output/dcr_ablation_${variant}_office_home_samplewise_seed${experiment_seed}_${task}"
 handoff_source_dir="${handoff_source}/uda/office-home/${domain_keys[$source_index]}"
-method_name="dcr_ablation_${variant}_office_home_seed${experiment_seed}"
+method_name="dcr_ablation_${variant}_office_home_samplewise_seed${experiment_seed}"
 run_dir="output/uda/office-home/${task}/${method_name}"
 target_list="data/office-home/${domain_names[$target_index]}_list.txt"
 
@@ -118,10 +113,6 @@ done
 
 if [ -f "$dcm_state" ]; then
   echo "==> [${task}/${variant}] Reusing DCR memory: ${dcm_state}"
-elif [ -n "$legacy_dcm_method" ] && [ -f "$legacy_dcm_state" ]; then
-  dcm_run_dir="$legacy_dcm_run_dir"
-  dcm_state="$legacy_dcm_state"
-  echo "==> [${task}/${variant}] Reusing legacy memory artifact: ${dcm_state}"
 else
   if [ -d "$dcm_run_dir" ] && compgen -G "$dcm_run_dir/*.txt" > /dev/null; then
     echo "Partial DCM run exists but state is missing: $dcm_run_dir" >&2
@@ -146,25 +137,19 @@ if [ ! -f "$dcm_state" ]; then
   exit 1
 fi
 
-if [ -f "${dcm_run_dir}/target_F.pt" ] \
-  && [ -f "${dcm_run_dir}/target_B.pt" ] \
-  && [ -f "${dcm_run_dir}/target_C.pt" ]; then
-  dcm_weight_f="${dcm_run_dir}/target_F.pt"
-  dcm_weight_b="${dcm_run_dir}/target_B.pt"
-  dcm_weight_c="${dcm_run_dir}/target_C.pt"
-  dcm_weight_origin="dcm_run"
-elif [ "$dcm_tag" = "full" ] \
-  && [ -f "${legacy_handoff_dir}/source_F.pt" ] \
-  && [ -f "${legacy_handoff_dir}/source_B.pt" ] \
-  && [ -f "${legacy_handoff_dir}/source_C.pt" ]; then
-  dcm_weight_f="${legacy_handoff_dir}/source_F.pt"
-  dcm_weight_b="${legacy_handoff_dir}/source_B.pt"
-  dcm_weight_c="${legacy_handoff_dir}/source_C.pt"
-  dcm_weight_origin="preserved_full_dcm_copy"
-else
-  echo "Missing ${task}/${variant} DCM F/B/C weights: ${dcm_run_dir}/target_{F,B,C}.pt" >&2
-  exit 1
-fi
+for artifact in \
+  "${dcm_run_dir}/target_F.pt" \
+  "${dcm_run_dir}/target_B.pt" \
+  "${dcm_run_dir}/target_C.pt"; do
+  if [ ! -f "$artifact" ]; then
+    echo "Missing ${task}/${variant} samplewise DCM artifact: $artifact" >&2
+    exit 1
+  fi
+done
+dcm_weight_f="${dcm_run_dir}/target_F.pt"
+dcm_weight_b="${dcm_run_dir}/target_B.pt"
+dcm_weight_c="${dcm_run_dir}/target_C.pt"
+dcm_weight_origin="samplewise_dcm_run"
 
 target_samples=$(awk 'END {print NR}' "$target_list")
 python - "$dcm_state" "$target_samples" "$task" "$variant" <<'PY'

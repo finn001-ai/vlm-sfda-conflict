@@ -12,6 +12,7 @@ DCM 的作用是给每个样本建立一份独立的历史记录。
 
 - 每个样本只用自己的历史，不用容易样本训一个裁判器去猜困难样本。
 - 保存的是完整概率分布，不只是 top-1 标签。
+- Task 和 VLM 都用 `samplewise_kl` 对齐同一个样本自己的记忆分布，不再使用依赖整个 batch 类别联合矩阵的 IIC。
 - Task/VLM 当前越一致、与过去越稳定，本次记忆更新越快。
 - DCM 阶段同时训练 Task 模型和 prompt。一致样本的硬标签权重较大，冲突样本只保留较小权重；软目标覆盖所有样本。
 
@@ -68,5 +69,7 @@ ARG：只对“历史支持 Task”的未解决冲突替换 KL 软目标
 - Office-Home：`bash tools/run_office_home_dcr_all.sh 2020`
 - VisDA-C：`bash tools/run_visda_dcr.sh 2020`
 - DomainNet-126：`DATA_DIR=/path/to/data bash tools/run_domainnet126_dcr_all.sh 2020`
+
+三个正式数据集都使用 `samplewise_kl`。网络、学习率、cycle 数和扫描 batch size 仍按数据集分别配置。每个单任务脚本结束后会在最终输出目录生成 `stage_timing.csv`，分别记录 Stage 1、Stage 2 和总训练墙钟时间。
 
 旧实验文件只作历史记录，位于 `../archive/duet_development_code_2026-08-26/`，不再属于当前运行入口。

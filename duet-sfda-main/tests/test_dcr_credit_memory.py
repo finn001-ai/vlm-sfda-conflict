@@ -97,10 +97,20 @@ class DcrCreditMemoryTest(unittest.TestCase):
             self.assertIn("FEEDBACK_MODE: agreement_temporal", config)
             self.assertIn("HARD_LABEL_MODE: task_vlm_agreement", config)
 
-    def test_domainnet_uses_class_count_safe_alignment(self):
-        config = Path("cfgs/domainnet126/dcr.yaml").read_text()
-        self.assertIn("ALIGNMENT_MODE: samplewise_kl", config)
-        self.assertIn("DIVERSITY_DELTA: 0.0", config)
+    def test_all_formal_datasets_use_samplewise_alignment(self):
+        defaults = Path("conf.py").read_text()
+        self.assertIn(
+            '_C.DCR_MEMORY.ALIGNMENT_MODE = "samplewise_kl"',
+            defaults,
+        )
+        for path in (
+            "cfgs/office-home/dcr.yaml",
+            "cfgs/visda/dcr.yaml",
+            "cfgs/domainnet126/dcr.yaml",
+        ):
+            config = Path(path).read_text()
+            self.assertIn("ALIGNMENT_MODE: samplewise_kl", config)
+            self.assertIn("DIVERSITY_DELTA: 0.0", config)
 
 
 if __name__ == "__main__":
