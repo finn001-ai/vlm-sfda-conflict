@@ -2,11 +2,12 @@
 import torch
 from torch import nn, optim
 import torch.nn.functional as F
+import numpy as np
 import os.path as osp
 import logging
 from src.models.model import *
 from src.utils.utils import  *
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, confusion_matrix
 from src.models import network,shot_model
 from src.data.datasets.data_loading import get_test_loader
 import time
@@ -442,6 +443,32 @@ def eval_and_label_dataset(epoch,loader, model, banks, cfg):
     )
 
     log_str = "\n| Test Epoch #%d\t Accuracy: %.2f%%\n" % (epoch, acc)
+    if cfg.SETTING.DATASET == "VISDA-C":
+        gt_numpy = gt_labels.detach().cpu().numpy()
+        pred_numpy = pred_labels.detach().cpu().numpy()
+        matrix = confusion_matrix(
+            gt_numpy,
+            pred_numpy,
+            labels=np.arange(int(cfg.class_num)),
+        )
+        class_count = matrix.sum(axis=1)
+        class_accuracy = np.divide(
+            matrix.diagonal(),
+            class_count,
+            out=np.zeros_like(class_count, dtype=np.float64),
+            where=class_count > 0,
+        ) * 100.0
+        valid_classes = class_count > 0
+        macro_accuracy = float(class_accuracy[valid_classes].mean())
+        classwise_text = " ".join(
+            str(np.round(value, 2)) for value in class_accuracy
+        )
+        log_str += (
+            "VISDA-C classwise accuracy : {:.2f}%\n{}\n".format(
+                macro_accuracy,
+                classwise_text,
+            )
+        )
     logging.info(log_str)
     
     return acc, banks, gt_labels, pred_labels
