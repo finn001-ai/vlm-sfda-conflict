@@ -6,12 +6,12 @@ source tools/lib/dcr_timing.sh
 # Stable DCR-SFDA protocol for VisDA-C.
 # DCM uses 15 epochs; CLM+ARG then use 8 cycles x 4 epochs.
 experiment_seed="${1:-2020}"
-dcm_method="dcr_memory_visda_samplewise_seed${experiment_seed}"
+dcm_method="dcr_memory_visda_rankadaptive_seed${experiment_seed}"
 dcm_run_dir="output/uda/VISDA-C/TV/${dcm_method}"
 dcm_state="${dcm_run_dir}/dcr_memory_state.pt"
-handoff_source="output/dcr_visda_samplewise_seed${experiment_seed}"
+handoff_source="output/dcr_visda_rankadaptive_seed${experiment_seed}"
 handoff_source_dir="${handoff_source}/uda/VISDA-C/T"
-method_name="dcr_visda_samplewise_seed${experiment_seed}"
+method_name="dcr_visda_rankadaptive_seed${experiment_seed}"
 run_dir="output/uda/VISDA-C/TV/${method_name}"
 timing_file="${run_dir}/stage_timing.csv"
 
@@ -32,7 +32,7 @@ fi
 dcr_timing_init "$timing_file"
 
 if [ -f "$dcm_state" ]; then
-  echo "==> Reusing samplewise DCR memory: ${dcm_state}"
+  echo "==> Reusing rank-adaptive DCR memory: ${dcm_state}"
   if ! dcr_timing_has_stage "$timing_file" stage1; then
     dcr_timing_record "$timing_file" stage1 NA true NA NA
   fi
@@ -42,7 +42,7 @@ else
     echo "Move that partial directory before rebuilding VisDA-C DCM" >&2
     exit 1
   fi
-  echo "==> Stage 1/2: building VisDA-C samplewise DCM for 15 epochs"
+  echo "==> Stage 1/2: building VisDA-C rank-adaptive DCM for 15 epochs"
   stage1_started="$(date +%s)"
   stage1_started_iso="$(date '+%Y-%m-%dT%H:%M:%S%z')"
   python image_target_of_oh_vs.py \
@@ -110,7 +110,7 @@ cp -f "${dcm_run_dir}/target_F.pt" "${handoff_source_dir}/source_F.pt"
 cp -f "${dcm_run_dir}/target_B.pt" "${handoff_source_dir}/source_B.pt"
 cp -f "${dcm_run_dir}/target_C.pt" "${handoff_source_dir}/source_C.pt"
 
-echo "==> Samplewise DCM ready: 15 epochs"
+echo "==> Rank-adaptive DCM ready: 15 epochs"
 echo "==> CLM+ARG: 8 cycles x 4 epochs"
 echo "==> Conflict hard admission: 0%"
 echo "==> Residual soft target: unresolved conflicts supported by Task history"

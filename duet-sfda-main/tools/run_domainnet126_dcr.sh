@@ -32,12 +32,12 @@ esac
 data_root="${DATA_DIR:-/home/sfda/data}"
 target_list="data/domainnet126/${domain_names[$target_index]}_list.txt"
 source_checkpoint="source/uda/domainnet126/${domain_keys[$source_index]}/best_${domain_names[$source_index]}_2020.pth"
-dcm_method="dcr_memory_domainnet126_samplewise_seed${experiment_seed}"
+dcm_method="dcr_memory_domainnet126_rankadaptive_seed${experiment_seed}"
 dcm_run_dir="output/uda/domainnet126/${task}/${dcm_method}"
 dcm_state="${dcm_run_dir}/dcr_memory_state.pt"
-handoff_source="output/dcr_domainnet126_samplewise_seed${experiment_seed}_${task}"
+handoff_source="output/dcr_domainnet126_rankadaptive_seed${experiment_seed}_${task}"
 handoff_source_dir="${handoff_source}/uda/domainnet126/${domain_keys[$source_index]}"
-method_name="dcr_domainnet126_samplewise_seed${experiment_seed}"
+method_name="dcr_domainnet126_rankadaptive_seed${experiment_seed}"
 run_dir="output/uda/domainnet126/${task}/${method_name}"
 timing_file="${run_dir}/stage_timing.csv"
 
@@ -95,7 +95,7 @@ else
     echo "Move that directory aside before rebuilding" >&2
     exit 1
   fi
-  echo "==> [${task}] Stage 1/2: DCM samplewise memory alignment, 15 epochs"
+  echo "==> [${task}] Stage 1/2: DCM rank-adaptive alignment, 15 epochs"
   stage1_started="$(date +%s)"
   stage1_started_iso="$(date '+%Y-%m-%dT%H:%M:%S%z')"
   python image_target_of_oh_vs.py \

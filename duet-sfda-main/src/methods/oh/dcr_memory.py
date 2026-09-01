@@ -40,6 +40,27 @@ from src.utils.dcr_credit_memory import (
 LOG_PREFIX = "DCR delayed credit memory"
 
 
+def _resolve_alignment_mode(
+    configured_mode: str,
+    *,
+    class_count: int,
+    batch_size: int,
+    minimum_iic_rank_coverage: float,
+) -> tuple[str, float]:
+    """Choose an alignment from the batch joint's maximum rank coverage."""
+    if class_count < 2 or batch_size < 1:
+        raise ValueError("class_count and batch_size must be positive")
+    rank_coverage = min(class_count, batch_size) / float(class_count)
+    if configured_mode != "rank_adaptive":
+        return configured_mode, rank_coverage
+    effective_mode = (
+        "batch_iic"
+        if rank_coverage >= minimum_iic_rank_coverage
+        else "samplewise_kl"
+    )
+    return effective_mode, rank_coverage
+
+
 def _validate_config(cfg):
     if not bool(cfg.DCR_MEMORY.ENABLED):
         raise ValueError("DCR_MEMORY.ENABLED must be true for this method")
@@ -75,9 +96,15 @@ def _validate_config(cfg):
     if str(cfg.DCR_MEMORY.ALIGNMENT_MODE) not in {
         "batch_iic",
         "samplewise_kl",
+        "rank_adaptive",
     }:
         raise ValueError(
-            "DCR_MEMORY.ALIGNMENT_MODE must be batch_iic or samplewise_kl"
+            "DCR_MEMORY.ALIGNMENT_MODE must be batch_iic, samplewise_kl, "
+            "or rank_adaptive"
+        )
+    if not 0.0 < float(cfg.DCR_MEMORY.MIN_IIC_RANK_COVERAGE) <= 1.0:
+        raise ValueError(
+            "DCR_MEMORY.MIN_IIC_RANK_COVERAGE must be in (0, 1]"
         )
     if float(cfg.DCR_MEMORY.AGREEMENT_BETA) <= 0.0:
         raise ValueError("DCR_MEMORY.AGREEMENT_BETA must be positive")
@@ -126,6 +153,22 @@ def train_target(cfg):
     epsilon = float(cfg.DCR_MEMORY.EPSILON)
     epochs = int(cfg.DCR_MEMORY.EPOCHS)
     total_steps = epochs * len(loaders["train"])
+    configured_alignment_mode = str(cfg.DCR_MEMORY.ALIGNMENT_MODE)
+    minimum_iic_rank_coverage = float(
+        cfg.DCR_MEMORY.MIN_IIC_RANK_COVERAGE
+    )
+    nominal_alignment_mode, nominal_rank_coverage = _resolve_alignment_mode(
+        configured_alignment_mode,
+        class_count=int(cfg.class_num),
+        batch_size=int(cfg.TEST.BATCH_SIZE),
+        minimum_iic_rank_coverage=minimum_iic_rank_coverage,
+    )
+    nominal_diversity_delta = (
+        0.0
+        if configured_alignment_mode == "rank_adaptive"
+        and nominal_alignment_mode == "samplewise_kl"
+        else float(cfg.DCR_MEMORY.DIVERSITY_DELTA)
+    )
 
     initial_task, initial_clip = _scan_predictions(
         loaders["scan"],
@@ -157,18 +200,23 @@ def train_target(cfg):
     )
     logging.info(
         "{} optimization: epochs={}; steps={}; hard_label_mode={}; "
-        "alignment_mode={}; "
+        "alignment_mode={}; nominal_effective_alignment={}; "
+        "nominal_iic_rank_coverage={:.4f}; min_iic_rank_coverage={:.4f}; "
         "credit_decay={:.3f}; credit_eta={:.3f}; memory_update_rate={:.3f}; "
         "credit_mode={}; feedback_mode={}; "
         "alpha={:.3f}; agreement_beta={:.3f}; conflict_beta={:.3f}; "
-        "diversity_delta={:.3f}; clip_encoders_frozen=True; "
+        "diversity_delta={:.3f}; nominal_effective_diversity_delta={:.3f}; "
+        "clip_encoders_frozen=True; "
         "prompt_trainable=True; classifier_trainable=True; "
         "sample_self_history_only=True".format(
             LOG_PREFIX,
             epochs,
             total_steps,
             str(cfg.DCR_MEMORY.HARD_LABEL_MODE),
-            str(cfg.DCR_MEMORY.ALIGNMENT_MODE),
+            configured_alignment_mode,
+            nominal_alignment_mode,
+            nominal_rank_coverage,
+            minimum_iic_rank_coverage,
             float(cfg.DCR_MEMORY.CREDIT_DECAY),
             float(cfg.DCR_MEMORY.CREDIT_ETA),
             float(cfg.DCR_MEMORY.MEMORY_UPDATE_RATE),
@@ -178,6 +226,7 @@ def train_target(cfg):
             float(cfg.DCR_MEMORY.AGREEMENT_BETA),
             float(cfg.DCR_MEMORY.CONFLICT_BETA),
             float(cfg.DCR_MEMORY.DIVERSITY_DELTA),
+            nominal_diversity_delta,
         )
     )
 
@@ -232,6 +281,8 @@ def train_target(cfg):
         prompt_loss_sum = 0.0
         hard_loss_sum = 0.0
         batches = 0
+        iic_batches = 0
+        samplewise_batches = 0
 
         for views, _, indices in loaders["train"]:
             if int(indices.numel()) < 2:
@@ -283,7 +334,14 @@ def train_target(cfg):
                     float(cfg.DCR_MEMORY.CONFLICT_BETA),
                 )
 
-            if str(cfg.DCR_MEMORY.ALIGNMENT_MODE) == "samplewise_kl":
+            effective_alignment_mode, _ = _resolve_alignment_mode(
+                configured_alignment_mode,
+                class_count=int(cfg.class_num),
+                batch_size=int(task_probability.shape[0]),
+                minimum_iic_rank_coverage=minimum_iic_rank_coverage,
+            )
+            if effective_alignment_mode == "samplewise_kl":
+                samplewise_batches += 1
                 task_alignment = samplewise_distribution_alignment_loss(
                     task_probability,
                     shared_teacher,
@@ -295,6 +353,7 @@ def train_target(cfg):
                     epsilon=epsilon,
                 )
             else:
+                iic_batches += 1
                 task_alignment = iic_mutual_information_loss(
                     task_probability,
                     shared_teacher,
@@ -315,10 +374,16 @@ def train_target(cfg):
                 task_probability,
                 epsilon=epsilon,
             )
+            effective_diversity_delta = (
+                0.0
+                if configured_alignment_mode == "rank_adaptive"
+                and effective_alignment_mode == "samplewise_kl"
+                else float(cfg.DCR_MEMORY.DIVERSITY_DELTA)
+            )
             task_loss = (
                 float(cfg.DCR_MEMORY.ALPHA) * task_alignment
                 + hard_loss
-                - float(cfg.DCR_MEMORY.DIVERSITY_DELTA) * diversity
+                - effective_diversity_delta * diversity
             )
             prompt_loss = prompt_alignment
             total_loss = task_loss + prompt_loss
@@ -355,6 +420,7 @@ def train_target(cfg):
             "task_delayed_loss={:.4f}; clip_delayed_loss={:.4f}; "
             "task_weight_mean={:.4f}; clip_weight_mean={:.4f}; "
             "task_preferred_rate={:.2f}%; memory_shift_l1={:.4f}; "
+            "iic_batches={}; samplewise_batches={}; "
             "soft_coverage=100.00%; conflict_hard_coverage=100.00%; "
             "target_gt_affects_training=False"
         ).format(
@@ -384,6 +450,8 @@ def train_target(cfg):
                 .item()
             ),
             float(credit_diagnostics["memory_shift_l1"].mean().item()),
+            iic_batches,
+            samplewise_batches,
         )
         if detail:
             log_message += "\n" + detail

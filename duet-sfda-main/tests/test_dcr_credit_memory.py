@@ -97,10 +97,10 @@ class DcrCreditMemoryTest(unittest.TestCase):
             self.assertIn("FEEDBACK_MODE: agreement_temporal", config)
             self.assertIn("HARD_LABEL_MODE: task_vlm_agreement", config)
 
-    def test_all_formal_datasets_use_samplewise_alignment(self):
+    def test_all_formal_datasets_use_rank_adaptive_alignment(self):
         defaults = Path("conf.py").read_text()
         self.assertIn(
-            '_C.DCR_MEMORY.ALIGNMENT_MODE = "samplewise_kl"',
+            '_C.DCR_MEMORY.ALIGNMENT_MODE = "rank_adaptive"',
             defaults,
         )
         for path in (
@@ -109,8 +109,9 @@ class DcrCreditMemoryTest(unittest.TestCase):
             "cfgs/domainnet126/dcr.yaml",
         ):
             config = Path(path).read_text()
-            self.assertIn("ALIGNMENT_MODE: samplewise_kl", config)
-            self.assertIn("DIVERSITY_DELTA: 0.0", config)
+            self.assertIn("ALIGNMENT_MODE: rank_adaptive", config)
+            self.assertIn("MIN_IIC_RANK_COVERAGE: 0.75", config)
+            self.assertIn("DIVERSITY_DELTA: 0.1", config)
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ shopt -s nullglob
 # Run all 12 Office-Home transfers. Completed tasks are skipped.
 experiment_seed="${1:-2020}"
 tasks=(AC AP AR CA CP CR PA PC PR RA RC RP)
-method_name="dcr_office_home_samplewise_seed${experiment_seed}"
+method_name="dcr_office_home_rankadaptive_seed${experiment_seed}"
 
 for task in "${tasks[@]}"; do
   run_dir="output/uda/office-home/${task}/${method_name}"

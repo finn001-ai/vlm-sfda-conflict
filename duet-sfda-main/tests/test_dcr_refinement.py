@@ -8,9 +8,29 @@ import torch
 
 from src.utils.dcr_credit_memory import initialize_delayed_credit
 from src.utils.dcr_refinement import credit_preserving_refinement_step
+from src.methods.oh.dcr_memory import _resolve_alignment_mode
 
 
 class DcrRefinementTest(unittest.TestCase):
+    def test_rank_adaptive_alignment_is_dataset_name_independent(self):
+        cases = (
+            (12, 64, "batch_iic"),
+            (65, 64, "batch_iic"),
+            (126, 64, "samplewise_kl"),
+        )
+        for class_count, batch_size, expected in cases:
+            effective, coverage = _resolve_alignment_mode(
+                "rank_adaptive",
+                class_count=class_count,
+                batch_size=batch_size,
+                minimum_iic_rank_coverage=0.75,
+            )
+            self.assertEqual(effective, expected)
+            self.assertAlmostEqual(
+                coverage,
+                min(class_count, batch_size) / class_count,
+            )
+
     def test_stage_timer_records_independent_and_total_wall_time(self):
         with tempfile.TemporaryDirectory() as directory:
             timing_file = Path(directory) / "stage_timing.csv"
@@ -107,7 +127,7 @@ class DcrRefinementTest(unittest.TestCase):
             self.assertIn("DCR.CONFLICT_HARD_FRACTION 0.0", script)
             self.assertIn("DCR.SOFT_REPLACEMENT_MODE task_supported", script)
             self.assertIn("DCR.MEMORY_WRITE_MODE locked", script)
-            self.assertIn("samplewise", script)
+            self.assertIn("rankadaptive", script)
             self.assertIn("stage_timing.csv", script)
             self.assertIn("dcr_timing_record", script)
             self.assertIn(schedule, script)

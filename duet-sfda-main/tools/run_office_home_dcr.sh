@@ -30,12 +30,12 @@ case "$task" in
     ;;
 esac
 
-dcm_method="dcr_memory_office_home_samplewise_seed${experiment_seed}"
+dcm_method="dcr_memory_office_home_rankadaptive_seed${experiment_seed}"
 dcm_run_dir="output/uda/office-home/${task}/${dcm_method}"
 dcm_state="${dcm_run_dir}/dcr_memory_state.pt"
-handoff_source="output/dcr_office_home_samplewise_seed${experiment_seed}_${task}"
+handoff_source="output/dcr_office_home_rankadaptive_seed${experiment_seed}_${task}"
 handoff_source_dir="${handoff_source}/uda/office-home/${domain_keys[$source_index]}"
-method_name="dcr_office_home_samplewise_seed${experiment_seed}"
+method_name="dcr_office_home_rankadaptive_seed${experiment_seed}"
 run_dir="output/uda/office-home/${task}/${method_name}"
 timing_file="${run_dir}/stage_timing.csv"
 target_list="data/office-home/${domain_names[$target_index]}_list.txt"
@@ -60,7 +60,7 @@ fi
 dcr_timing_init "$timing_file"
 
 if [ -f "$dcm_state" ]; then
-  echo "==> [${task}] Reusing samplewise DCR memory: ${dcm_state}"
+  echo "==> [${task}] Reusing rank-adaptive DCR memory: ${dcm_state}"
   if ! dcr_timing_has_stage "$timing_file" stage1; then
     dcr_timing_record "$timing_file" stage1 NA true NA NA
   fi
@@ -70,7 +70,7 @@ else
     echo "Move that partial directory before rebuilding ${task} DCM" >&2
     exit 1
   fi
-  echo "==> [${task}] Stage 1/2: building samplewise DCM for 15 epochs"
+  echo "==> [${task}] Stage 1/2: building rank-adaptive DCM for 15 epochs"
   stage1_started="$(date +%s)"
   stage1_started_iso="$(date '+%Y-%m-%dT%H:%M:%S%z')"
   python image_target_of_oh_vs.py \
@@ -97,7 +97,7 @@ for artifact in \
   "${dcm_run_dir}/target_B.pt" \
   "${dcm_run_dir}/target_C.pt"; do
   if [ ! -f "$artifact" ]; then
-    echo "Missing completed ${task} samplewise DCM artifact: $artifact" >&2
+    echo "Missing completed ${task} rank-adaptive DCM artifact: $artifact" >&2
     exit 1
   fi
 done
@@ -130,7 +130,7 @@ cp -f "$dcm_weight_f" "${handoff_source_dir}/source_F.pt"
 cp -f "$dcm_weight_b" "${handoff_source_dir}/source_B.pt"
 cp -f "$dcm_weight_c" "${handoff_source_dir}/source_C.pt"
 
-echo "==> [${task}] Samplewise DCM ready"
+echo "==> [${task}] Rank-adaptive DCM ready"
 echo "==> [${task}] CLM locks conflict memory; ARG corrects only Task-supported conflicts"
 echo "==> [${task}] Conflict hard admission: 0%; total target passes: 31"
 

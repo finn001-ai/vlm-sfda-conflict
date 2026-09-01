@@ -528,9 +528,10 @@ _C.DCR_MEMORY.PROMPT_LR = 5e-4
 _C.DCR_MEMORY.FEATURE_LR_SCALE = 0.1
 _C.DCR_MEMORY.BOTTLENECK_LR_SCALE = 1.0
 _C.DCR_MEMORY.CLASSIFIER_LR_SCALE = 0.1
-# The formal DCR objective aligns each sample with its own memory teacher.
-# ``batch_iic`` remains available only for controlled historical ablations.
-_C.DCR_MEMORY.ALIGNMENT_MODE = "samplewise_kl"
+# Rank-adaptive alignment uses batch IIC only when the batch can support at
+# least this fraction of the class-joint rank; otherwise it uses samplewise KL.
+_C.DCR_MEMORY.ALIGNMENT_MODE = "rank_adaptive"
+_C.DCR_MEMORY.MIN_IIC_RANK_COVERAGE = 0.75
 # Target alignment, hard consolidation, and batch-diversity weights.
 _C.DCR_MEMORY.ALPHA = 1.3
 _C.DCR_MEMORY.AGREEMENT_BETA = 0.4

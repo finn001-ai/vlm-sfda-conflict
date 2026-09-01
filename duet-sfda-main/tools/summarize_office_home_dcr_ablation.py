@@ -34,12 +34,12 @@ def parse_args() -> argparse.Namespace:
 def candidate_run_dirs(task: str, variant: str, seed: int) -> list[Path]:
     ablation = Path(
         "output/uda/office-home"
-    ) / task / f"dcr_ablation_{variant}_office_home_samplewise_seed{seed}"
+    ) / task / f"dcr_ablation_{variant}_office_home_rankadaptive_seed{seed}"
     if variant != "full":
         return [ablation]
     official = Path(
         "output/uda/office-home"
-    ) / task / f"dcr_office_home_samplewise_seed{seed}"
+    ) / task / f"dcr_office_home_rankadaptive_seed{seed}"
     return [ablation, official]
 
 

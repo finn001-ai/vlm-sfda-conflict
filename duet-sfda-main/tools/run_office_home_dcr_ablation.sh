@@ -87,15 +87,15 @@ case "$variant" in
 esac
 
 if [ "$dcm_tag" = "full" ]; then
-  dcm_method="dcr_memory_office_home_samplewise_seed${experiment_seed}"
+  dcm_method="dcr_memory_office_home_rankadaptive_seed${experiment_seed}"
 else
-  dcm_method="dcr_memory_ablation_${dcm_tag}_office_home_samplewise_seed${experiment_seed}"
+  dcm_method="dcr_memory_ablation_${dcm_tag}_office_home_rankadaptive_seed${experiment_seed}"
 fi
 dcm_run_dir="output/uda/office-home/${task}/${dcm_method}"
 dcm_state="${dcm_run_dir}/dcr_memory_state.pt"
-handoff_source="output/dcr_ablation_${variant}_office_home_samplewise_seed${experiment_seed}_${task}"
+handoff_source="output/dcr_ablation_${variant}_office_home_rankadaptive_seed${experiment_seed}_${task}"
 handoff_source_dir="${handoff_source}/uda/office-home/${domain_keys[$source_index]}"
-method_name="dcr_ablation_${variant}_office_home_samplewise_seed${experiment_seed}"
+method_name="dcr_ablation_${variant}_office_home_rankadaptive_seed${experiment_seed}"
 run_dir="output/uda/office-home/${task}/${method_name}"
 target_list="data/office-home/${domain_names[$target_index]}_list.txt"
 
@@ -142,14 +142,14 @@ for artifact in \
   "${dcm_run_dir}/target_B.pt" \
   "${dcm_run_dir}/target_C.pt"; do
   if [ ! -f "$artifact" ]; then
-    echo "Missing ${task}/${variant} samplewise DCM artifact: $artifact" >&2
+    echo "Missing ${task}/${variant} rank-adaptive DCM artifact: $artifact" >&2
     exit 1
   fi
 done
 dcm_weight_f="${dcm_run_dir}/target_F.pt"
 dcm_weight_b="${dcm_run_dir}/target_B.pt"
 dcm_weight_c="${dcm_run_dir}/target_C.pt"
-dcm_weight_origin="samplewise_dcm_run"
+dcm_weight_origin="rank_adaptive_dcm_run"
 
 target_samples=$(awk 'END {print NR}' "$target_list")
 python - "$dcm_state" "$target_samples" "$task" "$variant" <<'PY'
