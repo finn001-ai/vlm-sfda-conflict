@@ -334,12 +334,10 @@ def train_target(cfg):
                     float(cfg.DCR_MEMORY.CONFLICT_BETA),
                 )
 
-            effective_alignment_mode, _ = _resolve_alignment_mode(
-                configured_alignment_mode,
-                class_count=int(cfg.class_num),
-                batch_size=int(task_probability.shape[0]),
-                minimum_iic_rank_coverage=minimum_iic_rank_coverage,
-            )
+            # Select once from the configured training batch size.  Keeping
+            # the branch fixed avoids changing objectives on the final short
+            # batch and makes the effective loss exactly reproducible.
+            effective_alignment_mode = nominal_alignment_mode
             if effective_alignment_mode == "samplewise_kl":
                 samplewise_batches += 1
                 task_alignment = samplewise_distribution_alignment_loss(
@@ -374,12 +372,7 @@ def train_target(cfg):
                 task_probability,
                 epsilon=epsilon,
             )
-            effective_diversity_delta = (
-                0.0
-                if configured_alignment_mode == "rank_adaptive"
-                and effective_alignment_mode == "samplewise_kl"
-                else float(cfg.DCR_MEMORY.DIVERSITY_DELTA)
-            )
+            effective_diversity_delta = nominal_diversity_delta
             task_loss = (
                 float(cfg.DCR_MEMORY.ALPHA) * task_alignment
                 + hard_loss
