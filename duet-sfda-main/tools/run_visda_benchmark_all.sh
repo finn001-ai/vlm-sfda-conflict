@@ -22,7 +22,6 @@ shopt -s nullglob
 # Optional environment variables:
 #   PYTHON_BIN=python
 #   SEED=2020
-#   GPU_ID=0
 #   METHODS="shot nrc gkd adacontrast cowa sclm tpds difo plmatch"
 #   OUTPUT_ROOT=output/visda_benchmark_runs
 #   RUN_ID=<current timestamp>
@@ -42,7 +41,6 @@ cd "$repo_dir"
 
 python_bin=${PYTHON_BIN:-python}
 seed=${SEED:-2020}
-gpu_id=${GPU_ID:-0}
 methods_text=${METHODS:-"shot nrc gkd adacontrast cowa sclm tpds difo plmatch"}
 output_root=${OUTPUT_ROOT:-output/visda_benchmark_runs}
 run_id=${RUN_ID:-$(date '+%Y%m%d_%H%M%S')}
@@ -321,7 +319,6 @@ log "run_id=${run_id}"
 log "started_at=$(date '+%Y-%m-%dT%H:%M:%S%z')"
 log "methods=${methods[*]}"
 log "seed=${seed}"
-log "gpu_id=${gpu_id}"
 log "report_metric=${report_metric}"
 log "checkpoint_root=${checkpoint_root}"
 log "run_dir=${run_dir}"
@@ -368,7 +365,6 @@ for method in "${methods[@]}"; do
     SAVE_DIR "$framework_root"
     CKPT_DIR "$checkpoint_root"
     FOLDER "$folder_root"
-    GPU_ID "$gpu_id"
     MODEL.METHOD "$implementation"
     SETTING.OUTPUT_SRC source
     SETTING.SEED "$seed"
