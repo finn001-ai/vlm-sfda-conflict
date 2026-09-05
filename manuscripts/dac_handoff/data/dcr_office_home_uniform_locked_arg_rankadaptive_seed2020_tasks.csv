@@ -1,0 +1,13 @@
+task,peak_acc,peak_cycle,peak_eval_index,final_acc,peak_minus_final,stage1_seconds,stage1_time,stage1_reused,stage2_seconds,stage2_time,total_seconds,total_time,log
+AC,73.86,4,13,73.84,0.02,420,00:07:00,false,456,00:07:36,876,00:14:36,output/uda/office-home/AC/dcr_office_home_uniform_locked_arg_rankadaptive_seed2020/dcr_260901_131801.txt
+AP,91.91,4,13,91.85,0.06,445,00:07:25,false,457,00:07:37,902,00:15:02,output/uda/office-home/AP/dcr_office_home_uniform_locked_arg_rankadaptive_seed2020/dcr_260901_133306.txt
+AR,91.65,4,16,91.65,0.00,1863,00:31:03,false,1551,00:25:51,3414,00:56:54,output/uda/office-home/AR/dcr_office_home_uniform_locked_arg_rankadaptive_seed2020/dcr_260901_141148.txt
+CA,84.47,4,14,84.34,0.13,421,00:07:01,false,403,00:06:43,824,00:13:44,output/uda/office-home/CA/dcr_office_home_uniform_locked_arg_rankadaptive_seed2020/dcr_260901_144443.txt
+CP,91.96,4,16,91.96,0.00,432,00:07:12,false,454,00:07:34,886,00:14:46,output/uda/office-home/CP/dcr_office_home_uniform_locked_arg_rankadaptive_seed2020/dcr_260901_145840.txt
+CR,91.21,3,10,91.14,0.07,1867,00:31:07,false,1561,00:26:01,3428,00:57:08,output/uda/office-home/CR/dcr_office_home_uniform_locked_arg_rankadaptive_seed2020/dcr_260901_153723.txt
+PA,83.56,4,15,83.44,0.12,425,00:07:05,false,402,00:06:42,827,00:13:47,output/uda/office-home/PA/dcr_office_home_uniform_locked_arg_rankadaptive_seed2020/dcr_260901_161031.txt
+PC,74.27,4,15,74.20,0.07,419,00:06:59,false,439,00:07:19,858,00:14:18,output/uda/office-home/PC/dcr_office_home_uniform_locked_arg_rankadaptive_seed2020/dcr_260901_162414.txt
+PR,91.53,4,16,91.53,0.00,1926,00:32:06,false,1509,00:25:09,3435,00:57:15,output/uda/office-home/PR/dcr_office_home_uniform_locked_arg_rankadaptive_seed2020/dcr_260901_170341.txt
+RA,84.51,4,14,84.38,0.13,413,00:06:53,false,394,00:06:34,807,00:13:27,output/uda/office-home/RA/dcr_office_home_uniform_locked_arg_rankadaptive_seed2020/dcr_260901_173545.txt
+RC,74.57,4,13,74.36,0.21,416,00:06:56,false,437,00:07:17,853,00:14:13,output/uda/office-home/RC/dcr_office_home_uniform_locked_arg_rankadaptive_seed2020/dcr_260901_174918.txt
+RP,92.25,3,11,92.07,0.18,433,00:07:13,false,458,00:07:38,891,00:14:51,output/uda/office-home/RP/dcr_office_home_uniform_locked_arg_rankadaptive_seed2020/dcr_260901_180350.txt

@@ -1,0 +1,10 @@
+method,peak_acc,final_acc,evaluations,wall_time,status
+SHOT,74.58,74.36,15,00:46:10,completed
+NRC,82.41,78.99,15,01:07:05,completed
+GKD,81.98,81.67,15,00:52:05,completed
+AdaContrast,79.79,66.35,17,02:09:55,completed
+CoWA,83.29,83.29,16,00:36:36,completed
+SCLM,55.48,48.44,15,02:31:20,completed
+TPDS,88.60,88.55,15,03:31:39,completed
+DIFO,88.62,88.36,15,00:58:13,completed
+PLMatch,91.50,91.47,32,02:02:18,completed
